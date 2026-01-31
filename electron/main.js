@@ -88,7 +88,7 @@ autoUpdater.on('update-available', (info) => {
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'available',
-      message: `发现新版本: ${info.version}`,
+      message: `发现新版本: ${info.version}，是否立即下载？`,
       version: info.version,
       releaseNotes: info.releaseNotes || '暂无更新说明'
     })
@@ -100,7 +100,7 @@ autoUpdater.on('update-not-available', (info) => {
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'not-available',
-      message: '当前已是最新版本',
+      message: `当前已是最新版本 (${info.version})，无需更新`,
       version: info.version
     })
   }
@@ -109,19 +109,36 @@ autoUpdater.on('update-not-available', (info) => {
 autoUpdater.on('error', (err) => {
   console.error('更新检查失败:', err)
   if (mainWindow) {
+    // 将常见错误转换为友好的中文提示
+    let errorMessage = '更新检查失败'
+    if (err.message) {
+      if (err.message.includes('ENOTFOUND') || err.message.includes('getaddrinfo')) {
+        errorMessage = '无法连接到更新服务器，请检查网络连接'
+      } else if (err.message.includes('timeout')) {
+        errorMessage = '连接更新服务器超时，请稍后重试'
+      } else if (err.message.includes('ECONNREFUSED')) {
+        errorMessage = '更新服务器拒绝连接，请稍后重试'
+      } else {
+        errorMessage = `更新检查失败: ${err.message}`
+      }
+    }
     mainWindow.webContents.send('update-status', {
       status: 'error',
-      message: `更新检查失败: ${err.message}`
+      message: errorMessage
     })
   }
 })
 
 autoUpdater.on('download-progress', (progressObj) => {
   if (mainWindow) {
+    const percent = Math.round(progressObj.percent)
+    const transferred = (progressObj.transferred / 1024 / 1024).toFixed(2)
+    const total = (progressObj.total / 1024 / 1024).toFixed(2)
     mainWindow.webContents.send('update-progress', {
-      percent: Math.round(progressObj.percent),
+      percent: percent,
       transferred: progressObj.transferred,
-      total: progressObj.total
+      total: progressObj.total,
+      message: `正在下载更新: ${percent}% (${transferred}MB / ${total}MB)`
     })
   }
 })
@@ -131,7 +148,7 @@ autoUpdater.on('update-downloaded', (info) => {
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'downloaded',
-      message: '更新下载完成，将在应用重启后安装',
+      message: `更新下载完成 (版本: ${info.version})，将在应用重启后自动安装`,
       version: info.version
     })
   }
@@ -979,9 +996,20 @@ ipcMain.handle('check-for-updates', async () => {
       return { success: false, message: '开发环境下无法检查更新' }
     }
     await autoUpdater.checkForUpdates()
-    return { success: true, message: '正在检查更新...' }
+    return { success: true, message: '正在检查更新，请稍候...' }
   } catch (error) {
-    return { success: false, message: error.message }
+    // 将错误转换为友好的中文提示
+    let errorMessage = '检查更新失败'
+    if (error.message) {
+      if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
+        errorMessage = '无法连接到更新服务器，请检查网络连接'
+      } else if (error.message.includes('timeout')) {
+        errorMessage = '连接更新服务器超时，请稍后重试'
+      } else {
+        errorMessage = `检查更新失败: ${error.message}`
+      }
+    }
+    return { success: false, message: errorMessage }
   }
 })
 
@@ -991,18 +1019,36 @@ ipcMain.handle('download-update', async () => {
       return { success: false, message: '开发环境下无法下载更新' }
     }
     await autoUpdater.downloadUpdate()
-    return { success: true, message: '开始下载更新...' }
+    return { success: true, message: '开始下载更新，请稍候...' }
   } catch (error) {
-    return { success: false, message: error.message }
+    // 将错误转换为友好的中文提示
+    let errorMessage = '下载更新失败'
+    if (error.message) {
+      if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
+        errorMessage = '无法连接到更新服务器，请检查网络连接'
+      } else if (error.message.includes('timeout')) {
+        errorMessage = '下载超时，请稍后重试'
+      } else if (error.message.includes('ECONNREFUSED')) {
+        errorMessage = '更新服务器拒绝连接，请稍后重试'
+      } else {
+        errorMessage = `下载更新失败: ${error.message}`
+      }
+    }
+    return { success: false, message: errorMessage }
   }
 })
 
 ipcMain.handle('quit-and-install', async () => {
   try {
     autoUpdater.quitAndInstall(false, true)
-    return { success: true }
+    return { success: true, message: '正在退出应用并安装更新...' }
   } catch (error) {
-    return { success: false, message: error.message }
+    // 将错误转换为友好的中文提示
+    let errorMessage = '安装更新失败'
+    if (error.message) {
+      errorMessage = `安装更新失败: ${error.message}`
+    }
+    return { success: false, message: errorMessage }
   }
 })
 
