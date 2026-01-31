@@ -406,7 +406,7 @@ function createWindow() {
       // 在打包后，preload 脚本在 app.asar 中，路径会自动处理
     },
     icon: iconPath,
-    title: '北极熊企微框架Pro v1.1'
+    title: '北极熊企微框架Pro'
   })
 
   // 开发环境加载本地服务器，生产环境加载构建后的文件

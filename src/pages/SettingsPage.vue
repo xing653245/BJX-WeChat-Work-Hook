@@ -361,7 +361,7 @@ const handleUpdateStatusChange = (data) => {
     'checking': () => {
       updateStatus.value = createUpdateStatus(
         'checking',
-        'info',
+        'checking',
         '正在检查更新',
         data.message
       )
@@ -380,7 +380,7 @@ const handleUpdateStatusChange = (data) => {
     'not-available': () => {
       updateStatus.value = createUpdateStatus(
         'not-available',
-        'info',
+        'success',
         '已是最新版本',
         data.message,
         data.version
@@ -425,7 +425,6 @@ const setupUpdateListeners = () => {
 
   // 监听更新状态
   window.electronAPI.onUpdateStatus((data) => {
-    console.log('更新状态:', data)
     handleUpdateStatusChange(data)
   })
 
@@ -638,6 +637,10 @@ onUnmounted(() => {
 }
 
 .status-icon-info {
+  color: #409eff;
+}
+
+.status-icon-checking {
   color: #409eff;
   animation: rotate 2s linear infinite;
 }

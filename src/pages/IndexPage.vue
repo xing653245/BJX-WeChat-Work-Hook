@@ -31,13 +31,32 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const frameName = '北极熊企微框架'
-const version = '1.1'
+const version = ref('')
 const statement = '—— 本框架仅供学习测试，请勿用于商业用途、违法内容、生成环境等 ——'
 const showPayDialog = ref(false)
+
+// 获取应用版本
+const loadAppVersion = async () => {
+  if (window.electronAPI) {
+    try {
+      version.value = await window.electronAPI.getAppVersion()
+    } catch (error) {
+      console.error('获取版本失败:', error)
+      version.value = '未知'
+    }
+  } else {
+    // 开发环境或非 Electron 环境，使用默认值
+    version.value = '开发版'
+  }
+}
+
+onMounted(() => {
+  loadAppVersion()
+})
 
 const openDocs = async () => {
   if (window.electronAPI) {
