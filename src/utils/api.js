@@ -64,7 +64,7 @@ export class VWorkApi {
   }
 
   // 1001: 刷新并获取登录二维码
-  static async refreshAndGetLoginQrCode(port, robotId, type = 1001, path = '') {
+  static async refreshAndGetLoginQrCode(port, type = 1001, path = '') {
     return await callAPI(port, { type, path })
   }
 
@@ -74,7 +74,7 @@ export class VWorkApi {
   }
 
   // 1003: 退出登录
-  static async logout(port, robotId, type = 1003) {
+  static async logout(port, type = 1003) {
     return await callAPI(port, { type })
   }
 
@@ -84,27 +84,27 @@ export class VWorkApi {
   }
 
   // 1005: 输入登录验证码
-  static async inputLoginCaptcha(port, robotId, captcha, type = 1005) {
+  static async inputLoginCaptcha(port, captcha, type = 1005) {
     return await callAPI(port, { type, code: captcha })
   }
 
   // 2000: 获取联系人列表【外部】
-  static async getContactList(port, robotId, pageNum, pageSize, type = 2000) {
+  static async getContactList(port, pageNum, pageSize, type = 2000) {
     return await callAPI(port, { type, page_num: pageNum, page_size: pageSize })
   }
 
   // 2001: 获取好友列表【内部】
-  static async getFriendList(port, robotId, pageNum, pageSize, type = 2001) {
+  static async getFriendList(port, pageNum, pageSize, type = 2001) {
     return await callAPI(port, { type, page_num: pageNum, page_size: pageSize })
   }
 
   // 2002: 获取群列表
-  static async getGroupList(port, robotId, pageNum, pageSize, type = 2002) {
+  static async getGroupList(port, pageNum, pageSize, type = 2002) {
     return await callAPI(port, { type, page_num: pageNum, page_size: pageSize })
   }
 
   // 2003: 获取群成员列表
-  static async getGroupMemberList(port, robotId, groupId, type = 2003) {
+  static async getGroupMemberList(port, groupId, type = 2003) {
     return await callAPI(port, { type, chat_room_id: groupId })
   }
 
@@ -119,12 +119,12 @@ export class VWorkApi {
   }
 
   // 3000: 发送文本消息
-  static async sendTextMessage(port, robotId, userId, msg, type = 3000) {
+  static async sendTextMessage(port, userId, msg, type = 3000) {
     return await callAPI(port, { type, user_id: userId, msg })
   }
 
   // 3001: 发送图片消息
-  static async sendImageMessage(port, robotId, userId, path, type = 3001) {
+  static async sendImageMessage(port, userId, path, type = 3001) {
     return await callAPI(port, { type, user_id: userId, path })
   }
 
@@ -273,8 +273,27 @@ export class VWorkApi {
   }
 
   // 4009: 添加好友【网络查询】
-  static async addFriendNetwork(port, add_type, corp_id, userId, openid_or_ticket, msg, type = 4009) {
-    return await callAPI(port, { type, add_type, corp_id, user_id: userId, openid_or_ticket, msg })
+  static async addFriendNetwork(port, add_type, corp_id = null, userId, openid_or_ticket, msg, type = 4009) {
+    const requestData = {
+      type,
+      add_type,
+      user_id: userId,
+      openid_or_ticket,
+      msg
+    }
+    
+    // 只有在 add_type=1 时才需要 corp_id
+    if (add_type === 1) {
+      if (!corp_id) {
+        throw new Error('当 add_type=1 时，corp_id 为必填参数')
+      }
+      requestData.corp_id = corp_id
+    } else if (corp_id) {
+      // 如果 add_type 不是 1 但传入了 corp_id，也包含在请求中
+      requestData.corp_id = corp_id
+    }
+    
+    return await callAPI(port, requestData)
   }
 
   // 5000: 创建群聊【外部】
@@ -333,17 +352,22 @@ export class VWorkApi {
   }
 
   // 5010: 获取欢迎语
-  static async getWelcomeMessage(port, content, card_link, type = 5010) {
-    return await callAPI(port, {
+  static async getWelcomeMessage(port, content, card_link = null, type = 5010) {
+    const requestData = {
       type,
-      content,
-      card_link: {
+      content
+    }
+    
+    if (card_link) {
+      requestData.card_link = {
         title: card_link.title,
         desc: card_link.desc,
         target_url: card_link.target_url,
         cover_url: card_link.cover_url
       }
-    })
+    }
+    
+    return await callAPI(port, requestData)
   }
 
   // 5011: 设置欢迎语
@@ -546,43 +570,6 @@ export class VWorkApi {
   static async getCurrentChatWindowInfo(port, type = 10005) {
     return await callAPI(port, { type })
   }
-
-  // 100: 聊天消息
-  static async getChatMessages(port, msg_type, msg_type, user_id, waiter_id, at_list, content, sender, time_stamp, is_self_msg, is_pc_msg, self_user_id, DellPort, type = 100) {
-    return await callAPI(port, { type, user_id, waiter_id, at_list, content, sender, time_stamp, is_self_msg, is_pc_msg, self_user_id, port: DellPort })
-  }
-
-  // 200: 好友申请通知
-  static async getFriendApplyNotifications(port, add_source, source_chat_room_id, invite_user_id, msg, user_id, corp_id, nick_name, avatar_url, sex, mobile, self_user_id, DellPort, type = 200) {
-    return await callAPI(port, { type, add_source, source_chat_room_id, invite_user_id, msg, user_id, corp_id, nick_name, avatar_url, sex, mobile, self_user_id, port: DellPort })
-  }
-
-  // 201: 删除好友通知
-  static async getDeleteFriendNotifications(port, del_type, user_id, corp_id, nick_name, avatar_url, sex, self_user_id, DellPort, type = 201) {
-    return await callAPI(port, { type, del_type, user_id, corp_id, nick_name, avatar_url, sex, self_user_id, port: DellPort })
-  }
-
-  // 300: 群名称变动通知
-  static async getGroupNameChangeNotifications(port, chat_room_id, new_name, user_id, self_user_id, DellPort, type = 300) {
-    return await callAPI(port, { type, chat_room_id, new_name, user_id, self_user_id, port: DellPort })
-  }
-
-  // 900: 退出登录通知
-  static async getLogoutNotifications(port, msg, user_id, DellPort, type = 900) {
-    return await callAPI(port, { type, user_id, msg, port: DellPort })
-  }
-
-  // 901: 输入登录验证码通知
-  static async getInputLoginCaptchaNotifications(port, msg, DellPort, type = 901) {
-    return await callAPI(port, { type, msg, port: DellPort })
-  }
-
-  // 1000: 系统弹窗通知
-  // static async getSystemPopupNotifications(port, title, msg, self_user_id, DellPort, type = 1000) {
-  //   return await callAPI(port, { type, title, msg, self_user_id, port: DellPort })
-  // }
-
-
 }
 
 export default VWorkApi

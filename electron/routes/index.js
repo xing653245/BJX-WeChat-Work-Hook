@@ -8,17 +8,27 @@ const { createAPIHandler } = require('../middleware/apiHandler')
 
 // 导入各个模块的路由
 const loginRoutes = require('./login')
-const userRoutes = require('./user')
+const contactRoutes = require('./contact')
 const groupRoutes = require('./group')
 const messageRoutes = require('./message')
+const friendRoutes = require('./friend')
+const tagRoutes = require('./tag')
+const settingsRoutes = require('./settings')
+const idConvertRoutes = require('./id-convert')
 const cdnRoutes = require('./cdn')
+const otherRoutes = require('./other')
 
 // 注册子路由
 router.use('/login', loginRoutes)
-router.use('/user', userRoutes)
+router.use('/contact', contactRoutes)
 router.use('/group', groupRoutes)
 router.use('/message', messageRoutes)
+router.use('/friend', friendRoutes)
+router.use('/tag', tagRoutes)
+router.use('/settings', settingsRoutes)
+router.use('/id-convert', idConvertRoutes)
 router.use('/cdn', cdnRoutes)
+router.use('/other', otherRoutes)
 
 /**
  * 通用企微API调用接口
@@ -91,18 +101,6 @@ router.post('/call', async (req, res) => {
     })
   }
 })
-
-/**
- * 获取群成员列表接口（兼容接口，兼容旧版本）
- * POST /api/group-members
- * 请求体: { "port": 8080, "group_id": "群ID" }
- */
-router.post('/group-members', createAPIHandler(2003, '获取群成员列表', (params) => {
-  if (!params.group_id) {
-    return { valid: false, message: '缺少参数: group_id (群ID)' }
-  }
-  return { valid: true, params: { chat_room_id: params.group_id } }
-}))
 
 module.exports = router
 
