@@ -60,9 +60,9 @@ onMounted(() => {
 
 const openDocs = async () => {
   if (window.electronAPI) {
-    await window.electronAPI.openExternal('https://www.baidu.com')
+    await window.electronAPI.openExternal('https://23t2z5j37i.apifox.cn')
   } else {
-    window.open('https://www.baidu.com', '_blank')
+    window.open('https://23t2z5j37i.apifox.cn', '_blank')
   }
 }
 
