@@ -16,13 +16,6 @@ const { createAPIHandler } = require('../middleware/apiHandler')
  *   "name": "群名称",
  *   "user_id_list": ["用户ID1", "用户ID2"] 或 "用户ID"
  * }
- * 返回示例：{
-    "data": {
-        "chat_room_id": "R:108xxx"
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/create', createAPIHandler(5000, '创建群聊【外部】', (params) => {
   if (!params.name) {
@@ -49,13 +42,6 @@ router.post('/create', createAPIHandler(5000, '创建群聊【外部】', (param
  *   "name": "群名称",
  *   "user_id_list": ["用户ID1", "用户ID2"] 或 "用户ID"
  * }
- * 返回示例：{
-    "data": {
-        "chat_room_id": "R:333xxx"
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/create-internal', createAPIHandler(5001, '创建群聊【内部】', (params) => {
   if (!params.name) {
@@ -231,18 +217,6 @@ router.post('/qrcode', createAPIHandler(5007, '获取群二维码', (params) => 
  * 获取群信息
  * POST /api/group/info
  * 请求体: { "port": 8080, "chat_room_id": "群ID" }
- * 返回示例：{
-    "data": {
-        "chat_room_id": "R:109xxx", //群ID
-        "chat_room_type": 1, //群类型 0:内部群 1:外部群
-        "create_time": 1619799671, //创建时间
-        "create_user_id": "168xxx", //创建者ID
-        "nick_name": "测试外部群", //群名
-        "total": 8 //群成员数量
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/info', createAPIHandler(5008, '获取群信息', (params) => {
   if (!params.chat_room_id) {
@@ -255,27 +229,6 @@ router.post('/info', createAPIHandler(5008, '获取群信息', (params) => {
  * 获取欢迎语列表
  * POST /api/group/welcome-list
  * 请求体: { "port": 8080 }
- * 返回示例：{
-    "data": {
-        "list": [
-            {
-                "card_link": {
-                    "title": "我是标题", //标题
-                    "desc": "我是描述", //描述
-                    "cover_url": "https://www.baidu/xxxxxxx.png", //封面地址
-                    "target_url": "https://www.baidu.com/" //目标地址
-                },
-                "create_time": "16000", //创建时间
-                "create_user_id": "788xxx", //创建人ID
-                "welcome_id": 1, //欢迎语ID
-                "content": "我是内容" //欢迎语内容
-            },
-            ...
-        ]
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/welcome-list', createAPIHandler(5009, '获取欢迎语列表'))
 
@@ -292,13 +245,6 @@ router.post('/welcome-list', createAPIHandler(5009, '获取欢迎语列表'))
  *     "cover_url": "封面URL"
  *   }
  * }
- * 返回示例：{
-    "data": {
-        "welcome_id": 6 //欢迎语ID
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/welcome', createAPIHandler(5010, '获取欢迎语', (params) => {
   if (!params.content) {

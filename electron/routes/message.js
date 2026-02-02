@@ -184,6 +184,15 @@ router.post('/video-number', createAPIHandler(3007, '发送视频号', (params) 
   if (!params.video_url) {
     return { valid: false, message: '缺少参数: video_url (视频URL)' }
   }
+  if (!params.thumb_url) {
+    return { valid: false, message: '缺少参数: thumb_url (缩略图URL)' }
+  }
+  if (!params.avatar_url) {
+    return { valid: false, message: '缺少参数: avatar_url (头像URL)' }
+  }
+  if (!params.extras) {
+    return { valid: false, message: '缺少参数: extras (视频标识)' }
+  }
   return {
     valid: true,
     params: {

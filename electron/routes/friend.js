@@ -180,32 +180,6 @@ router.post('/phone', createAPIHandler(4006, '设置好友手机号', (params) =
  * 本地查询好友信息
  * POST /api/friend/query-local
  * 请求体: { "port": 8080, "user_id": "用户ID" }
- * 返回示例：{
-    "data": {
-        "add_time": "1619799671", //添加时间
-        "avatar_url": "https://thirdwx.qlogo.cn/mmopen/vi_32/xxx/0", //头像地址
-        "corp_id": "197xxx", //公司ID
-        "corp_name": "xxx有限公司", //公司全称
-        "corp_remark": "备注-XXX公司", //公司备注
-        "corp_short_name": "xxx", //公司简称
-        "dept_id": "168xxx", //部门ID
-        "dept_name": "打杂部", //部门名称
-        "desc": "我是描述信息", //描述
-        "mobile": "13800000000", //手机号
-        "nick_name": "三水君", //昵称
-        "position": "CEO", //职位
-        "real_name": "xxx", //真实姓名
-        "remark": "我是备注", //备注
-        "remark_phone_list": [ //备注电话列表
-            "13800000000",
-            "13900000000"
-        ],
-        "sex": "1", //性别 0:未设置 1:男 2:女
-        "user_id": "168xxx" //用户ID
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/query-local', createAPIHandler(4007, '本地查询好友信息', (params) => {
   if (!params.user_id) {
@@ -218,32 +192,6 @@ router.post('/query-local', createAPIHandler(4007, '本地查询好友信息', (
  * 网络查询陌生人信息
  * POST /api/friend/query-network
  * 请求体: { "port": 8080, "key": "查询关键字" }
- * 返回示例：{
-    "data": {
-        "list": [
-            {
-                "avatar_url": "https://wework.qpic.cn/wwpic3az/xxx/0", //头像地址
-                "corp_id": "197xxx", //公司ID
-                "item_type": 1, //微信类型 1:企微 2:个微
-                "nick_name": "**君", //昵称
-                "openid_or_ticket": "149Fxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", //添加为好友时需要用到
-                "sex": "1", //性别 0:未设置 1:男 2:女
-                "user_id": "312xxx" //用户ID
-            },
-            {
-                "avatar_url": "http://wx.qlogo.cn/mmhead/xxx/0", //头像地址
-                "corp_id": "", //公司ID
-                "item_type": 2, //微信类型 1:企微 2:个微
-                "nick_name": "三水君", //昵称
-                "openid_or_ticket": "orFxxxxxxxxxxxxxxxxx", //添加为好友时需要用到
-                "sex": "1", //性别 0:未设置 1:男 2:女
-                "user_id": "788xxx" //用户ID
-            }
-        ]
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/query-network', createAPIHandler(4008, '网络查询陌生人信息', (params) => {
   if (!params.key) {
@@ -263,13 +211,6 @@ router.post('/query-network', createAPIHandler(4008, '网络查询陌生人信�
  *   "openid_or_ticket": "OpenID或Ticket",
  *   "msg": "验证消息"
  * }
- * 返回示例：{
-    "type": 4009,
-    "add_type": 2,
-    "user_id": "788xxx",
-    "openid_or_ticket": "orFxxxxxxxx",
-    "msg": "你好啊"
-}
  */
 router.post('/add-network', createAPIHandler(4009, '添加好友【网络查询】', (params) => {
   if (params.add_type === undefined || params.add_type === null) {

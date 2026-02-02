@@ -15,16 +15,6 @@ const { createAPIHandler } = require('../middleware/apiHandler')
  *   "port": 8080, 
  *   "path": "文件路径"
  * }
- * 返回示例：{
-    "data": {
-        "cdn_key": "3069020102000000000000000000000000",
-        "aes_key": "64320000000000000000",
-        "md5": "c8caaxxxxxxxxxxxxxxxxxxxxx",
-        "size": 62725
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/upload', createAPIHandler(9000, 'CDN上传文件', (params) => {
   if (!params.path) {

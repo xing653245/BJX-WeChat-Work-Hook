@@ -12,13 +12,6 @@ const { createAPIHandler } = require('../middleware/apiHandler')
  * 企业用户ID转开放平台ID
  * POST /api/id-convert/corp-user-to-open
  * 请求体: { "port": 8080, "user_id": "用户ID" }
- * 返回示例：{
-    "data": {
-        "open_id": "wmfxxxxxxxxxxxxxxxx"
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/corp-user-to-open', createAPIHandler(8000, '企业用户ID转开放平台ID', (params) => {
   if (!params.user_id) {
@@ -31,13 +24,6 @@ router.post('/corp-user-to-open', createAPIHandler(8000, '企业用户ID转开�
  * 企业群ID转开放平台ID
  * POST /api/id-convert/corp-group-to-open
  * 请求体: { "port": 8080, "chat_room_id": "群ID" }
- * 返回示例：{
-    "data": {
-        "open_id": "wrfxxxxxxxxxxxxxxxxxxx"
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/corp-group-to-open', createAPIHandler(8001, '企业群ID转开放平台ID', (params) => {
   if (!params.chat_room_id) {
@@ -50,13 +36,6 @@ router.post('/corp-group-to-open', createAPIHandler(8001, '企业群ID转开放�
  * 开放平台ID转企业用户ID
  * POST /api/id-convert/open-to-corp-user
  * 请求体: { "port": 8080, "open_id": "开放平台ID" }
- * 返回示例：{
-    "data": {
-        "user_id": "788xxx"
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/open-to-corp-user', createAPIHandler(8002, '开放平台ID转企业用户ID', (params) => {
   if (!params.open_id) {
@@ -69,13 +48,6 @@ router.post('/open-to-corp-user', createAPIHandler(8002, '开放平台ID转企�
  * 开放平台ID转企业群ID
  * POST /api/id-convert/open-to-corp-group
  * 请求体: { "port": 8080, "open_id": "开放平台ID" }
- * 返回示例：{
-    "data": {
-        "char_room_id": "R:108xxx"
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/open-to-corp-group', createAPIHandler(8003, '开放平台ID转企业群ID', (params) => {
   if (!params.open_id) {

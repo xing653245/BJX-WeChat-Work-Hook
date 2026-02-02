@@ -12,43 +12,6 @@ const { createAPIHandler } = require('../middleware/apiHandler')
  * 获取标签组列表
  * POST /api/tag/groups
  * 请求体: { "port": 8080 }
- * 返回示例：{
-    "data": {
-        "list": [
-            {
-                "create_time": "1708796042", //创建时间
-                "group_id": "14073749414867782", //分组ID
-                "group_name": "客户等级", //分组名
-                "group_type": "1", //分组类型 1:企业标签 2:个人标签
-                "label_list": [ //标签列表
-                    {
-                        "create_time": "1708796042", //创建时间
-                        "label_id": "14073749414867783", //标签ID
-                        "label_name": "一般" //标签名
-                    },
-                    ...
-                ]
-            },
-            {
-                "create_time": "1708796043", //创建时间
-                "group_id": "14073753095818178", //分组ID
-                "group_name": "个人标签", //分组名
-                "group_type": "2", //分组类型 1:企业标签 2:个人标签
-                "label_list": [ //标签列表
-                    {
-                        "create_time": "1709469367", //创建时间
-                        "label_id": "14073749711835212", //标签ID
-                        "label_name": "男的" //标签名
-                    },
-                    ...
-                ]
-            },
-            ...
-        ]
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/groups', createAPIHandler(6000, '获取标签组列表'))
 
@@ -188,16 +151,6 @@ router.post('/add-friends', createAPIHandler(6005, '一个标签打多个好友'
  * 获取标签下的联系人
  * POST /api/tag/friends
  * 请求体: { "port": 8080, "label_id": "标签ID" }
- * 返回示例：{
-    "data": {
-        "list": [ //用户ID列表
-            "788xxx1",
-            "788xxx2"
-        ]
-    },
-    "errmsg": "OK",
-    "errno": 0
-}
  */
 router.post('/friends', createAPIHandler(6006, '获取标签下的联系人', (params) => {
   if (!params.label_id) {
