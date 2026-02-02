@@ -56,10 +56,11 @@ try {
 }
 const axios = require('axios')
 const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime } = require('./commons/common')
-const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING } = require('./configs/defaults')
+const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
 
 let mainWindow
 let messageServer = null // 消息接收服务器
+let loginStatusCheckInterval = null // 定时检查登录状态
 
 // 更新配置
 // 注意：更新服务器配置在 package.json 的 build.publish 中设置
@@ -376,6 +377,87 @@ const saveConfig = (config) => {
   }
 }
 
+/**
+ * 从配置中解析出需要定时检查的企微端口列表（来自 login_info）
+ */
+const getTimedCheckPorts = () => {
+  const config = readConfig()
+  let raw = config.custom?.login_info
+  if (typeof raw !== 'string') return []
+  try {
+    const list = JSON.parse(raw)
+    if (!Array.isArray(list)) return []
+    return list
+      .map((item) => (item && item.port != null ? parseInt(item.port, 10) : NaN))
+      .filter((p) => !Number.isNaN(p) && p > 0)
+  } catch (e) {
+    return []
+  }
+}
+
+/**
+ * 单次执行：对配置中的每个企微端口检查登录状态，若异常则执行注入工具重启
+ */
+const timedGetLoginStatus = async () => {
+  const config = readConfig()
+  const serverPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT) || DEFAULT_SERVER_PORT
+  const ports = getTimedCheckPorts()
+  if (ports.length === 0) return
+
+  for (const robotPort of ports) {
+    let err = false
+    try {
+      const url = `http://127.0.0.1:${robotPort}/api`
+      const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
+      const data = response.data && response.data.data
+      const status = data ? data.status : undefined
+      if (status === 1) continue
+      err = true
+    } catch (e) {
+      err = true
+    }
+
+    if (!err) continue
+
+    try {
+      const injectToolPath = path.join(getAppPath(), 'bin/it.exe')
+      const child = spawn(injectToolPath, [
+        'start',
+        String(robotPort),
+        `--my_port=${serverPort}`,
+        `--key=${DEFAULT_INJECT_KEY}`
+      ])
+      let output = ''
+      child.stdout.on('data', (d) => { output += d.toString() })
+      child.stderr.on('data', (d) => { output += d.toString() })
+      child.on('close', (code) => {
+        console.log(`定时检查：端口 ${robotPort} 登录异常，已执行注入工具，退出码: ${code}`)
+      })
+      child.on('error', (e) => {
+        console.error('定时检查：执行注入工具失败:', e.message)
+      })
+    } catch (e) {
+      console.error('定时检查：重启企微客户端失败:', e.message)
+    }
+  }
+}
+
+/**
+ * 启动定时检查登录状态（每 30 秒执行一次）
+ */
+const startTimedLoginStatusCheck = () => {
+  if (loginStatusCheckInterval) {
+    clearInterval(loginStatusCheckInterval)
+    loginStatusCheckInterval = null
+  }
+  loginStatusCheckInterval = setInterval(() => {
+    timedGetLoginStatus().catch((e) => {
+      console.error('定时检查登录状态异常:', e.message)
+    })
+  }, 30000)
+  console.log('定时检查登录状态已启动，间隔 30 秒')
+}
+
 function createWindow() {
   // 图标路径：开发环境使用源文件，生产环境使用打包后的文件
   let iconPath
@@ -575,6 +657,9 @@ app.whenReady().then(() => {
   const config = readConfig()
   startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT))
 
+  // 启动定时检查登录状态
+  startTimedLoginStatusCheck()
+
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
     const updateConfig = readConfig()
@@ -602,9 +687,20 @@ app.on('window-all-closed', () => {
   }
 })
 
+app.on('before-quit', () => {
+  if (loginStatusCheckInterval) {
+    clearInterval(loginStatusCheckInterval)
+    loginStatusCheckInterval = null
+  }
+})
+
 // IPC 通信处理
 ipcMain.handle('read-config', () => {
-  return readConfig()
+  const config = readConfig()
+  return {
+    ...config,
+    sys: { ...(config.sys || {}), inject_key: DEFAULT_INJECT_KEY }
+  }
 })
 
 ipcMain.handle('save-config', (event, config) => {
@@ -643,21 +739,97 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         
         // 构建API调用日志数据
         const apiType = data && data.type ? data.type : 'unknown'
+        // 与 electron/routes 保持一致，用于 API 调用日志展示
         const apiTypeNames = {
+          // login
           1000: '获取登录状态',
-          1001: '刷新并获取登录二维码',
+          1001: '获取登录二维码',
           1002: '获取个人信息',
           1003: '退出登录',
-          1004: '退出登录通知',
+          1004: '获取个人二维码',
           1005: '输入登录验证码',
+          // contact
+          2000: '获取联系人列表',
+          2001: '获取好友列表',
+          2002: '获取群列表',
           2003: '获取群成员列表',
+          2004: '获取公司列表',
+          2005: '获取部门列表',
+          // message
           3000: '发送文本消息',
           3001: '发送图片消息',
+          3002: '发送GIF表情',
+          3003: '发送文件消息',
+          3004: '发送视频消息',
+          3005: '发送名片',
           3006: '发送小程序',
+          3007: '发送视频号',
+          3008: '发送卡片链接',
           3009: '发送群@消息',
+          3010: '发送位置消息',
+          3011: '发送语音消息',
+          // friend
+          4000: '添加好友',
+          4001: '删除好友',
+          4002: '同意好友请求',
+          4003: '设置好友备注',
+          4004: '设置好友描述',
+          4005: '设置好友公司',
+          4006: '设置好友手机号',
+          4007: '本地查询好友信息',
+          4008: '网络查询陌生人信息',
+          4009: '添加好友【网络查询】',
+          // group
+          5000: '创建群聊【外部】',
+          5001: '创建群聊【内部】',
+          5002: '修改群名称',
+          5003: '发送群公告',
+          5004: '邀请好友进群（40人以下）',
+          5005: '邀请好友进群（40人以上）',
+          5006: '移除群成员',
+          5007: '获取群二维码',
           5008: '获取群信息',
+          5009: '获取欢迎语列表',
+          5010: '获取欢迎语',
+          5011: '设置欢迎语',
+          5012: '删除欢迎语',
+          5013: '添加管理员',
+          5014: '删除管理员',
+          5015: '转让群主',
+          5016: '退出群聊',
+          5017: '解散群聊',
+          5018: '允许/禁止修改群名',
+          5019: '开启/关闭邀请确认',
+          // tag
+          6000: '获取标签组列表',
+          6001: '添加标签',
+          6002: '修改标签',
+          6003: '删除标签',
+          6004: '一个好友打多个标签',
+          6005: '一个标签打多个好友',
+          6006: '获取标签下的联系人',
+          6007: '删除标签下的联系人',
+          // settings
+          7000: '开启/关闭自动更新',
+          7001: '开启/关闭自动登录',
+          7002: '开启/关闭消息免打扰',
+          7003: '开启/关闭自动下载',
+          // id-convert
+          8000: '企业用户ID转开放平台ID',
+          8001: '企业群ID转开放平台ID',
+          8002: '开放平台ID转企业用户ID',
+          8003: '开放平台ID转企业群ID',
+          // cdn
+          9000: 'CDN上传文件',
           9001: 'CDN下载企微图片',
-          9004: 'CDN下载个微图片/视频/文件'
+          9002: 'CDN下载视频',
+          9003: 'CDN下载文件',
+          9004: 'CDN下载个微文件',
+          // other
+          10000: '清空聊天记录',
+          10003: '语音转文字',
+          10004: '获取当前微信进程的PID',
+          10005: '获取当前聊天窗口信息'
         }
         const apiName = apiTypeNames[apiType] || `API调用(type:${apiType})`
         
@@ -852,12 +1024,13 @@ ipcMain.handle('find-available-port', async (event, startPort = 1024) => {
 // 执行注入工具（需要根据实际情况调整）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
   const injectToolPath = path.join(getAppPath(), 'bin/it.exe')
+  const injectKey = key || DEFAULT_INJECT_KEY
   return new Promise((resolve) => {
     const child = spawn(injectToolPath, [
       'start',
       String(port),
       `--my_port=${serverPort}`,
-      `--key=${key}`
+      `--key=${injectKey}`
     ])
     
     let output = ''

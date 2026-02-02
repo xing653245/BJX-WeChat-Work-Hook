@@ -137,7 +137,8 @@ const contextMenuPosition = ref({ x: 0, y: 0 })
 const showSubMenu = ref(false)
 
 const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT_SERVER_PORT_STRING)
-const injectKey = 'FUAyVli9Ee15q1wdbzpRsSjbyrVo2cDuhgNdLK3CWCW3Y95YepvLarcVszNGmETk'
+// 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
+const injectKey = computed(() => configStore.config.sys?.inject_key || '')
 
 // 启动时加载登录信息，只负责把配置中的账号展示到表格
 const loadLoginInfo = async () => {
@@ -384,7 +385,7 @@ const executeAddWechat = async (portType, customPortValue) => {
       const result = await window.electronAPI.runInjectTool({
         port,
         serverPort: serverPort.value,
-        key: injectKey
+        key: injectKey.value
       })
 
       if (result.success || (result.output && result.output.includes('注入成功'))) {
