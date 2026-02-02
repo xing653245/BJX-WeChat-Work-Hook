@@ -32,6 +32,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { getMsgTypeText } from '../utils/msgParser'
 
 const logs = ref([])
 const contextMenuRef = ref(null)
@@ -51,20 +52,24 @@ const formatTime = (timestamp) => {
   })
 }
 
-// 获取消息类型文本
-const getMessageType = (data) => {
-  if (data.sys) return '系统提示'
-  if (data.type === 'api_call') return 'API调用'
-  if (data.is_self_msg === 1) return '发出消息'
-  if (data.msg_id) return '收到消息'
-  return '系统提示'
+// 获取方向文本（发送/接收）
+const getDirectionText = (data) => {
+  if (data.is_self_msg === 1) return '发送'
+  if (data.msg_id) return '接收'
+  return ''
 }
 
-// 获取消息颜色
-const getMessageColor = (data) => {
-  if (data.sys) return 'red'
-  if (data.is_self_msg === 1) return 'green'
-  return 'blue'
+// 获取消息类型文本（带方向）
+const getMessageType = (data) => {
+  // 系统类/接口调用日志保持原有展示
+  if (data.sys) return '系统提示'
+  if (data.type === 'api_call') return 'API调用'
+
+  const direction = getDirectionText(data)
+  const msgTypeText = getMsgTypeText(data.msg_type)
+
+  // 示例：发送-文本消息 / 接收-图片消息
+  return direction ? `${direction}-${msgTypeText}` : msgTypeText
 }
 
 // 添加日志
@@ -75,9 +80,22 @@ const addLog = (data) => {
   }
 
   const timestamp = data.time_stamp || Math.floor(Date.now() / 1000)
-  const content = data.sys
-    ? data.content
-    : `${data.sender || ''}(${data.user_id || ''}):${data.content || ''}`
+  let content
+
+  if (data.sys) {
+    // 系统日志原样输出
+    content = data.content
+  } else if (Number(data.msg_type) === 2) {
+    // 文本消息：直接显示消息内容字符串
+    content = typeof data.content === 'string' ? data.content : String(data.content ?? '')
+  } else {
+    // 其它类型：content 是对象，显示完整 JSON
+    try {
+      content = JSON.stringify(data.content ?? {}, null, 2)
+    } catch (e) {
+      content = String(data.content ?? '')
+    }
+  }
 
   const logEntry = {
     index: logs.value.length + 1,
