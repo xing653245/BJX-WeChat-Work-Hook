@@ -15,17 +15,18 @@
       <el-table-column prop="message" label="消息" show-overflow-tooltip />
     </el-table>
 
-    <!-- 右键菜单 -->
-    <el-dropdown ref="contextMenuRef" trigger="contextmenu" @command="handleMenuCommand">
-      <span style="display: none;"></span>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item :command="'copy-all'">复制本行内容</el-dropdown-item>
-          <el-dropdown-item :command="'copy-content'">复制本条消息</el-dropdown-item>
-          <el-dropdown-item divided :command="'clear'">清空日志内容</el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
+    <!-- 自定义右键菜单：在表格右键时显示，并定位到鼠标位置 -->
+    <div
+      v-show="contextMenuVisible"
+      class="context-menu"
+      :style="{ left: contextMenuLeft + 'px', top: contextMenuTop + 'px' }"
+      @click.stop
+    >
+      <div class="context-menu-item" @click="onMenuClick('copy-all')">复制本行内容</div>
+      <div class="context-menu-item" @click="onMenuClick('copy-content')">复制本条消息</div>
+      <div class="context-menu-divider" />
+      <div class="context-menu-item" @click="onMenuClick('clear')">清空日志内容</div>
+    </div>
   </div>
 </template>
 
@@ -35,9 +36,13 @@ import { ElMessage } from 'element-plus'
 import { getMsgTypeText } from '../utils/msgParser'
 
 const logs = ref([])
-const contextMenuRef = ref(null)
 const selectedRow = ref(null)
 const maxRows = 1000
+
+// 右键菜单显隐与位置
+const contextMenuVisible = ref(false)
+const contextMenuLeft = ref(0)
+const contextMenuTop = ref(0)
 
 // 格式化时间
 const formatTime = (timestamp) => {
@@ -121,6 +126,9 @@ onMounted(() => {
     sys: true
   })
 
+  // 点击页面其它区域关闭右键菜单
+  document.addEventListener('click', closeContextMenu)
+
   // 监听FastAPI推送的消息
   if (window.electronAPI && window.electronAPI.onFastAPIMessage) {
     window.electronAPI.onFastAPIMessage((data) => {
@@ -130,23 +138,37 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', closeContextMenu)
   // 移除消息监听
   if (window.electronAPI && window.electronAPI.removeFastAPIMessageListener) {
     window.electronAPI.removeFastAPIMessageListener()
   }
 })
 
-// 右键菜单处理
+// 关闭右键菜单
+const closeContextMenu = () => {
+  contextMenuVisible.value = false
+}
+
+// 右键菜单处理：显示自定义菜单并定位
 const handleContextMenu = (row, column, event) => {
   event.preventDefault()
   selectedRow.value = row
-  // Element Plus 的 dropdown 需要通过编程方式触发
-  // 这里简化处理，直接显示操作选项
+  contextMenuLeft.value = event.clientX
+  contextMenuTop.value = event.clientY
+  contextMenuVisible.value = true
+}
+
+// 点击菜单项：先关闭菜单，再执行命令
+const onMenuClick = (command) => {
+  closeContextMenu()
+  handleMenuCommand(command)
 }
 
 // 菜单命令处理
 const handleMenuCommand = (command) => {
-  if (!selectedRow.value) {
+  // “清空”不需要选中行，其它需要
+  if (command !== 'clear' && !selectedRow.value) {
     ElMessage.warning('请先选择一行日志')
     return
   }
@@ -203,6 +225,36 @@ defineExpose({
 
 :deep(.el-table .cell) {
   padding: 8px;
+}
+
+/* 自定义右键菜单 */
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 140px;
+  padding: 4px 0;
+  background: var(--el-bg-color-overlay);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 4px;
+  box-shadow: var(--el-box-shadow-light);
+}
+
+.context-menu-item {
+  padding: 8px 16px;
+  font-size: 14px;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+}
+
+.context-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--el-border-color-lighter);
 }
 </style>
 

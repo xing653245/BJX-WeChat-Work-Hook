@@ -139,8 +139,11 @@ const showWechatPay = () => {
 }
 
 .pay-qr-img {
-  width: 300px;
-  height: 300px;
+  display: block;
+  max-width: 100%;
+  width: auto;
+  height: 350px;
+  object-fit: contain;
   border: 1px solid #ddd;
   border-radius: 8px;
   margin-bottom: 20px;
