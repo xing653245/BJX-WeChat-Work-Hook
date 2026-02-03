@@ -114,7 +114,7 @@
                 <el-icon><Document /></el-icon>
                 <span>更新说明</span>
               </div>
-              <div class="notes-content">{{ updateStatus.releaseNotes }}</div>
+              <div class="notes-content" v-html="updateStatus.releaseNotes"></div>
             </div>
 
             <!-- 下载进度 -->
