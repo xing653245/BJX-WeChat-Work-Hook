@@ -404,20 +404,29 @@ const timedGetLoginStatus = async () => {
   const ports = getTimedCheckPorts()
   if (ports.length === 0) return
 
-  for (const robotPort of ports) {
-    let err = false
-    try {
-      const url = `http://127.0.0.1:${robotPort}/api`
-      const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
-      const data = response.data && response.data.data
-      const status = data ? data.status : undefined
-      if (status === 1) continue
-      err = true
-    } catch (e) {
-      err = true
+  const probeLoginOk = async (robotPort) => {
+    const attempts = 4
+    const delayMs = 3000
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const url = `http://127.0.0.1:${robotPort}/api`
+        const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
+        const data = response.data && response.data.data
+        const status = data ? data.status : undefined
+        if (status === 1) return true
+      } catch {
+        /* 切换企业等过程中可能短暂失败 */
+      }
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
     }
+    return false
+  }
 
-    if (!err) continue
+  for (const robotPort of ports) {
+    const ok = await probeLoginOk(robotPort)
+    if (ok) continue
 
     try {
       const injectToolPath = path.join(getAppPath(), 'bin/it.exe')

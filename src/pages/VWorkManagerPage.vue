@@ -123,6 +123,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useConfigStore } from '../stores/config'
 import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
+import { confirmLoggedIn } from '../utils/loginStatusRetry'
 
 const configStore = useConfigStore()
 const tableData = ref([])
@@ -179,22 +180,14 @@ const cleanupUnloggedOnMount = async () => {
     const port = parseInt(item.port)
     if (!port || Number.isNaN(port)) continue
 
-    let needKill = false
-
-    try {
-      const result = await VWorkApi.getLoginStatus(port)
-      const status = result && result.data ? result.data.status : undefined
-      // status === 1 为已登录，其他都视为未登录/无效
-      if (status !== 1) {
-        needKill = true
-      }
-    } catch (error) {
-      // 接口异常（端口无响应等）也视为未登录，进行清理
-      console.warn(`端口 ${port} 获取登录状态失败，将尝试杀死进程`, error)
-      needKill = true
-    }
+    const ok = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
+      attempts: 5,
+      intervalMs: 2000
+    })
+    const needKill = !ok
 
     if (needKill) {
+      console.warn(`端口 ${port} 在重试后仍非已登录，将尝试杀死进程`)
       try {
         await window.electronAPI.killProcessByPort(port)
       } catch (e) {
@@ -753,24 +746,14 @@ const refreshList = async () => {
         try {
           // 检查端口是否还在使用
           const portCheck = await window.electronAPI.isPortInUse(port)
-          if (portCheck && portCheck.inUse) {
-            // 检查登录状态
-            try {
-              const result = await VWorkApi.getLoginStatus(port)
-              const status = result && result.data ? result.data.status : undefined
-              // status === 1 为已登录，其他都视为未登录/无效
-              if (status === 1) {
-                validRows.push(row)
-              } else {
-                // 未登录，尝试杀死进程
-                try {
-                  await window.electronAPI.killProcessByPort(port)
-                } catch (e) {
-                  console.error(`杀死端口 ${port} 对应进程失败:`, e)
-                }
-              }
-            } catch (error) {
-              // 接口异常（端口无响应等）也视为未登录，尝试杀死进程
+            if (portCheck && portCheck.inUse) {
+            const ok = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
+              attempts: 5,
+              intervalMs: 2000
+            })
+            if (ok) {
+              validRows.push(row)
+            } else {
               try {
                 await window.electronAPI.killProcessByPort(port)
               } catch (e) {

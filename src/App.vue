@@ -27,6 +27,8 @@ import RunLogsPage from './pages/RunLogsPage.vue'
 import VWorkManagerPage from './pages/VWorkManagerPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { useConfigStore } from './stores/config'
+import { VWorkApi } from './utils/api'
+import { confirmLoggedIn } from './utils/loginStatusRetry'
 
 const activeTab = ref('index')
 const vworkManagerRef = ref(null)
@@ -46,7 +48,16 @@ const handleLogoutMessage = async (data) => {
   const userInfo = data.user_id || data.self_user_id || '未知用户'
   const port = data.port || data.server_port
   const portNum = port ? parseInt(port) : NaN
-  
+
+  // 切换企业时框架可能误推 900/退出类消息；先多次确认 1000 仍非已登录再杀进程
+  if (!Number.isNaN(portNum) && portNum > 0) {
+    const stillLoggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(portNum), {
+      attempts: 5,
+      intervalMs: 2000
+    })
+    if (stillLoggedIn) return
+  }
+
   try {
     // 杀死进程（即使进程已经退出，这里也会尝试）
     if (!Number.isNaN(portNum) && window.electronAPI?.killProcessByPort) {
