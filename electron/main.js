@@ -57,6 +57,11 @@ try {
 const axios = require('axios')
 const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime } = require('./commons/common')
 const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
+const {
+  checkPortListenAvailable,
+  findAvailablePort: findAvailablePortForInject,
+  runInjectTool: runInjectToolService
+} = require('./services/wecomInject')
 
 let mainWindow
 let messageServer = null // 消息接收服务器
@@ -220,37 +225,40 @@ const startMessageServer = () => {
 // Express 服务器管理（Node.js版本，替代Python FastAPI）
 let expressServer = null
 
-const startExpressServer = (port) => {
-  // 停止旧服务器
+const startExpressServer = async (port) => {
+  // 先关闭旧 HTTP 服务并等待端口释放，避免与 killProcessByPort 竞态
   if (expressServer) {
-    try {
-      expressServer.close(() => {
-        console.log('Express服务器已关闭')
-      })
-      expressServer = null
-    } catch (e) {
-      console.error('停止旧服务器失败:', e)
-    }
-  }
-  
-  // 先杀死占用端口的进程
-  killProcessByPort(port).then(() => {
-    // 设置环境变量
-    process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
-    
-    // 导入并启动Express服务器
-    const { runServer } = require('./express_server')
-    
-    console.log(`启动Express服务器，端口: ${port}`)
-    
-    runServer(port).then((server) => {
-      expressServer = server
-      console.log(`Express服务器启动成功，监听端口 ${port}`)
-    }).catch((error) => {
-      console.error('启动Express服务器失败:', error.message)
-      expressServer = null
+    const oldServer = expressServer
+    expressServer = null
+    await new Promise((resolve) => {
+      try {
+        oldServer.close((err) => {
+          if (err) console.error('停止旧Express失败:', err)
+          else console.log('Express服务器已关闭')
+          resolve()
+        })
+      } catch (e) {
+        console.error('停止旧服务器失败:', e)
+        resolve()
+      }
     })
-  })
+  }
+
+  // 仅清理「其他进程」占用；当前进程监听时不再 taskkill 自身（见 killProcessByPort）
+  await killProcessByPort(port)
+
+  process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
+  const { runServer } = require('./express_server')
+  console.log(`启动Express服务器，端口: ${port}`)
+
+  try {
+    const server = await runServer(port)
+    expressServer = server
+    console.log(`Express服务器启动成功，监听端口 ${port}`)
+  } catch (error) {
+    console.error('启动Express服务器失败:', error.message)
+    expressServer = null
+  }
 }
 
 // 根据端口查找PID
@@ -316,25 +324,47 @@ const killProcessByPort = (port) => {
           resolve(false)
           return
         }
-        // 杀死所有找到的进程
+        const selfPid = process.pid
+        const toKill = [...pids].filter((pid) => pid !== selfPid)
+        if (toKill.length === 0) {
+          console.log(`端口 ${port} 仅由当前进程监听，跳过 taskkill（避免自杀）`)
+          resolve(false)
+          return
+        }
         let killed = 0
-        pids.forEach(pid => {
+        toKill.forEach((pid) => {
           exec(`taskkill /F /PID ${pid}`, (err) => {
             if (!err) killed++
-            if (killed === pids.size) {
+            if (killed === toKill.length) {
               resolve(killed > 0)
             }
           })
         })
-        if (pids.size === 0) {
-          resolve(false)
-        }
       })
     } else {
-      // Linux/Mac
+      // Linux/Mac：不得 kill 当前进程
       const { exec } = require('child_process')
-      exec(`lsof -ti:${port} | xargs kill -9`, (error) => {
-        resolve(!error)
+      exec(`lsof -ti:${port}`, (error, stdout) => {
+        if (error || !stdout) {
+          resolve(false)
+          return
+        }
+        const pids = stdout.trim().split('\n').filter(Boolean)
+        const toKill = pids.filter((p) => parseInt(p, 10) !== process.pid)
+        if (toKill.length === 0) {
+          if (pids.length > 0) {
+            console.log(`端口 ${port} 仅由当前进程监听，跳过 kill（避免自杀）`)
+          }
+          resolve(false)
+          return
+        }
+        let finished = 0
+        toKill.forEach((pid) => {
+          exec(`kill -9 ${pid}`, () => {
+            finished++
+            if (finished === toKill.length) resolve(true)
+          })
+        })
       })
     }
   })
@@ -664,7 +694,9 @@ app.whenReady().then(() => {
   
   // 启动Express服务器（Node.js版本）
   const config = readConfig()
-  startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT))
+  startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT)).catch((err) => {
+    console.error('启动Express失败:', err)
+  })
 
   // 启动定时检查登录状态
   startTimedLoginStatusCheck()
@@ -974,86 +1006,18 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
 
 // 检查端口是否在使用
 ipcMain.handle('check-port', async (event, port) => {
-  const net = require('net')
-  return new Promise((resolve) => {
-    const server = net.createServer()
-    server.listen(port, () => {
-      server.once('close', () => resolve({ inUse: false }))
-      server.close()
-    })
-    server.on('error', () => resolve({ inUse: true }))
-  })
+  return checkPortListenAvailable(port)
 })
 
 // 查找可用端口（随机生成并检查是否被占用）
 ipcMain.handle('find-available-port', async (event, startPort = 1024) => {
-  const net = require('net')
-  const minPort = startPort || 1024
-  const maxPort = 65535
-  const maxAttempts = 1000 // 最大尝试次数，避免无限循环
-  
-  // 检查端口是否可用的辅助函数
-  const isPortAvailable = (port) => {
-    return new Promise((resolve) => {
-      const server = net.createServer()
-      server.listen(port, () => {
-        server.once('close', () => resolve(true))
-        server.close()
-      })
-      server.on('error', () => resolve(false))
-    })
-  }
-  
-  // 生成随机端口
-  const generateRandomPort = () => {
-    return Math.floor(Math.random() * (maxPort - minPort + 1)) + minPort
-  }
-  
-  // 随机生成并检查端口，直到找到可用端口
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const port = generateRandomPort()
-    const isAvailable = await isPortAvailable(port)
-    
-    if (isAvailable) {
-      return { port }
-    }
-  }
-  
-  // 如果随机生成失败，回退到顺序查找
-  for (let port = minPort; port <= maxPort; port++) {
-    const isAvailable = await isPortAvailable(port)
-    if (isAvailable) {
-      return { port }
-    }
-  }
-  
-  return { port: null }
+  return findAvailablePortForInject(startPort)
 })
 
 // 执行注入工具（需要根据实际情况调整）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
-  const injectToolPath = path.join(getAppPath(), 'bin/it.exe')
   const injectKey = key || DEFAULT_INJECT_KEY
-  return new Promise((resolve) => {
-    const child = spawn(injectToolPath, [
-      'start',
-      String(port),
-      `--my_port=${serverPort}`,
-      `--key=${injectKey}`
-    ])
-    
-    let output = ''
-    child.stdout.on('data', (data) => {
-      output += data.toString()
-    })
-    child.stderr.on('data', (data) => {
-      output += data.toString()
-    })
-    
-    child.on('close', (code) => {
-      resolve({ success: code === 0, output })
-    })
-  })
+  return runInjectToolService({ port, serverPort, key: injectKey })
 })
 
 // 获取授权信息
@@ -1154,13 +1118,13 @@ ipcMain.handle('is-port-in-use', async (event, port) => {
 
 // 重启Express服务器
 ipcMain.handle('restart-express-server', async (event, port) => {
-  startExpressServer(port)
+  await startExpressServer(port)
   return { success: true }
 })
 
 // 兼容旧名称
 ipcMain.handle('restart-fastapi-server', async (event, port) => {
-  startExpressServer(port)
+  await startExpressServer(port)
   return { success: true }
 })
 

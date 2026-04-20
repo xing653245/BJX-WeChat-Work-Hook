@@ -118,7 +118,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, defineExpose } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, defineExpose, inject, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useConfigStore } from '../stores/config'
 import { VWorkApi } from '../utils/api'
@@ -126,6 +126,8 @@ import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { confirmLoggedIn } from '../utils/loginStatusRetry'
 
 const configStore = useConfigStore()
+/** 来自 App.vue：HTTP /api/other/start-wecom 成功后的端口队列 */
+const wecomApiInjectPorts = inject('wecomApiInjectPorts', ref([]))
 const tableData = ref([])
 const selectedRow = ref(null)
 const showAddDialog = ref(false)
@@ -367,7 +369,7 @@ const executeAddWechat = async (portType, customPortValue) => {
     }
     const inUse = await checkPort(port)
     if (inUse) {
-      ElMessage.warning('端口已被使用')
+      ElMessage.warning(`端口 ${port} 已被系统占用，请更换其他端口`)
       return
     }
   }
@@ -487,6 +489,29 @@ const checkLoginStatus = async (port, rowIndex) => {
     }
   }, 2000)
 }
+
+// 由 HTTP 接口触发注入成功时，与「添加企微」相同：加行并开始轮询登录
+const handleApiInjectPort = (port) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return
+  const ps = String(p)
+  if (tableData.value.some((r) => r.port === ps)) {
+    return
+  }
+  const rowIndex = addTableItem({ nick_name: '登录中', port: ps })
+  checkLoginStatus(p, rowIndex)
+}
+
+watch(
+  wecomApiInjectPorts,
+  (arr) => {
+    if (!arr?.length) return
+    const batch = [...arr]
+    arr.splice(0, arr.length)
+    batch.forEach((port) => handleApiInjectPort(port))
+  },
+  { deep: true }
+)
 
 // 获取PID
 const getPidByPort = async (port) => {
@@ -716,6 +741,13 @@ onMounted(async () => {
   
   // 确保表格渲染
   await nextTick()
+
+  // 若在挂载前已通过 HTTP 启动企微，此处消费队列
+  if (wecomApiInjectPorts.value.length) {
+    const batch = [...wecomApiInjectPorts.value]
+    wecomApiInjectPorts.value.splice(0, wecomApiInjectPorts.value.length)
+    batch.forEach((port) => handleApiInjectPort(port))
+  }
   
   // 添加点击外部关闭菜单的监听
   document.addEventListener('click', handleClickOutside)
@@ -799,7 +831,9 @@ const refreshList = async () => {
 }
 
 defineExpose({
-  refreshList
+  refreshList,
+  /** 供调试或父组件直接触发，与 HTTP 回调等价 */
+  handleInjectStartedFromApi: handleApiInjectPort
 })
 </script>
 

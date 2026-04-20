@@ -20,7 +20,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, provide } from 'vue'
 import { ElMessage } from 'element-plus'
 import IndexPage from './pages/IndexPage.vue'
 import RunLogsPage from './pages/RunLogsPage.vue'
@@ -32,6 +32,10 @@ import { confirmLoggedIn } from './utils/loginStatusRetry'
 
 const activeTab = ref('index')
 const vworkManagerRef = ref(null)
+
+/** 通过 HTTP 启动企微时主进程推送端口，由企微管理页消费（与界面添加企微一致） */
+const wecomApiInjectPorts = ref([])
+provide('wecomApiInjectPorts', wecomApiInjectPorts)
 
 // 初始化配置
 const configStore = useConfigStore()
@@ -101,6 +105,14 @@ const handleLogoutMessage = async (data) => {
 // 监听消息推送
 onMounted(() => {
   window.electronAPI?.onFastAPIMessage?.(handleLogoutMessage)
+  window.electronAPI?.onWecomInjectStarted?.((data) => {
+    if (data?.port == null) return
+    const p = Number(data.port)
+    if (Number.isNaN(p)) return
+    if (!wecomApiInjectPorts.value.includes(p)) {
+      wecomApiInjectPorts.value.push(p)
+    }
+  })
 })
 </script>
 

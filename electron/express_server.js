@@ -149,7 +149,7 @@ app.get('/', (req, res) => {
         settings: '/api/settings/* - 设置相关接口',
         idConvert: '/api/id-convert/* - ID转换接口',
         cdn: '/api/cdn/* - CDN相关接口',
-        other: '/api/other/* - 其他功能接口',
+        other: '/api/other/* - 其他功能接口（含 POST /api/other/start-wecom 启动企微）',
         // 通用接口
         apiCall: 'POST /api/call - 通用企微API调用接口',
         // 兼容接口

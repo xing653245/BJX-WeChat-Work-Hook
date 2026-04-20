@@ -32,6 +32,7 @@
     "electron-updater": "^6.7.3",
     "element-plus": "^2.5.6",
     "express": "^4.22.1",
+    "iconv-lite": "^0.7.2",
     "pinia": "^2.1.7",
     "vue": "^3.4.15",
     "vue-router": "^4.2.5"

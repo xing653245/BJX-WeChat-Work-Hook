@@ -281,8 +281,15 @@ async function killProcessByPort(port) {
         return false
       }
 
-      // 杀死所有找到的进程
-      for (const pid of pids) {
+      // 不得结束当前 Node/Electron 进程，否则重启 Express 时会误杀自身导致连接被拒绝
+      const selfPid = process.pid
+      const toKill = [...pids].filter((pid) => pid !== selfPid)
+      if (toKill.length === 0) {
+        console.log(`端口 ${port} 仅由当前进程监听，跳过 taskkill（避免自杀）`)
+        return false
+      }
+
+      for (const pid of toKill) {
         try {
           await execAsync(`taskkill /F /PID ${pid}`)
           console.log(`成功终止进程 (PID: ${pid})`)
@@ -304,13 +311,18 @@ async function killProcessByPort(port) {
     try {
       const { stdout } = await execAsync(`lsof -ti:${port}`)
       const pids = stdout.trim().split('\n').filter(pid => pid)
-      if (pids.length === 0) {
-        console.log(`未找到占用端口 ${port} 的进程`)
+      const selfPid = String(process.pid)
+      const toKill = pids.filter((pid) => pid !== selfPid)
+      if (toKill.length === 0) {
+        if (pids.length > 0) {
+          console.log(`端口 ${port} 仅由当前进程监听，跳过 kill（避免自杀）`)
+        } else {
+          console.log(`未找到占用端口 ${port} 的进程`)
+        }
         return false
       }
 
-      // 杀死所有找到的进程
-      for (const pid of pids) {
+      for (const pid of toKill) {
         try {
           await execAsync(`kill -9 ${pid}`)
           console.log(`成功终止进程 (PID: ${pid})`)
