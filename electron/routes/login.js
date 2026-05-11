@@ -2,7 +2,7 @@
  * 登录相关路由
  * 
  * 授权说明：
- * - 1000, 1003: 不需要授权验证
+ * - 1000, 1001, 1003, 1004, 1005: 不需要授权验证（登录流程）
  * - 其他接口需要授权验证
  */
 const express = require('express')
@@ -18,7 +18,6 @@ router.post('/status', createAPIHandler(1000, '获取登录状态'))
 
 /**
  * 刷新并获取登录二维码 (type: 1001)
- * 需要授权验证
  * POST /api/login/qrcode
  * 请求体: { "port": 8080, "path": "" }
  */
@@ -46,7 +45,6 @@ router.post('/logout', createAPIHandler(1003, '退出登录'))
 
 /**
  * 获取个人二维码 (type: 1004)
- * 需要授权验证
  * POST /api/login/personal-qrcode
  * 请求体: { "port": 8080 }
  */
@@ -54,7 +52,6 @@ router.post('/personal-qrcode', createAPIHandler(1004, '获取个人二维码'))
 
 /**
  * 输入登录验证码 (type: 1005)
- * 需要授权验证
  * POST /api/login/captcha
  * 请求体: { "port": 8080, "code": "验证码" }
  */

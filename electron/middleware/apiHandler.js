@@ -15,8 +15,11 @@ const { readIni, validAuthDatetime } = require('../commons/common')
 async function callVWorkAPI(port, type, params = {}) {
   // 不需要授权验证的接口类型列表
   // 1000: 获取登录状态
+  // 1001: 获取登录二维码
   // 1003: 退出登录
-  const LOGIN_RELATED_TYPES = new Set([1000, 1003])
+  // 1004: 获取个人二维码
+  // 1005: 输入登录验证码
+  const LOGIN_RELATED_TYPES = new Set([1000, 1001, 1003, 1004, 1005])
 
   // 除上述接口外，其他所有接口都需要验证授权
   if (!LOGIN_RELATED_TYPES.has(type)) {

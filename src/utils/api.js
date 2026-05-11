@@ -11,9 +11,8 @@ import { ensureAuthorizedByPort } from './authGuard'
  */
 export const baseUrl = (port) => `http://127.0.0.1:${port}/api`
 
-// 登录/退出登录相关的 type 列表，这些接口允许在未授权时调用
-// 按需求：getPersonalInfo(1002) 和 inputLoginCaptcha(1005) 也需要校验授权，因此不再豁免
-const LOGIN_RELATED_TYPES = new Set([1000, 1001, 1002, 1003, 1005])
+// 登录流程相关 type，在未授权时也允许调用企微端口
+const LOGIN_RELATED_TYPES = new Set([1000, 1001, 1002, 1003, 1004, 1005])
 
 /**
  * 调用API
