@@ -49,7 +49,7 @@ router.post('/image', createAPIHandler(3001, '发送图片消息', (params) => {
  *   "cover_path": "封面路径",
  *   "wechat_id": "微信ID",
  *   "page_path": "页面路径",
- *   "avatar_url": "头像URL",
+ *   "avatar_url": "头像地址(URL)",
  *   "app_id": "小程序ID"
  * }
  */
@@ -72,13 +72,16 @@ router.post('/applet', createAPIHandler(3006, '发送小程序', (params) => {
   if (!params.page_path) {
     return { valid: false, message: '缺少参数: page_path (页面路径)' }
   }
+  if (!params.avatar_url) {
+    return { valid: false, message: '缺少参数: avatar_url (头像地址)' }
+  }
   return {
     valid: true,
     params: {
       user_id: params.user_id,
       title: params.title,
       desc: params.desc,
-      avatar_url: params.avatar_url || '',
+      avatar_url: params.avatar_url,
       cover_path: params.cover_path,
       app_id: params.app_id || '',
       wechat_id: params.wechat_id,
