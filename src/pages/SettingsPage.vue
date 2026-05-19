@@ -35,6 +35,116 @@
     <el-card class="settings-card">
       <template #header>
         <div class="card-header">
+          <span>接口调试 · 文本消息</span>
+          <el-tooltip
+            content="发往本框架：POST http://127.0.0.1:{监听端口}/api/message/text。请求 JSON 包含 port（企微实例在该端口上跑 HTTP）、user_id、msg。下方「企微 HTTP 端口」与「监听端口」不是同一个；下拉列表数据与「企微管理」页的登录实例一致。"
+            placement="top"
+          >
+            <span><el-icon><QuestionFilled /></el-icon></span>
+          </el-tooltip>
+        </div>
+      </template>
+
+      <div class="form-item form-item-column api-test-section">
+        <div class="api-test-split">
+          <div class="api-test-split-left">
+            <div class="api-test-rows">
+              <div class="api-test-row">
+                <label class="api-test-field-label">HTTP 端口</label>
+                <div class="api-test-field-control">
+                  <el-select
+                    v-model="textTestWecomPort"
+                    clearable
+                    placeholder="从企微管理的实例中选择"
+                    class="api-test-wecom-select"
+                  >
+                    <el-option
+                      v-for="row in wecomManagerInstances"
+                      :key="row.port"
+                      :label="formatWecomInstanceOptionLabel(row)"
+                      :value="row.port"
+                    />
+                  </el-select>
+                  <p v-if="wecomManagerInstances.length === 0" class="api-test-wecom-empty">
+                    当前没有可用的企微实例，请先到「企微管理」添加并保存。
+                  </p>
+                </div>
+              </div>
+
+              <div class="api-test-row">
+                <label class="api-test-field-label">user_id</label>
+                <el-input
+                  v-model="textTestUserId"
+                  class="api-test-unified-input"
+                  placeholder="接收方 user_id，请自行填写"
+                  clearable
+                />
+              </div>
+
+              <div class="api-test-row">
+                <label class="api-test-field-label">msg</label>
+                <div class="api-test-msg-stack">
+                  <span class="api-test-msg-caption">固定测试内容</span>
+                  <code class="api-test-msg-code">{{ TEXT_MSG_TEST_BODY }}</code>
+                </div>
+              </div>
+            </div>
+
+            <div class="api-test-actions-row">
+              <span class="api-test-actions-spacer" aria-hidden="true" />
+              <div class="api-test-actions-inner">
+                <el-button
+                  type="primary"
+                  :loading="testingTextMsg"
+                  :disabled="!isElectronAvailable"
+                  @click="handleTestMessageText"
+                >
+                  发送 POST /api/message/text
+                </el-button>
+              </div>
+            </div>
+          </div>
+
+          <div class="api-test-split-right">
+            <section class="api-test-request-visual" aria-label="HTTP 预览">
+              <h4 class="api-test-visual-heading">HTTP 预览</h4>
+
+              <div class="api-test-meta-block api-test-meta-tight">
+                <div class="api-test-meta-line">
+                  <span class="api-test-meta-label">请求地址</span>
+                  <div class="api-test-meta-value-row">
+                    <code class="api-test-meta-url">{{ textTestRequestPreview.url }}</code>
+                    <span class="api-test-meta-method">POST</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="api-test-meta-block api-test-meta-tight">
+                <div class="api-test-meta-line api-test-meta-line-stack">
+                  <span class="api-test-meta-label">请求参数</span>
+                  <pre class="api-test-json-pre">{{ textTestRequestPreview.bodyJson }}</pre>
+                </div>
+              </div>
+
+              <div class="api-test-meta-block api-test-response-block api-test-meta-tight">
+                <div class="api-test-meta-line api-test-meta-line-stack">
+                  <span class="api-test-meta-label">响应结果</span>
+                  <template v-if="testingTextMsg">
+                    <div class="api-test-resp-loading">正在发送请求…</div>
+                  </template>
+                  <pre v-else-if="textTestResponseRaw" class="api-test-json-pre">{{ textTestResponseRaw }}</pre>
+                  <p v-else class="api-test-resp-placeholder">暂无响应，请点击左侧按钮发起请求。</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
+    <el-card class="settings-card">
+      <template #header>
+        <div class="card-header">
           <span>日志设置</span>
         </div>
       </template>
@@ -243,14 +353,72 @@ const saving = ref(false)
 /** localStorage「不再提醒」存在时文案提示 */
 const hasStoredCloseConfirmPrefs = ref(false)
 
+/** POST /api/message/text 调试：固定正文；user_id、企微 port 用户填写 */
+const TEXT_MSG_TEST_BODY = 'Hello 北极熊，这是一条自动化测试消息！'
+const textTestUserId = ref('')
+const textTestWecomPort = ref('')
+const testingTextMsg = ref(false)
+const textTestResponseRaw = ref('')
+
+/** 与「企微管理」表格同源（config.login_info） */
+const wecomManagerInstances = computed(() => {
+  const raw = configStore.getLoginInfo()
+  if (!Array.isArray(raw)) return []
+  const seen = new Set()
+  const rows = []
+  for (const item of raw) {
+    const p = item?.port
+    const portStr = p != null ? String(p).trim() : ''
+    if (!portStr || seen.has(portStr)) continue
+    seen.add(portStr)
+    rows.push({
+      port: portStr,
+      user_id: item?.user_id != null ? String(item.user_id) : '',
+      nick_name: item?.nick_name != null ? String(item.nick_name) : ''
+    })
+  }
+  return rows
+})
+
+function formatWecomInstanceOptionLabel(row) {
+  const nn = row.nick_name?.trim() || '未备注昵称'
+  const uid = row.user_id?.trim() || '—'
+  return `端口 ${row.port} · ${nn}（${uid}）`
+}
+
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
   open_log: true,
   save_log: true,
-  auto_check_update: false,
+  /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
+  auto_check_update: true,
   /** ask | tray | quit，写入 ini sys.window_close_action */
   window_close_action: 'ask'
+})
+
+/** 展示即将/实际请求的 URL 与 Body（与实际发送一致时需 port / user_id 已合法填写） */
+const textTestRequestPreview = computed(() => {
+  const listenPort = parseInt(String(formData.server_port ?? '').trim(), 10)
+  const listenOk =
+    !Number.isNaN(listenPort) && listenPort > 1024 && listenPort <= 10000
+  const url = listenOk
+    ? `http://127.0.0.1:${listenPort}/api/message/text`
+    : '（请先填写顶部「监听端口」，有效范围：(1024, 10000]）'
+
+  const wPortParsed = parseInt(String(textTestWecomPort.value || '').trim(), 10)
+  const portOk =
+    !Number.isNaN(wPortParsed) && wPortParsed >= 1 && wPortParsed <= 65535
+  const uid = String(textTestUserId.value || '').trim()
+
+  const payload = {
+    port: portOk ? wPortParsed : '（请选择企微 HTTP 端口）',
+    user_id: uid || '（请填写接收方 user_id）',
+    msg: TEXT_MSG_TEST_BODY
+  }
+  const bodyJson = JSON.stringify(payload, null, 2)
+
+  return { url, bodyJson }
 })
 
 // 更新相关状态
@@ -296,7 +464,10 @@ const loadConfig = () => {
   formData.callback = config.sys?.callback || ''
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
-  formData.auto_check_update = config.sys?.auto_check_update === 'true' || config.sys?.auto_check_update === true
+  formData.auto_check_update = !(
+    config.sys?.auto_check_update === 'false' ||
+    config.sys?.auto_check_update === false
+  )
 
   const wca = String(config.sys?.window_close_action || 'ask').trim().toLowerCase()
   if (wca === 'quit' || wca === 'exit') {
@@ -307,6 +478,83 @@ const loadConfig = () => {
     formData.window_close_action = 'ask'
   }
   refreshCloseConfirmPrefsHint()
+
+  if (!String(textTestWecomPort.value || '').trim()) {
+    const rows = wecomManagerInstances.value
+    if (rows.length > 0) {
+      textTestWecomPort.value = rows[0].port
+    }
+  }
+}
+
+async function handleTestMessageText() {
+  if (!window.electronAPI?.callAPI) {
+    ElMessage.warning('当前环境无法调用 Electron 接口')
+    return
+  }
+  const uid = String(textTestUserId.value || '').trim()
+  if (!uid) {
+    ElMessage.warning('请填写接收方 user_id')
+    return
+  }
+  const wPort = parseInt(String(textTestWecomPort.value || '').trim(), 10)
+  if (Number.isNaN(wPort) || wPort < 1 || wPort > 65535) {
+    ElMessage.warning('请填写有效的企微 HTTP 端口（请求体里的 port，1～65535）')
+    return
+  }
+  const listenPort = parseInt(String(formData.server_port || '').trim(), 10)
+  if (Number.isNaN(listenPort) || listenPort <= 1024 || listenPort > 10000) {
+    ElMessage.warning('请先在「HTTP 设置」中填写有效的监听端口')
+    return
+  }
+
+  testingTextMsg.value = true
+  textTestResponseRaw.value = ''
+  const url = `http://127.0.0.1:${listenPort}/api/message/text`
+  try {
+    const result = await window.electronAPI.callAPI({
+      url,
+      method: 'POST',
+      data: {
+        port: wPort,
+        user_id: uid,
+        msg: TEXT_MSG_TEST_BODY
+      }
+    })
+
+    if (!result?.success) {
+      textTestResponseRaw.value = JSON.stringify(
+        { ipcError: result?.msg || '请求失败', detail: result },
+        null,
+        2
+      )
+      ElMessage.error(result?.msg || '请求失败')
+      return
+    }
+
+    const body = result.data
+    textTestResponseRaw.value =
+      typeof body === 'string'
+        ? body
+        : JSON.stringify(body, null, 2)
+
+    const innerOk = body && typeof body === 'object' && body.success === true
+    if (innerOk) {
+      ElMessage.success('调用成功')
+    } else {
+      const m = body?.message || body?.msg || '接口返回 failure'
+      ElMessage.warning(typeof m === 'string' ? m : '接口返回异常，请看下方正文')
+    }
+  } catch (e) {
+    const wrap = {
+      exception: true,
+      message: e?.message || String(e)
+    }
+    textTestResponseRaw.value = JSON.stringify(wrap, null, 2)
+    ElMessage.error(e?.message || String(e))
+  } finally {
+    testingTextMsg.value = false
+  }
 }
 
 // 获取应用版本
@@ -671,6 +919,334 @@ onUnmounted(() => {
 
 .close-prefs-hint-text strong {
   color: #303133;
+}
+
+.api-test-section {
+  --api-test-label-w: 132px;
+  --api-test-col-gap: 14px;
+  --api-test-split-gap: 22px;
+  --api-test-left-max: 452px;
+
+  margin-bottom: 0 !important;
+  width: 100%;
+}
+
+.api-test-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1.08fr);
+  gap: var(--api-test-split-gap);
+  align-items: stretch;
+  width: 100%;
+}
+
+.api-test-split-left {
+  justify-self: start;
+  box-sizing: border-box;
+  width: min(var(--api-test-left-max, 452px), 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.api-test-split-right {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.api-test-rows {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.api-test-row {
+  display: grid;
+  grid-template-columns: var(--api-test-label-w) minmax(0, 1fr);
+  column-gap: var(--api-test-col-gap);
+  align-items: start;
+}
+
+.api-test-field-label {
+  margin: 0;
+  padding-top: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--el-text-color-regular);
+  text-align: left;
+}
+
+.api-test-field-label::after {
+  content: '：';
+}
+
+.api-test-field-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-test-wecom-select {
+  width: 100%;
+}
+
+.api-test-unified-input {
+  width: 100%;
+}
+
+.api-test-wecom-empty {
+  margin: 0;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.55;
+}
+
+.api-test-msg-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-test-msg-caption {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.api-test-msg-code {
+  display: block;
+  padding: 8px 12px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+  color: var(--el-text-color-primary);
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.api-test-actions-row {
+  width: 100%;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: var(--api-test-label-w) minmax(0, 1fr);
+  column-gap: var(--api-test-col-gap);
+  align-items: center;
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+.api-test-actions-spacer {
+  display: block;
+}
+
+.api-test-actions-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.api-test-request-visual {
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+  padding: 16px 18px;
+  background: var(--el-fill-color-extra-light, #fafafa);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.api-test-split-right .api-test-json-pre {
+  max-height: clamp(140px, 32vh, 320px);
+}
+
+.api-test-visual-heading {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.api-test-meta-tight:not(:last-child) {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+}
+
+.api-test-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.api-test-meta-line-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.api-test-meta-label {
+  flex: 0 0 76px;
+  margin: 0;
+  padding-top: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+
+.api-test-meta-line-stack .api-test-meta-label {
+  flex-basis: auto;
+  padding-top: 0;
+}
+
+.api-test-meta-value-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.api-test-meta-url {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  font-size: 12px;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--el-color-primary-light-7, #d9ecff);
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+}
+
+.api-test-meta-method {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--el-text-color-secondary);
+  padding: 3px 8px;
+  background: rgba(64, 158, 255, 0.12);
+  border-radius: 4px;
+}
+
+.api-test-response-block.api-test-meta-tight:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.api-test-split-right .api-test-response-block .api-test-json-pre {
+  max-height: clamp(160px, 38vh, 380px);
+}
+
+.api-test-json-pre {
+  margin: 0;
+  padding: 8px 12px;
+  max-height: 200px;
+  overflow: auto;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.api-test-resp-loading {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  background: #fff;
+  border: 1px dashed var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.api-test-resp-placeholder {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--el-text-color-placeholder);
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px dashed var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+@media (max-width: 920px) {
+  .api-test-split {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .api-test-split-left {
+    justify-self: stretch;
+    width: 100%;
+    max-width: none;
+  }
+
+  .api-test-split-right .api-test-request-visual {
+    flex: none;
+  }
+
+  .api-test-split-right .api-test-json-pre {
+    max-height: 200px;
+  }
+
+  .api-test-split-right .api-test-response-block .api-test-json-pre {
+    max-height: 200px;
+  }
+
+  .api-test-actions-row {
+    margin-bottom: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .api-test-section {
+    --api-test-label-w: 100%;
+  }
+
+  .api-test-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+
+  .api-test-field-label {
+    padding-top: 0;
+    text-align: left;
+  }
+
+  .api-test-actions-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 8px;
+  }
+
+  .api-test-actions-spacer {
+    display: none;
+  }
 }
 
 .footer-actions {

@@ -389,6 +389,7 @@ const readConfig = () => {
         callback: '',
         open_log: 'true',
         save_log: 'true',
+        auto_check_update: 'true',
         window_close_action: 'ask'
       },
       custom: {
@@ -878,7 +879,11 @@ app.whenReady().then(() => {
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
     const updateConfig = readConfig()
-    const autoCheckUpdate = updateConfig.sys?.auto_check_update === 'true' || updateConfig.sys?.auto_check_update === true
+    const acu = updateConfig.sys?.auto_check_update
+    const autoCheckUpdate = !(
+      acu === 'false' ||
+      acu === false
+    )
     if (autoCheckUpdate) {
       // 延迟3秒后检查更新，避免影响应用启动速度
       setTimeout(() => {

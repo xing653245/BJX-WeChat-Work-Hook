@@ -9,6 +9,7 @@ export const useConfigStore = defineStore('config', () => {
       callback: '',
       open_log: 'true',
       save_log: 'true',
+      auto_check_update: 'true',
       window_close_action: 'ask'
     },
     custom: {
