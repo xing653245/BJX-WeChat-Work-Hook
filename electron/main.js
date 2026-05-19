@@ -62,6 +62,7 @@ const {
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService
 } = require('./services/wecomInject')
+const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -70,6 +71,8 @@ let tray = null
 let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
 let loginStatusCheckInterval = null // 定时检查登录状态
+let wecomCrashDialogInterval = null // Windows：监视企微「错误报告」崩溃窗口
+let lastWecomCrashRecoveryAt = 0 // 关闭崩溃窗后触发 it.exe 重启的冷却时间戳
 
 // 更新配置
 // 注意：更新服务器配置在 package.json 的 build.publish 中设置
@@ -513,6 +516,40 @@ const startTimedLoginStatusCheck = () => {
   console.log('定时检查登录状态已启动，间隔 30 秒')
 }
 
+/**
+ * Windows：周期性查找企微「错误报告」窗口并发送关闭，随后尽快走与定时任务相同的注入重启逻辑
+ */
+const startWecomCrashDialogWatch = () => {
+  if (process.platform !== 'win32') return
+  if (wecomCrashDialogInterval) {
+    clearInterval(wecomCrashDialogInterval)
+    wecomCrashDialogInterval = null
+  }
+  const intervalMs = 8000
+  const recoveryCooldownMs = 25000
+  wecomCrashDialogInterval = setInterval(() => {
+    tryCloseWecomCrashDialogs()
+      .then((closed) => {
+        if (closed <= 0) return
+        console.log(`[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
+        const now = Date.now()
+        if (now - lastWecomCrashRecoveryAt < recoveryCooldownMs) {
+          console.log('[企微崩溃] 距上次注入恢复较短，跳过本轮（避免重复启动 it.exe）')
+          return
+        }
+        lastWecomCrashRecoveryAt = now
+        console.log('[企微崩溃] 开始对配置中的实例做登录探测，异常端口将执行注入重启')
+        timedGetLoginStatus().catch((e) => {
+          console.error('[企微崩溃] 注入恢复检查失败:', e.message)
+        })
+      })
+      .catch((e) => {
+        console.warn('[企微崩溃] 监视脚本异常:', e.message)
+      })
+  }, intervalMs)
+  console.log(`企微崩溃报告窗口监视已启动，每 ${intervalMs / 1000} 秒检查一次`)
+}
+
 /** 与应用窗口相同的图标路径，供托盘等复用 */
 function resolveAppIconPath() {
   let iconPath
@@ -881,6 +918,7 @@ app.whenReady().then(() => {
 
   // 启动定时检查登录状态
   startTimedLoginStatusCheck()
+  startWecomCrashDialogWatch()
 
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
