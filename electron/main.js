@@ -644,6 +644,13 @@ function createWindow() {
     title: '北极熊企微框架Pro'
   })
 
+  // 本地未打包运行时默认打开开发者工具（含：走 Vite、或本地已有 dist 仅 loadFile 调试）
+  if (!app.isPackaged) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow.webContents.openDevTools({ mode: 'bottom' })
+    })
+  }
+
   // 开发环境加载本地服务器，生产环境加载构建后的文件
   // 检查是否是开发模式（通过检查 dist 目录是否存在来判断）
   let distPath
@@ -675,7 +682,6 @@ function createWindow() {
         if (res.statusCode === 200) {
           console.log('Loading http://localhost:5173')
           mainWindow.loadURL('http://localhost:5173')
-          mainWindow.webContents.openDevTools()
         } else {
           retryCount++
           if (retryCount < maxRetries) {

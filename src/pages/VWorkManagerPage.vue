@@ -143,6 +143,73 @@ const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT
 // 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
 const injectKey = computed(() => configStore.config.sys?.inject_key || '')
 
+/**
+ * 兼容企微 1002 返回：可能是 { data: { … } } 或外层带 errno、内层再包一层 data
+ */
+function pickPersonalRecord(personalInfo) {
+  const root = personalInfo?.data
+  if (!root || typeof root !== 'object') return null
+  if (root.user_id != null || root.nick_name != null) return root
+  if (root.data && typeof root.data === 'object') return root.data
+  return root
+}
+
+/**
+ * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api/settings/auto-update，state=0）
+ */
+async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
+  if (!window.electronAPI?.callAPI) {
+    console.warn('[auto-update] 跳过：electronAPI.callAPI 不可用')
+    return
+  }
+
+  let sp
+  try {
+    if (window.electronAPI.readConfig) {
+      const cfg = await window.electronAPI.readConfig()
+      const raw = cfg?.sys?.server_port ?? DEFAULT_SERVER_PORT_STRING
+      sp = parseInt(String(raw).trim(), 10)
+    } else {
+      sp = parseInt(String(serverPort.value || DEFAULT_SERVER_PORT_STRING).trim(), 10)
+    }
+  } catch (e) {
+    console.warn('[auto-update] 读取监听端口失败，使用本地缓存:', e)
+    sp = parseInt(String(serverPort.value || DEFAULT_SERVER_PORT_STRING).trim(), 10)
+  }
+
+  if (Number.isNaN(sp) || sp <= 1024 || sp > 10000) {
+    console.warn('[auto-update] 跳过：框架监听端口无效，请检查 ini 中 sys.server_port（有效区间 1025～10000）', {
+      parsed: sp
+    })
+    return
+  }
+
+  const p = parseInt(String(wecomHttpPort), 10)
+  if (Number.isNaN(p) || p < 1) {
+    console.warn('[auto-update] 跳过：企微端口无效', { wecomHttpPort })
+    return
+  }
+
+  const url = `http://127.0.0.1:${sp}/api/settings/auto-update`
+  try {
+    const result = await window.electronAPI.callAPI({
+      url,
+      method: 'POST',
+      data: {
+        port: p,
+        state: 0
+      }
+    })
+    if (!result?.success) {
+      console.warn('[auto-update] 调用失败:', result?.msg || result)
+    } else {
+      console.info('[auto-update] 已请求关闭企微自动更新（成功）', { listenPort: sp, wecomPort: p, response: result?.data })
+    }
+  } catch (e) {
+    console.warn('[auto-update] 调用异常:', e?.message || e)
+  }
+}
+
 // 启动时加载登录信息，只负责把配置中的账号展示到表格
 const loadLoginInfo = async () => {
   const loginInfo = configStore.getLoginInfo()
@@ -442,30 +509,36 @@ const checkLoginStatus = async (port, rowIndex) => {
     
     try {
       const result = await VWorkApi.getLoginStatus(port)
-      if (result && result.data) {
+      if (result?.data) {
         const status = result.data.status
-        if (status === 1) {
+        const loggedIn = Number(status) === 1 || status === true
+        if (loggedIn) {
           // 已登录
           clearInterval(checkInterval)
           const personalInfo = await VWorkApi.getPersonalInfo(port)
-          
-          if (personalInfo && personalInfo.data) {
-            const data = personalInfo.data || personalInfo.data.data
-            const pid = await getPidByPort(port)
-            updateTableItem(rowIndex, {
-              nick_name: data.nick_name || '-',
-              user_id: data.user_id || '-',
-              port: String(port),
-              pid: String(pid || '-')
-            })
 
-            // 获取授权信息
-            await refreshAuthForRow(rowIndex, data.user_id, {
-              ...data,
-              port,
-              pid
-            })
+          const data = pickPersonalRecord(personalInfo)
+          if (!data) {
+            console.warn('[企微管理] 已登录但 1002 返回结构异常，无法写配置；已跳过默认 auto-update', personalInfo)
+            return
           }
+
+          const pid = await getPidByPort(port)
+          updateTableItem(rowIndex, {
+            nick_name: data.nick_name || '-',
+            user_id: data.user_id || '-',
+            port: String(port),
+            pid: String(pid || '-')
+          })
+
+          // 获取授权信息
+          await refreshAuthForRow(rowIndex, data.user_id, {
+            ...data,
+            port,
+            pid
+          })
+
+          await invokeDefaultAutoUpdateOff(port)
         }
       }
       
