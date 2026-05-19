@@ -48,6 +48,40 @@
       </div>
     </el-card>
 
+    <el-card class="settings-card">
+      <template #header>
+        <div class="card-header">
+          <span>窗口与关闭</span>
+        </div>
+      </template>
+
+      <div class="form-item form-item-column">
+        <div class="form-label-row">
+          <label>点击窗口右上角关闭时：</label>
+          <el-tooltip
+            content="保存后立即生效，无需重启。选择「直接退出」将跳过确认框。若仍使用「每次询问」，此前勾选的「不再提醒」也会生效。"
+            placement="top"
+          >
+            <span><el-icon><QuestionFilled /></el-icon></span>
+          </el-tooltip>
+        </div>
+        <el-radio-group v-model="formData.window_close_action" class="close-action-radios">
+          <el-radio value="ask">每次询问（最小化到托盘 / 退出）</el-radio>
+          <el-radio value="tray">直接最小化到系统托盘（不询问）</el-radio>
+          <el-radio value="quit">直接退出程序（不询问）</el-radio>
+        </el-radio-group>
+        <div v-if="hasStoredCloseConfirmPrefs" class="close-prefs-hint-box">
+          <p class="close-prefs-hint-text">
+            检测到上次关窗时勾选了「不再提醒」，将一直按记忆中的操作执行（不会再弹框）。若想改回<strong>弹出选择框</strong>，或已为「最小化」但想改成<strong>关闭程序</strong>，可先点右侧按钮清空记忆；
+            或直接选上方的<strong>「直接退出程序」</strong>并点页面底部<strong>保存修改</strong>。
+          </p>
+          <el-button type="warning" plain @click="clearStoredCloseConfirm">
+            清除「不再提醒」记忆
+          </el-button>
+        </div>
+      </div>
+    </el-card>
+
     <el-card class="settings-card update-card">
       <template #header>
         <div class="card-header">
@@ -202,16 +236,21 @@ import {
 } from '@element-plus/icons-vue'
 import { useConfigStore } from '../stores/config'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
+import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
 
 const configStore = useConfigStore()
 const saving = ref(false)
+/** localStorage「不再提醒」存在时文案提示 */
+const hasStoredCloseConfirmPrefs = ref(false)
 
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
   open_log: true,
   save_log: true,
-  auto_check_update: false
+  auto_check_update: false,
+  /** ask | tray | quit，写入 ini sys.window_close_action */
+  window_close_action: 'ask'
 })
 
 // 更新相关状态
@@ -231,6 +270,25 @@ const isUpdateInProgress = computed(() => {
   return checkingUpdate.value || downloadingUpdate.value || installingUpdate.value
 })
 
+/** 用于与 ini.window_close_action 对比 */
+function normalizeIniCloseAction(raw) {
+  const wca = String(raw || 'ask').trim().toLowerCase()
+  if (wca === 'quit' || wca === 'exit') return 'quit'
+  if (wca === 'tray' || wca === 'minimize_tray') return 'tray'
+  return 'ask'
+}
+
+function refreshCloseConfirmPrefsHint() {
+  hasStoredCloseConfirmPrefs.value = getCloseConfirmAutoAction() !== null
+}
+
+/** 重置关窗本地的「不再询问」偏好 */
+function clearStoredCloseConfirm() {
+  clearCloseConfirmPrefs()
+  refreshCloseConfirmPrefsHint()
+  ElMessage.success('已清除记忆，下次关窗将重新弹出选择（若配置为「每次询问」）')
+}
+
 // 加载配置
 const loadConfig = () => {
   const config = configStore.config
@@ -239,6 +297,16 @@ const loadConfig = () => {
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = config.sys?.auto_check_update === 'true' || config.sys?.auto_check_update === true
+
+  const wca = String(config.sys?.window_close_action || 'ask').trim().toLowerCase()
+  if (wca === 'quit' || wca === 'exit') {
+    formData.window_close_action = 'quit'
+  } else if (wca === 'tray' || wca === 'minimize_tray') {
+    formData.window_close_action = 'tray'
+  } else {
+    formData.window_close_action = 'ask'
+  }
+  refreshCloseConfirmPrefsHint()
 }
 
 // 获取应用版本
@@ -445,6 +513,9 @@ const handleSave = async () => {
   }
 
   saving.value = true
+  const prevCloseIni = normalizeIniCloseAction(configStore.config.sys?.window_close_action)
+  const nextClose = formData.window_close_action || 'ask'
+  const oldPortBeforeSave = configStore.config.sys?.server_port
   try {
     const newConfig = {
       sys: {
@@ -452,7 +523,8 @@ const handleSave = async () => {
         callback: formData.callback || '',
         open_log: String(formData.open_log),
         save_log: String(formData.save_log),
-        auto_check_update: String(formData.auto_check_update)
+        auto_check_update: String(formData.auto_check_update),
+        window_close_action: formData.window_close_action || 'ask'
       },
       custom: {
         login_info: configStore.getLoginInfo()
@@ -462,9 +534,20 @@ const handleSave = async () => {
     const result = await configStore.saveConfig(newConfig)
     
     if (result.success) {
+      // 直接退出：与本地「一直最小化」记忆冲突，保存后顺带清除记忆
+      if (nextClose === 'quit') {
+        clearCloseConfirmPrefs()
+        refreshCloseConfirmPrefsHint()
+      } else if (prevCloseIni !== 'ask' && nextClose === 'ask') {
+        // 从「托盘 / 退出」改回询问时，清空记忆以免仍按旧习惯自动最小化
+        clearCloseConfirmPrefs()
+        refreshCloseConfirmPrefsHint()
+      }
       // 如果端口改变了，需要重启FastAPI服务器
-      const oldPort = configStore.config.sys?.server_port
-      if (oldPort !== String(formData.server_port) && window.electronAPI) {
+      if (
+        String(oldPortBeforeSave) !== String(formData.server_port) &&
+        window.electronAPI
+      ) {
         await window.electronAPI.restartFastAPIServer(parseInt(formData.server_port))
       }
       ElMessage.success('修改部分设置后，需要重启框架')
@@ -541,6 +624,53 @@ onUnmounted(() => {
   text-align: right;
   margin-right: 12px;
   font-size: 14px;
+}
+
+.form-item-column {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.form-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.form-item-column .form-label-row label {
+  width: auto;
+  margin-right: 0;
+  text-align: left;
+  font-weight: 500;
+}
+
+.close-action-radios {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding-left: 0;
+}
+
+.close-prefs-hint-box {
+  margin-top: 16px;
+  padding: 12px 14px;
+  max-width: 640px;
+  background: #fdf6ec;
+  border: 1px solid #faecd8;
+  border-radius: 8px;
+}
+
+.close-prefs-hint-text {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #606266;
+}
+
+.close-prefs-hint-text strong {
+  color: #303133;
 }
 
 .footer-actions {

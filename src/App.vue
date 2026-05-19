@@ -16,22 +16,26 @@
         </el-tab-pane>
       </el-tabs>
     </el-main>
+    <CloseConfirmDialog v-model="closeConfirmVisible" />
   </el-container>
 </template>
 
 <script setup>
-import { ref, onMounted, provide } from 'vue'
+import { ref, onMounted, onUnmounted, provide } from 'vue'
 import { ElMessage } from 'element-plus'
 import IndexPage from './pages/IndexPage.vue'
 import RunLogsPage from './pages/RunLogsPage.vue'
 import VWorkManagerPage from './pages/VWorkManagerPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
+import CloseConfirmDialog from './components/CloseConfirmDialog.vue'
+import { getCloseConfirmAutoAction } from './utils/closeConfirmPrefs'
 import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
 import { confirmLoggedIn } from './utils/loginStatusRetry'
 
 const activeTab = ref('index')
 const vworkManagerRef = ref(null)
+const closeConfirmVisible = ref(false)
 
 /** 通过 HTTP 启动企微时主进程推送端口，由企微管理页消费（与界面添加企微一致） */
 const wecomApiInjectPorts = ref([])
@@ -113,6 +117,18 @@ onMounted(() => {
       wecomApiInjectPorts.value.push(p)
     }
   })
+  window.electronAPI?.onCloseConfirmRequest?.(() => {
+    const auto = getCloseConfirmAutoAction()
+    if (auto) {
+      window.electronAPI?.respondCloseConfirm?.(auto)
+      return
+    }
+    closeConfirmVisible.value = true
+  })
+})
+
+onUnmounted(() => {
+  window.electronAPI?.removeCloseConfirmRequestListener?.()
 })
 </script>
 

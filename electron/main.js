@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, Menu, dialog, Tray, nativeImage } = require('electron')
 const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
@@ -64,6 +64,10 @@ const {
 } = require('./services/wecomInject')
 
 let mainWindow
+/** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
+let tray = null
+/** 为 true 时允许主窗口真正关闭（避免关闭确认与再次拦截） */
+let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
 let loginStatusCheckInterval = null // 定时检查登录状态
 
@@ -384,13 +388,24 @@ const readConfig = () => {
         server_port: DEFAULT_SERVER_PORT_STRING,
         callback: '',
         open_log: 'true',
-        save_log: 'true'
+        save_log: 'true',
+        window_close_action: 'ask'
       },
       custom: {
         login_info: '[]'
       }
     }
   }
+}
+
+/** 设置页「点击关闭主窗口」：ask 弹窗；tray 进托盘；quit 直接退出（立即读配置，保存后无需重启） */
+function getWindowCloseBehavior() {
+  const raw = String(readConfig().sys?.window_close_action || 'ask')
+    .trim()
+    .toLowerCase()
+  if (raw === 'quit' || raw === 'exit') return 'quit'
+  if (raw === 'tray' || raw === 'minimize_tray') return 'tray'
+  return 'ask'
 }
 
 // 保存配置文件
@@ -497,23 +512,121 @@ const startTimedLoginStatusCheck = () => {
   console.log('定时检查登录状态已启动，间隔 30 秒')
 }
 
-function createWindow() {
-  // 图标路径：开发环境使用源文件，生产环境使用打包后的文件
+/** 与应用窗口相同的图标路径，供托盘等复用 */
+function resolveAppIconPath() {
   let iconPath
   if (app.isPackaged) {
-    // 打包后：图标应该在 dist 目录中（通过 public 目录复制）
     iconPath = path.join(app.getAppPath(), 'dist', 'bg.png')
-    // 如果 dist 中没有，尝试从 app.asar 外部查找
     if (!fs.existsSync(iconPath)) {
       iconPath = path.join(process.resourcesPath, '..', 'dist', 'bg.png')
     }
   } else {
-    // 开发环境：使用 public 目录或 src/assets 目录
     iconPath = path.join(__dirname, '../public/bg.png')
     if (!fs.existsSync(iconPath)) {
       iconPath = path.join(__dirname, '../src/assets/bg.png')
     }
   }
+  return iconPath
+}
+
+function destroyTray() {
+  if (tray) {
+    try {
+      tray.destroy()
+    } catch (e) {
+      console.warn('destroyTray:', e.message)
+    }
+    tray = null
+  }
+}
+
+function createTrayIconImage() {
+  const iconPath = resolveAppIconPath()
+  if (!fs.existsSync(iconPath)) {
+    console.warn('托盘图标文件不存在:', iconPath)
+    return nativeImage.createEmpty()
+  }
+  let image = nativeImage.createFromPath(iconPath)
+  if (image.isEmpty()) {
+    console.warn('托盘图标无法解码:', iconPath)
+    return nativeImage.createEmpty()
+  }
+  // Windows 通知区像素小，缩放到 16 避免显示为空白方块
+  if (process.platform === 'win32') {
+    const { width, height } = image.getSize()
+    if (width > 16 || height > 16) {
+      image = image.resize({ width: 16, height: 16 })
+    }
+  }
+  return image
+}
+
+function showMainFromTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (process.platform === 'win32' || process.platform === 'linux') {
+    mainWindow.setSkipTaskbar(false)
+  }
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+/** 创建或复用托盘实例，失败返回 false */
+function ensureTray() {
+  if (tray) return true
+  try {
+    const image = createTrayIconImage()
+    if (image.isEmpty()) {
+      return false
+    }
+    tray = new Tray(image)
+    tray.setToolTip('北极熊企微框架Pro')
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: '显示窗口',
+          click: () => {
+            showMainFromTray()
+          }
+        },
+        { type: 'separator' },
+        {
+          label: '退出',
+          click: () => {
+            allowMainWindowClose = true
+            app.quit()
+          }
+        }
+      ])
+    )
+    tray.on('click', () => {
+      showMainFromTray()
+    })
+    return true
+  } catch (e) {
+    console.error('创建系统托盘失败:', e)
+    return false
+  }
+}
+
+/**
+ * 最小化到系统托盘：隐藏窗口并显示托盘图标（不是 minimize，否则只在任务栏）
+ */
+function minimizeToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!ensureTray()) {
+    console.warn('托盘不可用，退化为普通最小化到任务栏')
+    mainWindow.minimize()
+    return
+  }
+  if (process.platform === 'win32' || process.platform === 'linux') {
+    mainWindow.setSkipTaskbar(true)
+  }
+  mainWindow.hide()
+}
+
+function createWindow() {
+  allowMainWindowClose = false
+  const iconPath = resolveAppIconPath()
 
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -612,7 +725,62 @@ function createWindow() {
     console.log('Page loaded successfully')
   })
 
+  mainWindow.on('close', (e) => {
+    if (allowMainWindowClose) {
+      return
+    }
+    e.preventDefault()
+    const wc = mainWindow.webContents
+    if (wc.isDestroyed()) {
+      return
+    }
+    const closeBehavior = getWindowCloseBehavior()
+
+    // 页面仍在加载时无法展示自定义 UI
+    if (wc.isLoading()) {
+      if (closeBehavior === 'quit') {
+        allowMainWindowClose = true
+        mainWindow.close()
+        return
+      }
+      if (closeBehavior === 'tray') {
+        minimizeToTray()
+        return
+      }
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'question',
+        buttons: ['最小化', '退出程序', '取消'],
+        cancelId: 2,
+        defaultId: 0,
+        title: '关闭窗口',
+        message: '请选择最小化窗口还是退出程序？',
+        detail:
+          '选择「最小化」后程序将最小化到任务栏并继续运行；选择「退出程序」将结束应用。'
+      })
+      if (choice === 0) {
+        minimizeToTray()
+      } else if (choice === 1) {
+        allowMainWindowClose = true
+        mainWindow.close()
+      }
+      return
+    }
+
+    if (closeBehavior === 'quit') {
+      allowMainWindowClose = true
+      mainWindow.close()
+      return
+    }
+    if (closeBehavior === 'tray') {
+      minimizeToTray()
+      return
+    }
+
+    wc.send('close-confirm-request')
+  })
+
   mainWindow.on('closed', () => {
+    destroyTray()
     mainWindow = null
     if (expressServer) {
       expressServer.close(() => {
@@ -631,7 +799,13 @@ function createWindow() {
       {
         label: 'File',
         submenu: [
-          { role: 'quit' }
+          {
+            label: 'Quit',
+            click: () => {
+              allowMainWindowClose = true
+              app.quit()
+            }
+          }
         ]
       },
       {
@@ -729,6 +903,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  destroyTray()
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
@@ -736,6 +911,22 @@ app.on('before-quit', () => {
 })
 
 // IPC 通信处理
+ipcMain.handle('respond-close-confirm', (event, action) => {
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) {
+    return { ok: false }
+  }
+  if (event.sender !== mainWindow.webContents) {
+    return { ok: false }
+  }
+  if (action === 'minimize') {
+    minimizeToTray()
+  } else if (action === 'quit') {
+    allowMainWindowClose = true
+    mainWindow.close()
+  }
+  return { ok: true }
+})
+
 ipcMain.handle('read-config', () => {
   const config = readConfig()
   return {
@@ -1186,6 +1377,7 @@ ipcMain.handle('download-update', async () => {
 
 ipcMain.handle('quit-and-install', async () => {
   try {
+    allowMainWindowClose = true
     autoUpdater.quitAndInstall(false, true)
     return { success: true, message: '正在退出应用并安装更新...' }
   } catch (error) {
