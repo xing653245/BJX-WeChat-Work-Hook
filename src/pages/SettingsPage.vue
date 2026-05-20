@@ -796,7 +796,14 @@ const handleSave = async () => {
         String(oldPortBeforeSave) !== String(formData.server_port) &&
         window.electronAPI
       ) {
-        await window.electronAPI.restartFastAPIServer(parseInt(formData.server_port))
+        const restartRes = await window.electronAPI.restartFastAPIServer(
+          parseInt(formData.server_port, 10)
+        )
+        if (!restartRes?.success) {
+          ElMessage.error(
+            `HTTP 服务未在端口 ${formData.server_port} 启动：${restartRes?.message || '未知错误'}。请检查端口是否被占用，或完全退出框架后重新打开。`
+          )
+        }
       }
       ElMessage.success('修改部分设置后，需要重启框架')
     } else {

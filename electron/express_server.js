@@ -57,8 +57,8 @@ app.post('/msg', async (req, res) => {
     // 如果开启日志且授权有效，推送消息到Electron主进程
     if (ini_config.open_log && valid_auth) {
       try {
-        await axios.post(MESSAGE_SERVER_URL, data, {
-          timeout: 1000
+        await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', data, {
+          timeout: 15000
         })
       } catch (error) {
         console.error(`推送消息到Electron失败: ${error.message}`)

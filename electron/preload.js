@@ -1,5 +1,26 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+/**
+ * 多个订阅者共享同一个 ipc 通道；禁止对 fastapi-message 使用 removeAllListeners，
+ * 否则误删其它页面（如 App 退出登录处理）的监听，也会导致运行日志收不到推送。
+ */
+const fastapiMessageCallbacks = new Set()
+let fastapiMessageIpcWired = false
+
+function ensureFastapiMessageIpcWired() {
+  if (fastapiMessageIpcWired) return
+  fastapiMessageIpcWired = true
+  ipcRenderer.on('fastapi-message', (_event, data) => {
+    fastapiMessageCallbacks.forEach((cb) => {
+      try {
+        cb(data)
+      } catch (e) {
+        console.error('[fastapi-message] subscriber error:', e)
+      }
+    })
+  })
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // 配置相关
   readConfig: () => ipcRenderer.invoke('read-config'),
@@ -29,14 +50,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // FastAPI服务器
   restartFastAPIServer: (port) => ipcRenderer.invoke('restart-fastapi-server', port),
   
-  // 消息监听（用于接收FastAPI推送的消息）
+  // 消息监听（用于接收FastAPI推送的消息）。返回 () => void，仅移除本次订阅。
   onFastAPIMessage: (callback) => {
-    ipcRenderer.on('fastapi-message', (event, data) => callback(data))
+    if (typeof callback !== 'function') return () => {}
+    ensureFastapiMessageIpcWired()
+    fastapiMessageCallbacks.add(callback)
+    return () => {
+      fastapiMessageCallbacks.delete(callback)
+    }
   },
-  
-  // 移除消息监听
+
+  // 仅清除渲染层订阅集合（不断开 ipc）；兼容旧代码，不推荐调用
   removeFastAPIMessageListener: () => {
-    ipcRenderer.removeAllListeners('fastapi-message')
+    fastapiMessageCallbacks.clear()
   },
 
   // HTTP /api/other/start-wecom 启动企微成功后，主进程转发，用于企微管理表格与登录轮询

@@ -232,7 +232,19 @@ const startMessageServer = () => {
 // Express 服务器管理（Node.js版本，替代Python FastAPI）
 let expressServer = null
 
+/**
+ * 启动内置 HTTP（Express）。失败时返回 { success:false }，不抛异常，便于 IPC/设置页提示。
+ * @param {number|string} port
+ * @returns {Promise<{ success: boolean, message?: string }>}
+ */
 const startExpressServer = async (port) => {
+  const p = parseInt(port, 10)
+  if (Number.isNaN(p) || p <= 1024 || p > 10000) {
+    const msg = `监听端口无效: ${port}（有效范围 1025～10000）`
+    console.error(msg)
+    return { success: false, message: msg }
+  }
+
   // 先关闭旧 HTTP 服务并等待端口释放，避免与 killProcessByPort 竞态
   if (expressServer) {
     const oldServer = expressServer
@@ -252,19 +264,22 @@ const startExpressServer = async (port) => {
   }
 
   // 仅清理「其他进程」占用；当前进程监听时不再 taskkill 自身（见 killProcessByPort）
-  await killProcessByPort(port)
+  await killProcessByPort(p)
 
   process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
   const { runServer } = require('./express_server')
-  console.log(`启动Express服务器，端口: ${port}`)
+  console.log(`启动Express服务器，端口: ${p}`)
 
   try {
-    const server = await runServer(port)
+    const server = await runServer(p)
     expressServer = server
-    console.log(`Express服务器启动成功，监听端口 ${port}`)
+    console.log(`Express服务器启动成功，监听端口 ${p}`)
+    return { success: true }
   } catch (error) {
-    console.error('启动Express服务器失败:', error.message)
+    const msg = error.message || String(error)
+    console.error('启动Express服务器失败:', msg)
     expressServer = null
+    return { success: false, message: msg }
   }
 }
 
@@ -912,8 +927,10 @@ app.whenReady().then(() => {
   
   // 启动Express服务器（Node.js版本）
   const config = readConfig()
-  startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT)).catch((err) => {
-    console.error('启动Express失败:', err)
+  startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)).then((r) => {
+    if (!r.success) {
+      console.error('启动Express失败:', r.message)
+    }
   })
 
   // 启动定时检查登录状态
@@ -1358,14 +1375,12 @@ ipcMain.handle('is-port-in-use', async (event, port) => {
 
 // 重启Express服务器
 ipcMain.handle('restart-express-server', async (event, port) => {
-  await startExpressServer(port)
-  return { success: true }
+  return startExpressServer(port)
 })
 
 // 兼容旧名称
 ipcMain.handle('restart-fastapi-server', async (event, port) => {
-  await startExpressServer(port)
-  return { success: true }
+  return startExpressServer(port)
 })
 
 // 发送消息到渲染进程（用于日志推送）

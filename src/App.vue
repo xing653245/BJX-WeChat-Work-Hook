@@ -37,6 +37,9 @@ const activeTab = ref('index')
 const vworkManagerRef = ref(null)
 const closeConfirmVisible = ref(false)
 
+/** 取消 fastapi-message 中退出登录逻辑订阅（与其它页面监听互不干扰） */
+let removeFastapiLogoutListener = null
+
 /** 通过 HTTP 启动企微时主进程推送端口，由企微管理页消费（与界面添加企微一致） */
 const wecomApiInjectPorts = ref([])
 provide('wecomApiInjectPorts', wecomApiInjectPorts)
@@ -108,7 +111,8 @@ const handleLogoutMessage = async (data) => {
 
 // 监听消息推送
 onMounted(() => {
-  window.electronAPI?.onFastAPIMessage?.(handleLogoutMessage)
+  removeFastapiLogoutListener =
+    window.electronAPI?.onFastAPIMessage?.(handleLogoutMessage) || null
   window.electronAPI?.onWecomInjectStarted?.((data) => {
     if (data?.port == null) return
     const p = Number(data.port)
@@ -128,6 +132,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  removeFastapiLogoutListener?.()
+  removeFastapiLogoutListener = null
   window.electronAPI?.removeCloseConfirmRequestListener?.()
 })
 </script>

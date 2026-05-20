@@ -44,6 +44,9 @@ const contextMenuVisible = ref(false)
 const contextMenuLeft = ref(0)
 const contextMenuTop = ref(0)
 
+/** 取消 fastapi-message 订阅（只移除本页，勿 removeAllListeners） */
+let removeFastapiLogListener = null
+
 // 格式化时间
 const formatTime = (timestamp) => {
   const date = new Date(timestamp * 1000)
@@ -130,8 +133,8 @@ onMounted(() => {
   document.addEventListener('click', closeContextMenu)
 
   // 监听FastAPI推送的消息
-  if (window.electronAPI && window.electronAPI.onFastAPIMessage) {
-    window.electronAPI.onFastAPIMessage((data) => {
+  if (window.electronAPI?.onFastAPIMessage) {
+    removeFastapiLogListener = window.electronAPI.onFastAPIMessage((data) => {
       addLog(data)
     })
   }
@@ -139,10 +142,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeContextMenu)
-  // 移除消息监听
-  if (window.electronAPI && window.electronAPI.removeFastAPIMessageListener) {
-    window.electronAPI.removeFastAPIMessageListener()
-  }
+  removeFastapiLogListener?.()
+  removeFastapiLogListener = null
 })
 
 // 关闭右键菜单
