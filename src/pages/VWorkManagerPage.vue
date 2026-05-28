@@ -124,6 +124,7 @@ import { useConfigStore } from '../stores/config'
 import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { confirmLoggedIn } from '../utils/loginStatusRetry'
+import { pickPersonalRecord } from '../utils/personalInfo'
 
 const configStore = useConfigStore()
 /** 来自 App.vue：HTTP /api/other/start-wecom 成功后的端口队列 */
@@ -142,17 +143,6 @@ const showSubMenu = ref(false)
 const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT_SERVER_PORT_STRING)
 // 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
 const injectKey = computed(() => configStore.config.sys?.inject_key || '')
-
-/**
- * 兼容企微 1002 返回：可能是 { data: { … } } 或外层带 errno、内层再包一层 data
- */
-function pickPersonalRecord(personalInfo) {
-  const root = personalInfo?.data
-  if (!root || typeof root !== 'object') return null
-  if (root.user_id != null || root.nick_name != null) return root
-  if (root.data && typeof root.data === 'object') return root.data
-  return root
-}
 
 /**
  * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api/settings/auto-update，state=0）
@@ -227,6 +217,22 @@ const loadLoginInfo = async () => {
       label: item.label || ''
     }
     tableData.value.push(tableItem)
+  }
+}
+
+/** 仅从配置重载表格，不做端口探测（避免切换账号后误删） */
+const reloadLoginInfoFromConfig = async () => {
+  await configStore.loadConfig()
+  await loadLoginInfo()
+}
+
+/** 企微 HTTP 是否仍可访问（比 bind 探测更准确） */
+const isWecomPortReachable = async (port) => {
+  try {
+    const result = await VWorkApi.getLoginStatus(port)
+    return result?.data != null
+  } catch {
+    return false
   }
 }
 
@@ -853,21 +859,23 @@ const refreshList = async () => {
           const portCheck = await window.electronAPI.isPortInUse(port)
             if (portCheck && portCheck.inUse) {
             const ok = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
-              attempts: 5,
+              attempts: 3,
               intervalMs: 2000
             })
             if (ok) {
               validRows.push(row)
             } else {
-              try {
-                await window.electronAPI.killProcessByPort(port)
-              } catch (e) {
-                console.error(`杀死端口 ${port} 对应进程失败:`, e)
-              }
+              // 端口仍在但暂未登录（如切换账号中），保留条目，不杀进程
+              validRows.push(row)
             }
           } else {
-            // 端口不在使用，说明进程已退出
-            console.log(`端口 ${port} 已不再使用，从表格中移除`)
+            // bind 探测可能误判（企微常仅监听 127.0.0.1），用 1000 再确认
+            const reachable = await isWecomPortReachable(port)
+            if (reachable) {
+              validRows.push(row)
+            } else {
+              console.log(`端口 ${port} 已不再使用，从表格中移除`)
+            }
           }
         } catch (error) {
           console.error(`检查端口 ${port} 状态失败:`, error)
@@ -905,6 +913,7 @@ const refreshList = async () => {
 
 defineExpose({
   refreshList,
+  reloadLoginInfoFromConfig,
   /** 供调试或父组件直接触发，与 HTTP 回调等价 */
   handleInjectStartedFromApi: handleApiInjectPort
 })

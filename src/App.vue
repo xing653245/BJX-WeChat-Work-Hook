@@ -32,6 +32,7 @@ import { getCloseConfirmAutoAction } from './utils/closeConfirmPrefs'
 import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
 import { confirmLoggedIn } from './utils/loginStatusRetry'
+import { pickPersonalRecord } from './utils/personalInfo'
 
 const activeTab = ref('index')
 const vworkManagerRef = ref(null)
@@ -40,6 +41,9 @@ const closeConfirmVisible = ref(false)
 /** 取消 fastapi-message 中退出登录逻辑订阅（与其它页面监听互不干扰） */
 let removeFastapiLogoutListener = null
 
+/** 同一端口切换账号时，避免重复启动后台等待任务 */
+const accountSwitchWatchers = new Map()
+
 /** 通过 HTTP 启动企微时主进程推送端口，由企微管理页消费（与界面添加企微一致） */
 const wecomApiInjectPorts = ref([])
 provide('wecomApiInjectPorts', wecomApiInjectPorts)
@@ -47,6 +51,92 @@ provide('wecomApiInjectPorts', wecomApiInjectPorts)
 // 初始化配置
 const configStore = useConfigStore()
 configStore.loadConfig()
+
+const refreshManagerList = async ({ light = false } = {}) => {
+  const reload = light
+    ? vworkManagerRef.value?.reloadLoginInfoFromConfig
+    : vworkManagerRef.value?.refreshList
+  if (reload) {
+    await reload()
+    return
+  }
+  setTimeout(async () => {
+    const fn = light
+      ? vworkManagerRef.value?.reloadLoginInfoFromConfig
+      : vworkManagerRef.value?.refreshList
+    await fn?.()
+  }, 100)
+}
+
+/** 企微内切换账号：端口进程仍在，仅更新配置与表格中的账号信息 */
+const watchAccountSwitchOnPort = (portNum) => {
+  if (accountSwitchWatchers.has(portNum)) return
+  accountSwitchWatchers.set(portNum, true)
+
+  ;(async () => {
+    try {
+      const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(portNum), {
+        attempts: 60,
+        intervalMs: 3000
+      })
+      if (!loggedIn) {
+        ElMessage.warning({
+          message: `端口 ${portNum} 长时间未重新登录，请检查企微客户端或在企微管理中手动退出`,
+          duration: 5000,
+          showClose: true
+        })
+        return
+      }
+
+      const personalInfo = await VWorkApi.getPersonalInfo(portNum)
+      const data = pickPersonalRecord(personalInfo)
+      if (!data?.user_id) {
+        console.warn('[切换账号] 1002 返回异常，无法更新配置', personalInfo)
+        return
+      }
+
+      let pid = null
+      if (window.electronAPI?.findPidByPort) {
+        try {
+          const result = await window.electronAPI.findPidByPort(portNum)
+          pid = result > 0 ? result : null
+        } catch (e) {
+          console.warn('[切换账号] 获取 PID 失败:', e)
+        }
+      }
+
+      const loginInfoList = configStore.getLoginInfo()
+      const portStr = String(portNum)
+      const index = loginInfoList.findIndex((item) => parseInt(item.port, 10) === portNum)
+      const prev = index >= 0 ? loginInfoList[index] : {}
+      const updated = {
+        ...prev,
+        nick_name: data.nick_name || prev.nick_name || '-',
+        user_id: data.user_id,
+        port: portStr,
+        pid: pid != null ? String(pid) : prev.pid || '-'
+      }
+
+      if (index >= 0) {
+        loginInfoList[index] = updated
+      } else {
+        loginInfoList.push(updated)
+      }
+      await configStore.updateLoginInfo(loginInfoList)
+      await refreshManagerList({ light: true })
+
+      ElMessage.success({
+        message: `端口 ${portNum} 已切换为 ${updated.nick_name}（${data.user_id}）`,
+        duration: 3000,
+        showClose: true
+      })
+    } catch (error) {
+      console.error('[切换账号] 后台更新失败:', error)
+    } finally {
+      accountSwitchWatchers.delete(portNum)
+    }
+  })()
+}
 
 // 处理退出登录消息通知
 const handleLogoutMessage = async (data) => {
@@ -60,49 +150,36 @@ const handleLogoutMessage = async (data) => {
   const port = data.port || data.server_port
   const portNum = port ? parseInt(port) : NaN
 
-  // 切换企业时框架可能误推 900/退出类消息；先多次确认 1000 仍非已登录再杀进程
+  // 企微内切换账号时框架会推送 900/退出类消息，但端口进程通常仍在。
+  // 不自动杀进程；后台等待该端口重新登录并更新配置。
   if (!Number.isNaN(portNum) && portNum > 0) {
-    const stillLoggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(portNum), {
-      attempts: 5,
-      intervalMs: 2000
+    watchAccountSwitchOnPort(portNum)
+    ElMessage.info({
+      message: `检测到端口 ${portNum} 账号变更，进程保持运行，正在等待重新登录…`,
+      duration: 4000,
+      showClose: true
     })
-    if (stillLoggedIn) return
+    return
   }
 
+  // 无端口信息时仍按原逻辑清理配置（无法做切换等待）
   try {
-    // 杀死进程（即使进程已经退出，这里也会尝试）
-    if (!Number.isNaN(portNum) && window.electronAPI?.killProcessByPort) {
-      await window.electronAPI.killProcessByPort(portNum)
-    }
-    
-    // 从配置中移除登录信息
     const loginInfoList = configStore.getLoginInfo()
-    const filtered = loginInfoList.filter(item => {
+    const filtered = loginInfoList.filter((item) => {
       if (userInfo !== '未知用户' && item.user_id === userInfo) return false
-      if (!Number.isNaN(portNum) && parseInt(item.port) === portNum) return false
       return true
     })
-    
+
     if (filtered.length !== loginInfoList.length) {
       await configStore.updateLoginInfo(filtered)
-      // 刷新列表 - 确保组件已初始化后再调用
-      if (vworkManagerRef.value) {
-        await vworkManagerRef.value.refreshList?.()
-      } else {
-        // 如果组件还没初始化，延迟调用
-        setTimeout(async () => {
-          if (vworkManagerRef.value) {
-            await vworkManagerRef.value.refreshList?.()
-          }
-        }, 100)
-      }
+      await refreshManagerList()
     }
-    
-    // 显示通知
-    const message = !Number.isNaN(portNum) 
-      ? `用户 ${userInfo} 已退出登录，端口 ${port} 的进程已关闭`
-      : `用户 ${userInfo} 已退出登录`
-    ElMessage.warning({ message, duration: 3000, showClose: true })
+
+    ElMessage.warning({
+      message: `用户 ${userInfo} 已退出登录`,
+      duration: 3000,
+      showClose: true
+    })
   } catch (error) {
     console.error('处理退出登录消息时出错:', error)
     ElMessage.error(`处理退出登录失败: ${error.message}`)
