@@ -1266,9 +1266,9 @@ ipcMain.handle('check-port', async (event, port) => {
   return checkPortListenAvailable(port)
 })
 
-// 查找可用端口（随机生成并检查是否被占用）
-ipcMain.handle('find-available-port', async (event, startPort = 1024) => {
-  return findAvailablePortForInject(startPort)
+// 查找可用端口（随机生成并检查是否被占用，范围 1025～10000）
+ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
+  return findAvailablePortForInject(startPort, endPort)
 })
 
 // 执行注入工具（需要根据实际情况调整）

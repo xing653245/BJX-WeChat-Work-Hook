@@ -41,14 +41,22 @@ function checkPortListenAvailable(port) {
   })
 }
 
+/** 企微 HTTP 端口有效范围：(1024, 10000]，即 1025～10000 */
+const WECOM_HTTP_PORT_MIN = 1025
+const WECOM_HTTP_PORT_MAX = 10000
+
 /**
  * 查找可用端口（随机优先，失败则顺序扫描）
- * @param {number} startPort - 随机与顺序扫描下限，默认 1024
+ * @param {number} [startPort=1025] - 扫描下限（含）
+ * @param {number} [endPort=10000] - 扫描上限（含）
  * @returns {Promise<{ port: number | null }>}
  */
-async function findAvailablePort(startPort = 1024) {
-  const minPort = startPort || 1024
-  const maxPort = 65535
+async function findAvailablePort(startPort = WECOM_HTTP_PORT_MIN, endPort = WECOM_HTTP_PORT_MAX) {
+  const minPort = Math.max(parseInt(startPort, 10) || WECOM_HTTP_PORT_MIN, WECOM_HTTP_PORT_MIN)
+  const maxPort = Math.min(parseInt(endPort, 10) || WECOM_HTTP_PORT_MAX, WECOM_HTTP_PORT_MAX)
+  if (minPort > maxPort) {
+    return { port: null }
+  }
   const maxAttempts = 1000
 
   const isPortAvailable = (p) => {

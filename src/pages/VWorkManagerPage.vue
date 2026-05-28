@@ -424,7 +424,7 @@ const executeAddWechat = async (portType, customPortValue) => {
   if (portType === 'random') {
     // 查找可用端口
     if (window.electronAPI) {
-      const result = await window.electronAPI.findAvailablePort(1024)
+      const result = await window.electronAPI.findAvailablePort()
       port = result.port
       if (!port) {
         ElMessage.error('未找到可用端口')

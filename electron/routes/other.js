@@ -95,7 +95,7 @@ router.post('/start-wecom', async (req, res) => {
         })
       }
     } else {
-      const { port: found } = await findAvailablePort(1024)
+      const { port: found } = await findAvailablePort()
       port = found
       if (!port) {
         return res.status(500).json({
