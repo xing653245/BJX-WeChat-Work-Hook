@@ -527,7 +527,7 @@ const startTimedLoginStatusCheck = () => {
     timedGetLoginStatus().catch((e) => {
       console.error('定时检查登录状态异常:', e.message)
     })
-  }, 30000)
+  }, 10000)
   console.log('定时检查登录状态已启动，间隔 30 秒')
 }
 
