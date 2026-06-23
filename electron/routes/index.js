@@ -20,6 +20,8 @@ const otherRoutes = require('./other')
 
 // 注册子路由
 router.use('/login', loginRoutes)
+// 文档路径 /api/user/info（与 /api/login/info 等价）
+router.post('/user/info', createAPIHandler(1002, '获取个人信息'))
 router.use('/contact', contactRoutes)
 router.use('/group', groupRoutes)
 router.use('/message', messageRoutes)

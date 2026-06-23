@@ -139,6 +139,53 @@ const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const showSubMenu = ref(false)
+/** 避免同一端口重复启动登录轮询 */
+const loginPollingPorts = new Set()
+/** 用户主动添加、尚未写入配置的端口（用于恢复表格） */
+const PENDING_PORTS_KEY = 'vwork_pending_wecom_ports'
+
+const trackPendingPort = (port) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return
+  try {
+    const set = new Set(JSON.parse(sessionStorage.getItem(PENDING_PORTS_KEY) || '[]'))
+    set.add(p)
+    sessionStorage.setItem(PENDING_PORTS_KEY, JSON.stringify([...set]))
+  } catch {
+    /* ignore */
+  }
+}
+
+const untrackPendingPort = (port) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return
+  try {
+    const set = new Set(JSON.parse(sessionStorage.getItem(PENDING_PORTS_KEY) || '[]'))
+    set.delete(p)
+    sessionStorage.setItem(PENDING_PORTS_KEY, JSON.stringify([...set]))
+  } catch {
+    /* ignore */
+  }
+}
+
+const findRowIndexByPort = (port) =>
+  tableData.value.findIndex((r) => r.port === String(port))
+
+const ensureTableRowForPort = (port, defaults = {}) => {
+  const ps = String(port)
+  const existing = findRowIndexByPort(port)
+  if (existing >= 0) return existing
+  return addTableItem({
+    nick_name: defaults.nick_name || '登录中',
+    port: ps,
+    ...defaults
+  })
+}
+
+const deleteTableRowByPort = (port) => {
+  const idx = findRowIndexByPort(port)
+  if (idx >= 0) deleteTableItem(idx)
+}
 
 const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT_SERVER_PORT_STRING)
 // 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
@@ -200,24 +247,34 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
   }
 }
 
-// 启动时加载登录信息，只负责把配置中的账号展示到表格
+// 从配置加载并合并表格：保留「登录中」/轮询中的行，避免 reload 把刚添加的企微清掉
 const loadLoginInfo = async () => {
   const loginInfo = configStore.getLoginInfo()
-  tableData.value = []
+  const byPort = new Map()
+
+  for (const row of tableData.value) {
+    const port = row?.port
+    if (!port || port === '-') continue
+    const p = parseInt(port, 10)
+    if (row.nick_name === '登录中' || loginPollingPorts.has(p)) {
+      byPort.set(String(port), { ...row })
+    }
+  }
 
   for (const item of loginInfo) {
     if (!item.port) continue
-
-    const tableItem = {
+    const port = String(item.port)
+    byPort.set(port, {
       nick_name: item.nick_name || '-',
       user_id: item.user_id || '-',
-      port: String(item.port || '-'),
+      port,
       pid: String(item.pid || '-'),
-      expire: item.expire || '未授权', // 过期状态后续会在刷新授权时更新
+      expire: item.expire || '未授权',
       label: item.label || ''
-    }
-    tableData.value.push(tableItem)
+    })
   }
+
+  tableData.value = Array.from(byPort.values())
 }
 
 /** 仅从配置重载表格，不做端口探测（避免切换账号后误删） */
@@ -460,6 +517,7 @@ const executeAddWechat = async (portType, customPortValue) => {
 
       if (result.success || (result.output && result.output.includes('注入成功'))) {
         ElMessage.success('企微启动成功，正在登录...')
+        trackPendingPort(port)
         const rowIndex = addTableItem({ nick_name: '登录中', port: String(port) })
         
         // 定时检查登录状态
@@ -479,36 +537,92 @@ const handleAddWechat = async () => {
   showAddDialog.value = false
 }
 
+// 登录完成后写入表格与配置（按端口定位行，避免 reload 后 rowIndex 失效）
+const completePortLogin = async (port, options = {}) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return false
+
+  let rowIndex = options.rowIndex
+  if (
+    rowIndex == null ||
+    rowIndex < 0 ||
+    rowIndex >= tableData.value.length ||
+    tableData.value[rowIndex]?.port !== String(p)
+  ) {
+    rowIndex = ensureTableRowForPort(p)
+  }
+
+  const personalInfo = await VWorkApi.getPersonalInfo(p)
+  const data = pickPersonalRecord(personalInfo)
+  if (!data?.user_id) {
+    console.warn('[企微管理] 已登录但 1002 返回结构异常，无法写配置', personalInfo)
+    return false
+  }
+
+  const pid = await getPidByPort(p)
+  updateTableItem(rowIndex, {
+    nick_name: data.nick_name || '-',
+    user_id: data.user_id || '-',
+    port: String(p),
+    pid: String(pid || '-')
+  })
+
+  await refreshAuthForRow(rowIndex, data.user_id, {
+    ...data,
+    port: p,
+    pid
+  })
+
+  untrackPendingPort(p)
+  setTimeout(() => invokeDefaultAutoUpdateOff(p), 8000)
+  return true
+}
+
+/** 供 App.vue 在 900/切换账号 后同步表格（不整表 reload） */
+const syncPortLogin = async (port) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return false
+  if (loginPollingPorts.has(p)) {
+    return false
+  }
+  const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(p), {
+    attempts: 3,
+    intervalMs: 1500
+  })
+  if (!loggedIn) return false
+  return completePortLogin(p)
+}
+
 // 检查登录状态
 const checkLoginStatus = async (port, rowIndex) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return
+  if (loginPollingPorts.has(p)) return
+  loginPollingPorts.add(p)
+
+  const finishPolling = () => {
+    loginPollingPorts.delete(p)
+  }
+
   const maxAttempts = 90 // 最多检查90次（3分钟，每2秒一次）
   let attempts = 0
   let consecutiveErrors = 0
   const maxConsecutiveErrors = 8 // 连续 8 次失败（约 16 秒）才判定不可用
   let loginCacheExpire = Date.now() + 180000 // 3分钟缓存
-  const startupGracePeriod = 90 // 启动宽限期：前90次检查（180秒内）不检查端口，给进程启动时间
 
   const checkInterval = setInterval(async () => {
     attempts++
 
     if (Date.now() > loginCacheExpire) {
       clearInterval(checkInterval)
+      finishPolling()
       ElMessage.warning('登录超时，已关闭')
-      deleteTableItem(rowIndex)
+      deleteTableRowByPort(port)
+      untrackPendingPort(port)
       if (window.electronAPI) {
         await window.electronAPI.killProcessByPort(port)
       }
       return
-    }
-
-    if (attempts > startupGracePeriod && window.electronAPI) {
-      const portCheck = await window.electronAPI.isPortInUse(port)
-      if (!portCheck.inUse) {
-        clearInterval(checkInterval)
-        ElMessage.warning(`进程${port}已被关闭`)
-        deleteTableItem(rowIndex)
-        return
-      }
     }
 
     try {
@@ -519,36 +633,21 @@ const checkLoginStatus = async (port, rowIndex) => {
         const loggedIn = Number(status) === 1 || status === true
         if (loggedIn) {
           clearInterval(checkInterval)
-          const personalInfo = await VWorkApi.getPersonalInfo(port)
-
-          const data = pickPersonalRecord(personalInfo)
-          if (!data) {
-            console.warn('[企微管理] 已登录但 1002 返回结构异常，无法写配置；已跳过默认 auto-update', personalInfo)
-            return
+          finishPolling()
+          const ok = await completePortLogin(port, { rowIndex })
+          if (!ok) {
+            ElMessage.warning('已登录但未能写入企微管理，请右键刷新授权或重新添加')
           }
-
-          const pid = await getPidByPort(port)
-          updateTableItem(rowIndex, {
-            nick_name: data.nick_name || '-',
-            user_id: data.user_id || '-',
-            port: String(port),
-            pid: String(pid || '-')
-          })
-
-          await refreshAuthForRow(rowIndex, data.user_id, {
-            ...data,
-            port,
-            pid
-          })
-
-          await invokeDefaultAutoUpdateOff(port)
+          return
         }
       }
 
       if (attempts >= maxAttempts) {
         clearInterval(checkInterval)
+        finishPolling()
         ElMessage.warning('登录超时')
-        deleteTableItem(rowIndex)
+        deleteTableRowByPort(port)
+        untrackPendingPort(port)
         if (window.electronAPI) {
           await window.electronAPI.killProcessByPort(port)
         }
@@ -563,30 +662,98 @@ const checkLoginStatus = async (port, rowIndex) => {
         return
       }
       clearInterval(checkInterval)
+      finishPolling()
+      const hookAlive = await isWecomPortReachable(port)
+      if (hookAlive) {
+        ElMessage.warning(`端口 ${port} 登录探测多次失败，但进程仍在运行，请稍后手动检查`)
+        return
+      }
       if (window.electronAPI) {
-        const portCheck = await window.electronAPI.isPortInUse(port)
-        if (portCheck?.inUse) {
-          ElMessage.warning(`端口 ${port} 登录探测多次失败，但进程仍在运行，请稍后手动检查`)
-          return
-        }
         await window.electronAPI.killProcessByPort(port)
       }
-      deleteTableItem(rowIndex)
+      deleteTableRowByPort(port)
+      untrackPendingPort(port)
       ElMessage.warning(`进程${port}登录失败，已关闭`)
     }
   }, 2000)
 }
 
-// 由 HTTP 接口触发注入成功时，与「添加企微」相同：加行并开始轮询登录
+// 由 HTTP 接口或主进程自动注入成功时，与「添加企微」相同：加行并开始轮询登录
 const handleApiInjectPort = (port) => {
   const p = Number(port)
   if (Number.isNaN(p) || p <= 0) return
+  trackPendingPort(p)
   const ps = String(p)
-  if (tableData.value.some((r) => r.port === ps)) {
+  const existingIndex = tableData.value.findIndex((r) => r.port === ps)
+  if (existingIndex >= 0) {
+    updateTableItem(existingIndex, { nick_name: '登录中' })
+    checkLoginStatus(p, existingIndex)
     return
   }
   const rowIndex = addTableItem({ nick_name: '登录中', port: ps })
   checkLoginStatus(p, rowIndex)
+}
+
+/** 挂载后：Hook 已就绪但未登录的端口（如崩溃恢复注入）补开登录轮询 */
+const resumePendingLoginPolling = async () => {
+  for (let i = 0; i < tableData.value.length; i++) {
+    const row = tableData.value[i]
+    const port = parseInt(row.port, 10)
+    if (!port || Number.isNaN(port)) continue
+    if (loginPollingPorts.has(port)) continue
+
+    const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
+      attempts: 1,
+      intervalMs: 0
+    })
+    if (loggedIn) {
+      if (!row.user_id || row.user_id === '-') {
+        await completePortLogin(port, { rowIndex: i })
+      }
+      continue
+    }
+
+    const hookAlive = await isWecomPortReachable(port)
+    if (!hookAlive) continue
+
+    updateTableItem(i, { nick_name: '登录中' })
+    checkLoginStatus(port, i)
+  }
+}
+
+/** 已登录但表格缺失时恢复（配置/session 中的端口） */
+const recoverOrphanedLoggedInPorts = async () => {
+  const portsToCheck = new Set()
+
+  for (const item of configStore.getLoginInfo()) {
+    const p = parseInt(item.port, 10)
+    if (!Number.isNaN(p) && p > 0) portsToCheck.add(p)
+  }
+  try {
+    for (const p of JSON.parse(sessionStorage.getItem(PENDING_PORTS_KEY) || '[]')) {
+      const n = Number(p)
+      if (!Number.isNaN(n) && n > 0) portsToCheck.add(n)
+    }
+  } catch {
+    /* ignore */
+  }
+
+  for (const port of portsToCheck) {
+    const ps = String(port)
+    const row = tableData.value.find((r) => r.port === ps)
+    if (row?.user_id && row.user_id !== '-') continue
+
+    const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
+      attempts: 2,
+      intervalMs: 1500
+    })
+    if (!loggedIn) continue
+
+    if (loginPollingPorts.has(port)) continue
+
+    console.info(`[企微管理] 恢复已登录端口 ${port} 到表格`)
+    await completePortLogin(port)
+  }
 }
 
 watch(
@@ -660,6 +827,14 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
     }
     
     updateTableItem(rowIndex, { expire })
+
+    const portNum = parseInt(loginInfo?.port ?? tableData.value[rowIndex]?.port, 10)
+    if (
+      (rowIndex < 0 || rowIndex >= tableData.value.length || !tableData.value[rowIndex]) &&
+      !Number.isNaN(portNum)
+    ) {
+      rowIndex = ensureTableRowForPort(portNum)
+    }
 
     // 更新配置：新登录的企微数据保存到配置中
     // 注意：这里会基于当前配置列表（已过滤掉已关闭进程）进行更新或添加
@@ -835,6 +1010,9 @@ onMounted(async () => {
     wecomApiInjectPorts.value.splice(0, wecomApiInjectPorts.value.length)
     batch.forEach((port) => handleApiInjectPort(port))
   }
+
+  await resumePendingLoginPolling()
+  await recoverOrphanedLoggedInPorts()
   
   // 添加点击外部关闭菜单的监听
   document.addEventListener('click', handleClickOutside)
@@ -860,6 +1038,12 @@ const refreshList = async () => {
     for (let i = 0; i < tableData.value.length; i++) {
       const row = tableData.value[i]
       const port = parseInt(row.port)
+
+      // 正在登录中的行不清理（避免登录/重启过程中被误删）
+      if (row.nick_name === '登录中' || loginPollingPorts.has(port)) {
+        validRows.push(row)
+        continue
+      }
       
       if (!isNaN(port) && port > 0) {
         try {
@@ -882,7 +1066,15 @@ const refreshList = async () => {
             if (reachable) {
               validRows.push(row)
             } else {
-              console.log(`端口 ${port} 已不再使用，从表格中移除`)
+              const mayReturn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
+                attempts: 5,
+                intervalMs: 2000
+              })
+              if (mayReturn || (await isWecomPortReachable(port))) {
+                validRows.push(row)
+              } else {
+                console.log(`端口 ${port} 已不再使用，从表格中移除`)
+              }
             }
           }
         } catch (error) {
@@ -922,6 +1114,8 @@ const refreshList = async () => {
 defineExpose({
   refreshList,
   reloadLoginInfoFromConfig,
+  syncPortLogin,
+  recoverOrphanedLoggedInPorts,
   /** 供调试或父组件直接触发，与 HTTP 回调等价 */
   handleInjectStartedFromApi: handleApiInjectPort
 })

@@ -55,7 +55,7 @@ try {
   }
 }
 const axios = require('axios')
-const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime } = require('./commons/common')
+const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, killProcessByPort } = require('./commons/common')
 const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
 const {
   checkPortListenAvailable,
@@ -65,6 +65,7 @@ const {
 } = require('./services/wecomInject')
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
+const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -403,77 +404,6 @@ const findPidByPort = (port) => {
   })
 }
 
-// 根据端口杀死进程
-const killProcessByPort = (port) => {
-  return new Promise((resolve) => {
-    if (process.platform === 'win32') {
-      const { exec } = require('child_process')
-      exec(`netstat -ano | findstr :${port}`, (error, stdout) => {
-        if (error || !stdout) {
-          resolve(false)
-          return
-        }
-        const lines = stdout.trim().split('\n')
-        const pids = new Set()
-        for (const line of lines) {
-          const parts = line.trim().split(/\s+/)
-          if (parts.length >= 5 && parts[1].includes(`:${port}`)) {
-            const pid = parseInt(parts[parts.length - 1])
-            if (!isNaN(pid)) {
-              pids.add(pid)
-            }
-          }
-        }
-        if (pids.size === 0) {
-          resolve(false)
-          return
-        }
-        const selfPid = process.pid
-        const toKill = [...pids].filter((pid) => pid !== selfPid)
-        if (toKill.length === 0) {
-          console.log(`端口 ${port} 仅由当前进程监听，跳过 taskkill（避免自杀）`)
-          resolve(false)
-          return
-        }
-        let killed = 0
-        toKill.forEach((pid) => {
-          exec(`taskkill /F /PID ${pid}`, (err) => {
-            if (!err) killed++
-            if (killed === toKill.length) {
-              resolve(killed > 0)
-            }
-          })
-        })
-      })
-    } else {
-      // Linux/Mac：不得 kill 当前进程
-      const { exec } = require('child_process')
-      exec(`lsof -ti:${port}`, (error, stdout) => {
-        if (error || !stdout) {
-          resolve(false)
-          return
-        }
-        const pids = stdout.trim().split('\n').filter(Boolean)
-        const toKill = pids.filter((p) => parseInt(p, 10) !== process.pid)
-        if (toKill.length === 0) {
-          if (pids.length > 0) {
-            console.log(`端口 ${port} 仅由当前进程监听，跳过 kill（避免自杀）`)
-          }
-          resolve(false)
-          return
-        }
-        let finished = 0
-        toKill.forEach((pid) => {
-          exec(`kill -9 ${pid}`, () => {
-            finished++
-            if (finished === toKill.length) resolve(true)
-          })
-        })
-      })
-    }
-  })
-}
-
 // 读取配置文件
 const readConfig = () => {
   // 使用 commons/common.js 中的 getConfigPath，确保开发环境和打包环境路径一致
@@ -604,6 +534,9 @@ const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
     console.log(
       `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${result.success}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
     )
+    if (result.success && isAutoInjectReason(reason)) {
+      notifyWecomInjectStarted(robotPort, reason)
+    }
     return result.success
   } catch (e) {
     console.error(`[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
@@ -638,7 +571,13 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
       continue
     }
 
-    await runInjectForPort(robotPort, serverPort, injectKey, fromCrashRecovery ? '崩溃恢复' : '定时检查')
+    if (fromCrashRecovery) {
+      await runInjectForPort(robotPort, serverPort, injectKey, '崩溃恢复')
+    } else {
+      console.log(
+        `[登录探测] 端口 ${robotPort} 未登录且进程已退出，不自动拉起企微；请在「企微管理」中手动添加`
+      )
+    }
   }
 }
 
@@ -1163,19 +1102,22 @@ ipcMain.handle('save-config', (event, config) => {
 
 ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
   try {
-    const portMatch = url.match(/http:\/\/127\.0\.0\.1:(\d+)\/api/)
-    const port = portMatch ? parseInt(portMatch[1], 10) : null
+    // 仅 http://127.0.0.1:{企微端口}/api 走直连；带路径的为框架 REST（如 /api/message/text）
+    const directWecomMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/api\/?$/)
+    const directWecomPort = directWecomMatch ? parseInt(directWecomMatch[1], 10) : null
 
     let responseData
-    if (port && method === 'POST' && data) {
-      responseData = await postToVWorkApi(port, data)
+    if (directWecomPort && method === 'POST' && data) {
+      responseData = await postToVWorkApi(directWecomPort, data)
     } else {
       const response = await axios({ method, url, data, timeout: 10000 })
       responseData = response.data
     }
 
+    const logPort = directWecomPort || (data && data.port != null ? parseInt(data.port, 10) : null)
+
     // 如果成功获取响应，记录日志并发送回调
-    if (port && responseData) {
+    if (logPort && responseData) {
       try {
         // 读取配置
         const ini_config = readIni()
@@ -1184,7 +1126,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         let target_item = null
         let user_id = ''
         for (const item of ini_config.login_info) {
-          if (String(item.port) === String(port)) {
+          if (String(item.port) === String(logPort)) {
             target_item = item
             user_id = item.user_id || ''
             break
@@ -1325,7 +1267,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         const displayLogData = {
           type: 'api_call',
           api_name: apiName,
-          port: port,
+          port: logPort,
           user_id: user_id,
           self_user_id: apiName, // 用于在运行日志页面显示为"发言者"
           content: logContent,
@@ -1337,7 +1279,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         const callbackLogData = {
           type: 'api_call',
           api_name: apiName,
-          port: port,
+          port: logPort,
           user_id: user_id,
           response_data: responseDataForLog,
           time_stamp: displayLogData.time_stamp

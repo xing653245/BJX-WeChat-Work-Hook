@@ -21,7 +21,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, provide } from 'vue'
+import { ref, onMounted, onUnmounted, provide, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import IndexPage from './pages/IndexPage.vue'
 import RunLogsPage from './pages/RunLogsPage.vue'
@@ -75,6 +75,31 @@ const watchAccountSwitchOnPort = (portNum) => {
 
   ;(async () => {
     try {
+      const sync = vworkManagerRef.value?.syncPortLogin
+      if (sync) {
+        const ok = await sync(portNum)
+        if (ok) {
+          ElMessage.success({
+            message: `端口 ${portNum} 账号信息已同步到企微管理`,
+            duration: 3000,
+            showClose: true
+          })
+        } else {
+          const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(portNum), {
+            attempts: 60,
+            intervalMs: 3000
+          })
+          if (!loggedIn) {
+            ElMessage.warning({
+              message: `端口 ${portNum} 长时间未重新登录，请检查企微客户端或在企微管理中手动退出`,
+              duration: 5000,
+              showClose: true
+            })
+          }
+        }
+        return
+      }
+
       const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(portNum), {
         attempts: 60,
         intervalMs: 3000
@@ -138,37 +163,84 @@ const watchAccountSwitchOnPort = (portNum) => {
   })()
 }
 
-// 处理退出登录消息通知
+/** 从推送消息解析企微 HTTP 端口（server_port 常为框架监听端口，不能盲用） */
+const parseWecomHttpPort = (value) => {
+  const n = parseInt(value, 10)
+  return !Number.isNaN(n) && n > 1024 && n <= 10000 ? n : NaN
+}
+
+const resolveWecomPortFromMessage = (data) => {
+  const loginInfoList = configStore.getLoginInfo()
+
+  for (const key of ['port', 'robot_port', 'http_port', 'client_port']) {
+    const n = parseWecomHttpPort(data[key])
+    if (!Number.isNaN(n)) return n
+  }
+
+  const userId = data.user_id || data.self_user_id
+  if (userId) {
+    const item = loginInfoList.find((i) => i.user_id === userId)
+    if (item?.port) {
+      const n = parseWecomHttpPort(item.port)
+      if (!Number.isNaN(n)) return n
+    }
+  }
+
+  const serverPort = parseWecomHttpPort(data.server_port)
+  if (
+    !Number.isNaN(serverPort) &&
+    loginInfoList.some((i) => parseWecomHttpPort(i.port) === serverPort)
+  ) {
+    return serverPort
+  }
+
+  if (loginInfoList.length === 1 && loginInfoList[0].port) {
+    return parseWecomHttpPort(loginInfoList[0].port)
+  }
+
+  return NaN
+}
+
+// 处理退出登录 / 账号切换消息
 const handleLogoutMessage = async (data) => {
-  // 检查是否为退出登录消息
-  const isLogout = data.type === 900 || 
-    (data.msg && ['退出登录', 'logout', '已退出'].some(k => data.msg.includes(k)))
-  
+  // 900 = 账号切换或重新登录通知，不是退出；登录成功时也会推送，绝不能删配置
+  if (data.type === 900) {
+    const portNum = resolveWecomPortFromMessage(data)
+    if (!Number.isNaN(portNum) && portNum > 0) {
+      watchAccountSwitchOnPort(portNum)
+      ElMessage.info({
+        message: `检测到端口 ${portNum} 账号变更，正在等待重新登录…`,
+        duration: 4000,
+        showClose: true
+      })
+    }
+    return
+  }
+
+  const isLogout =
+    data.type === 1003 ||
+    (data.msg && ['退出登录', 'logout', '已退出'].some((k) => String(data.msg).includes(k)))
+
   if (!isLogout) return
 
   const userInfo = data.user_id || data.self_user_id || '未知用户'
-  const port = data.port || data.server_port
-  const portNum = port ? parseInt(port) : NaN
+  const portNum = resolveWecomPortFromMessage(data)
 
-  // 企微内切换账号时框架会推送 900/退出类消息，但端口进程通常仍在。
-  // 不自动杀进程；后台等待该端口重新登录并更新配置。
   if (!Number.isNaN(portNum) && portNum > 0) {
     watchAccountSwitchOnPort(portNum)
     ElMessage.info({
-      message: `检测到端口 ${portNum} 账号变更，进程保持运行，正在等待重新登录…`,
+      message: `检测到端口 ${portNum} 账号变更，正在等待重新登录…`,
       duration: 4000,
       showClose: true
     })
     return
   }
 
-  // 无端口信息时仍按原逻辑清理配置（无法做切换等待）
+  if (userInfo === '未知用户') return
+
   try {
     const loginInfoList = configStore.getLoginInfo()
-    const filtered = loginInfoList.filter((item) => {
-      if (userInfo !== '未知用户' && item.user_id === userInfo) return false
-      return true
-    })
+    const filtered = loginInfoList.filter((item) => item.user_id !== userInfo)
 
     if (filtered.length !== loginInfoList.length) {
       await configStore.updateLoginInfo(filtered)
@@ -213,6 +285,12 @@ onMounted(() => {
       showClose: true
     })
   })
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'manager') {
+    vworkManagerRef.value?.recoverOrphanedLoggedInPorts?.()
+  }
 })
 
 onUnmounted(() => {

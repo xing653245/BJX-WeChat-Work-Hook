@@ -5,26 +5,11 @@
  * - 所有接口都需要授权验证
  */
 const express = require('express')
-const { BrowserWindow } = require('electron')
 const router = express.Router()
 const { createAPIHandler } = require('../middleware/apiHandler')
 const { isPortInUse } = require('../commons/common')
 const { findAvailablePort, runInjectTool, readInjectConfig } = require('../services/wecomInject')
-
-/** HTTP 启动企微成功后通知渲染进程，与界面「添加企微」一致：表格 + 登录轮询 */
-function notifyWecomInjectStarted(port) {
-  const n = Number(port)
-  if (Number.isNaN(n)) return
-  for (const win of BrowserWindow.getAllWindows()) {
-    try {
-      if (!win.isDestroyed()) {
-        win.webContents.send('wecom-inject-started', { port: n })
-      }
-    } catch (e) {
-      console.error('notifyWecomInjectStarted:', e.message)
-    }
-  }
-}
+const { notifyWecomInjectStarted } = require('../services/wecomNotify')
 
 /**
  * 清空聊天记录

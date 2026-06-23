@@ -271,7 +271,7 @@ async function killProcessByPort(port) {
         const parts = line.trim().split(/\s+/)
         if (parts.length >= 5) {
           const pid = parseInt(parts[parts.length - 1])
-          if (!isNaN(pid)) {
+          if (!isNaN(pid) && pid > 0) {
             pids.add(pid)
           }
         }
