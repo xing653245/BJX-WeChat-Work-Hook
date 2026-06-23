@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 注入工具
   runInjectTool: (options) => ipcRenderer.invoke('run-inject-tool', options),
+  resetCrashRecoveryProtection: () => ipcRenderer.invoke('reset-crash-recovery-protection'),
+  onCrashRecoverySuspended: (callback) => {
+    ipcRenderer.on('crash-recovery-suspended', (_event, data) => callback(data))
+  },
+  removeCrashRecoverySuspendedListener: () => {
+    ipcRenderer.removeAllListeners('crash-recovery-suspended')
+  },
   
   // 获取授权信息
   getAuthInfo: (wxid) => ipcRenderer.invoke('get-auth-info', wxid),

@@ -206,12 +206,20 @@ onMounted(() => {
     }
     closeConfirmVisible.value = true
   })
+  window.electronAPI?.onCrashRecoverySuspended?.((data) => {
+    ElMessage.warning({
+      message: data?.message || '企微反复崩溃，已暂停自动重新注入，请手动处理。',
+      duration: 8000,
+      showClose: true
+    })
+  })
 })
 
 onUnmounted(() => {
   removeFastapiLogoutListener?.()
   removeFastapiLogoutListener = null
   window.electronAPI?.removeCloseConfirmRequestListener?.()
+  window.electronAPI?.removeCrashRecoverySuspendedListener?.()
 })
 </script>
 

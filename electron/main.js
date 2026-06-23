@@ -86,6 +86,75 @@ let crashRecoveryBackoffLevel = 0
 let crashRecoveryTimer = null
 /** 崩溃恢复倒计时期间暂停定时探测，避免与退避恢复叠加注入 */
 let timedCheckPausedUntil = 0
+/** 连续崩溃恢复后仍未登录则暂停自动注入，避免无限拉起 */
+const MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN = 3
+let crashRecoveryCyclesWithoutLogin = 0
+let crashRecoveryAutoInjectSuspended = false
+
+const isAutoInjectReason = (reason) => reason === '崩溃恢复' || reason === '定时检查'
+
+const resetCrashRecoveryProtection = () => {
+  crashRecoveryCyclesWithoutLogin = 0
+  crashRecoveryAutoInjectSuspended = false
+  crashRecoveryBackoffLevel = 0
+}
+
+const notifyCrashRecoverySuspended = () => {
+  const ports = getTimedCheckPorts()
+  const portHint = ports.length ? ports.join(', ') : '（无配置端口）'
+  const detail =
+    `已连续 ${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次崩溃恢复仍未登录。\n` +
+    `已暂停自动注入（端口：${portHint}）。\n\n` +
+    `请先在任务管理器中结束所有 WXWork.exe，关闭错误报告窗口，排查 Hook/企微版本兼容问题后，在「企微管理」中手动重新添加。`
+  console.warn('[企微崩溃] 自动恢复已暂停:', detail.replace(/\n/g, ' '))
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.send('crash-recovery-suspended', {
+      message: detail,
+      ports,
+      cycles: crashRecoveryCyclesWithoutLogin
+    })
+  }
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  dialog
+    .showMessageBox(parent, {
+      type: 'warning',
+      title: '企微崩溃恢复已暂停',
+      message: '检测到企微反复崩溃，已停止自动重新注入。',
+      detail,
+      buttons: ['我知道了']
+    })
+    .catch(() => {})
+}
+
+const recordCrashRecoveryCycleResult = async () => {
+  const ports = getTimedCheckPorts()
+  if (ports.length === 0) return
+
+  for (const robotPort of ports) {
+    if (await probeLoggedIn(robotPort)) {
+      resetCrashRecoveryProtection()
+      return
+    }
+  }
+
+  crashRecoveryCyclesWithoutLogin++
+  console.log(
+    `[企微崩溃] 本轮恢复后仍未登录（连续 ${crashRecoveryCyclesWithoutLogin}/${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次）`
+  )
+  if (
+    crashRecoveryCyclesWithoutLogin >= MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN &&
+    !crashRecoveryAutoInjectSuspended
+  ) {
+    crashRecoveryAutoInjectSuspended = true
+    if (crashRecoveryTimer) {
+      clearTimeout(crashRecoveryTimer)
+      crashRecoveryTimer = null
+    }
+    notifyCrashRecoverySuspended()
+  }
+}
 
 // 更新配置
 // 注意：更新服务器配置在 package.json 的 build.publish 中设置
@@ -509,6 +578,10 @@ const probeLoggedIn = async (robotPort) => {
  * @returns {Promise<boolean>} 是否已发起注入
  */
 const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
+  if (isAutoInjectReason(reason) && crashRecoveryAutoInjectSuspended) {
+    console.log(`[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
+    return false
+  }
   if (injectInProgressPorts.has(robotPort)) {
     console.log(`[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
     return false
@@ -552,9 +625,7 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
   for (const robotPort of ports) {
     const loggedIn = await probeLoggedIn(robotPort)
     if (loggedIn) {
-      if (fromCrashRecovery) {
-        crashRecoveryBackoffLevel = 0
-      }
+      resetCrashRecoveryProtection()
       continue
     }
 
@@ -595,6 +666,10 @@ const scheduleCrashRecovery = () => {
   if (crashRecoveryTimer) {
     return
   }
+  if (crashRecoveryAutoInjectSuspended) {
+    console.log('[企微崩溃] 检测到崩溃弹窗，自动恢复已暂停，仅关闭弹窗不再注入')
+    return
+  }
   const delayMs =
     CRASH_RECOVERY_DELAYS_MS[
       Math.min(crashRecoveryBackoffLevel, CRASH_RECOVERY_DELAYS_MS.length - 1)
@@ -610,11 +685,14 @@ const scheduleCrashRecovery = () => {
       .catch((e) => {
         console.error('[企微崩溃] 注入恢复检查失败:', e.message)
       })
-      .finally(() => {
-        crashRecoveryBackoffLevel = Math.min(
-          crashRecoveryBackoffLevel + 1,
-          CRASH_RECOVERY_DELAYS_MS.length - 1
-        )
+      .finally(async () => {
+        await recordCrashRecoveryCycleResult()
+        if (!crashRecoveryAutoInjectSuspended) {
+          crashRecoveryBackoffLevel = Math.min(
+            crashRecoveryBackoffLevel + 1,
+            CRASH_RECOVERY_DELAYS_MS.length - 1
+          )
+        }
       })
   }, delayMs)
 }
@@ -1351,8 +1429,14 @@ ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
 
 // 执行注入工具（需要根据实际情况调整）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
+  resetCrashRecoveryProtection()
   const injectKey = key || DEFAULT_INJECT_KEY
   return runInjectToolService({ port, serverPort, key: injectKey })
+})
+
+ipcMain.handle('reset-crash-recovery-protection', () => {
+  resetCrashRecoveryProtection()
+  return { success: true }
 })
 
 // 获取授权信息
