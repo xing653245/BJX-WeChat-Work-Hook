@@ -236,7 +236,7 @@ const isWecomPortReachable = async (port) => {
   }
 }
 
-// 启动时检查登录状态：如果未登录，则杀死对应进程并从配置中移除
+// 启动时检查登录状态：未登录且进程已退出时才从配置移除（不主动杀仍在运行的进程）
 const cleanupUnloggedOnMount = async () => {
   if (!window.electronAPI) return
 
@@ -247,7 +247,6 @@ const cleanupUnloggedOnMount = async () => {
 
   for (const item of loginInfoList) {
     if (!item.port) {
-      // 没有端口信息的直接保留（兼容旧数据）
       remainList.push(item)
       continue
     }
@@ -256,25 +255,28 @@ const cleanupUnloggedOnMount = async () => {
     if (!port || Number.isNaN(port)) continue
 
     const ok = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
-      attempts: 5,
+      attempts: 15,
       intervalMs: 2000
     })
-    const needKill = !ok
 
-    if (needKill) {
-      console.warn(`端口 ${port} 在重试后仍非已登录，将尝试杀死进程`)
-      try {
-        await window.electronAPI.killProcessByPort(port)
-      } catch (e) {
-        console.error(`杀死端口 ${port} 对应进程失败:`, e)
-      }
-    } else {
-      // 仍然处于已登录状态的账号保留在配置中
+    if (ok) {
       remainList.push(item)
+      continue
     }
+
+    const portCheck = await window.electronAPI.isPortInUse(port)
+    const hookAlive = portCheck?.inUse || (await isWecomPortReachable(port))
+    if (hookAlive) {
+      console.warn(
+        `端口 ${port} 暂未登录但进程/Hook 仍在，保留配置（可能正在登录或切换账号）`
+      )
+      remainList.push(item)
+      continue
+    }
+
+    console.warn(`端口 ${port} 未登录且进程已退出，从配置中移除`)
   }
 
-  // 如果有变动，更新配置
   if (remainList.length !== loginInfoList.length) {
     try {
       await configStore.updateLoginInfo(remainList)
@@ -481,28 +483,24 @@ const handleAddWechat = async () => {
 const checkLoginStatus = async (port, rowIndex) => {
   const maxAttempts = 90 // 最多检查90次（3分钟，每2秒一次）
   let attempts = 0
-  let loginCacheKey = `login_${port}`
+  let consecutiveErrors = 0
+  const maxConsecutiveErrors = 8 // 连续 8 次失败（约 16 秒）才判定不可用
   let loginCacheExpire = Date.now() + 180000 // 3分钟缓存
   const startupGracePeriod = 90 // 启动宽限期：前90次检查（180秒内）不检查端口，给进程启动时间
 
   const checkInterval = setInterval(async () => {
     attempts++
-    
-    // 检查缓存是否过期
+
     if (Date.now() > loginCacheExpire) {
       clearInterval(checkInterval)
       ElMessage.warning('登录超时，已关闭')
       deleteTableItem(rowIndex)
-      // 杀死进程
       if (window.electronAPI) {
         await window.electronAPI.killProcessByPort(port)
       }
       return
     }
-    
-    // 检查端口是否还在使用（启动宽限期后开始检查）
-    // 注入工具返回成功时，企微客户端可能还没有完全启动并监听端口
-    // 所以前几次检查跳过端口检查，给进程启动时间
+
     if (attempts > startupGracePeriod && window.electronAPI) {
       const portCheck = await window.electronAPI.isPortInUse(port)
       if (!portCheck.inUse) {
@@ -512,14 +510,14 @@ const checkLoginStatus = async (port, rowIndex) => {
         return
       }
     }
-    
+
     try {
       const result = await VWorkApi.getLoginStatus(port)
+      consecutiveErrors = 0
       if (result?.data) {
         const status = result.data.status
         const loggedIn = Number(status) === 1 || status === true
         if (loggedIn) {
-          // 已登录
           clearInterval(checkInterval)
           const personalInfo = await VWorkApi.getPersonalInfo(port)
 
@@ -537,7 +535,6 @@ const checkLoginStatus = async (port, rowIndex) => {
             pid: String(pid || '-')
           })
 
-          // 获取授权信息
           await refreshAuthForRow(rowIndex, data.user_id, {
             ...data,
             port,
@@ -547,7 +544,7 @@ const checkLoginStatus = async (port, rowIndex) => {
           await invokeDefaultAutoUpdateOff(port)
         }
       }
-      
+
       if (attempts >= maxAttempts) {
         clearInterval(checkInterval)
         ElMessage.warning('登录超时')
@@ -557,14 +554,25 @@ const checkLoginStatus = async (port, rowIndex) => {
         }
       }
     } catch (error) {
-      console.error('检查登录状态失败:', error)
-      // 检查登录状态失败时，立即关闭定时器，避免继续轮询
-      clearInterval(checkInterval)
-      deleteTableItem(rowIndex)
-      if (window.electronAPI) {
-        await window.electronAPI.killProcessByPort(port)
-        ElMessage.warning(`进程${port}登录失败，已关闭`)
+      consecutiveErrors++
+      console.warn(
+        `检查登录状态失败 (${consecutiveErrors}/${maxConsecutiveErrors}):`,
+        error?.message || error
+      )
+      if (consecutiveErrors < maxConsecutiveErrors) {
+        return
       }
+      clearInterval(checkInterval)
+      if (window.electronAPI) {
+        const portCheck = await window.electronAPI.isPortInUse(port)
+        if (portCheck?.inUse) {
+          ElMessage.warning(`端口 ${port} 登录探测多次失败，但进程仍在运行，请稍后手动检查`)
+          return
+        }
+        await window.electronAPI.killProcessByPort(port)
+      }
+      deleteTableItem(rowIndex)
+      ElMessage.warning(`进程${port}登录失败，已关闭`)
     }
   }, 2000)
 }

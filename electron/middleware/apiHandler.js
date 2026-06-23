@@ -2,8 +2,8 @@
  * API处理中间件
  * 提供统一的API调用处理逻辑
  */
-const axios = require('axios')
 const { readIni, validAuthDatetime } = require('../commons/common')
+const { postToVWorkApi } = require('../services/wecomApiClient')
 
 /**
  * 调用企微API的通用处理函数
@@ -49,13 +49,7 @@ async function callVWorkAPI(port, type, params = {}) {
     ...params
   }
 
-  // 调用企微API
-  const vworkApiUrl = `http://127.0.0.1:${port}/api`
-  const response = await axios.post(vworkApiUrl, requestData, {
-    timeout: 10000
-  })
-
-  return response.data
+  return postToVWorkApi(port, requestData)
 }
 
 /**

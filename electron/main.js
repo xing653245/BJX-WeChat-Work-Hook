@@ -60,9 +60,11 @@ const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = 
 const {
   checkPortListenAvailable,
   findAvailablePort: findAvailablePortForInject,
-  runInjectTool: runInjectToolService
+  runInjectTool: runInjectToolService,
+  readInjectConfig
 } = require('./services/wecomInject')
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
+const { postToVWorkApi } = require('./services/wecomApiClient')
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -72,7 +74,18 @@ let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
 let loginStatusCheckInterval = null // 定时检查登录状态
 let wecomCrashDialogInterval = null // Windows：监视企微「错误报告」崩溃窗口
-let lastWecomCrashRecoveryAt = 0 // 关闭崩溃窗后触发 it.exe 重启的冷却时间戳
+/** 同一端口注入互斥：避免定时检查、崩溃恢复、手动添加并发 it.exe */
+const injectInProgressPorts = new Set()
+/** 各端口上次注入时间戳，用于单端口冷却 */
+const lastInjectAttemptAt = new Map()
+const MIN_INJECT_COOLDOWN_MS = 120000 // 单端口两次注入至少间隔 2 分钟
+const TIMED_CHECK_INTERVAL_MS = 30000 // 定时登录探测间隔 30 秒
+/** 崩溃恢复退避：60s → 120s → 300s */
+const CRASH_RECOVERY_DELAYS_MS = [60000, 120000, 300000, 300000]
+let crashRecoveryBackoffLevel = 0
+let crashRecoveryTimer = null
+/** 崩溃恢复倒计时期间暂停定时探测，避免与退避恢复叠加注入 */
+let timedCheckPausedUntil = 0
 
 // 更新配置
 // 注意：更新服务器配置在 package.json 的 build.publish 中设置
@@ -459,59 +472,102 @@ const getTimedCheckPorts = () => {
   }
 }
 
-/**
- * 单次执行：对配置中的每个企微端口检查登录状态，若异常则执行注入工具重启
- */
-const timedGetLoginStatus = async () => {
-  const config = readConfig()
-  const serverPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT) || DEFAULT_SERVER_PORT
-  const ports = getTimedCheckPorts()
-  if (ports.length === 0) return
+/** 企微 Hook HTTP 是否可访问（不要求已登录） */
+const isWecomHookReachable = async (robotPort) => {
+  try {
+    const url = `http://127.0.0.1:${robotPort}/api`
+    const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
+    return response.data != null
+  } catch {
+    return false
+  }
+}
 
-  const probeLoginOk = async (robotPort) => {
-    const attempts = 4
-    const delayMs = 3000
-    for (let i = 0; i < attempts; i++) {
-      try {
-        const url = `http://127.0.0.1:${robotPort}/api`
-        const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
-        const data = response.data && response.data.data
-        const status = data ? data.status : undefined
-        if (status === 1) return true
-      } catch {
-        /* 切换企业等过程中可能短暂失败 */
-      }
-      if (i < attempts - 1) {
-        await new Promise((r) => setTimeout(r, delayMs))
-      }
+/** 重试探测是否已登录（status === 1） */
+const probeLoggedIn = async (robotPort) => {
+  const attempts = 3
+  const delayMs = 3000
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const url = `http://127.0.0.1:${robotPort}/api`
+      const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
+      const data = response.data && response.data.data
+      const status = data ? data.status : undefined
+      if (status === 1) return true
+    } catch {
+      /* 切换企业/账号等过程中可能短暂失败 */
     }
+    if (i < attempts - 1) {
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
+  }
+  return false
+}
+
+/**
+ * 对单端口执行注入（含互斥锁与单端口冷却）
+ * @returns {Promise<boolean>} 是否已发起注入
+ */
+const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
+  if (injectInProgressPorts.has(robotPort)) {
+    console.log(`[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
+    return false
+  }
+  const lastAt = lastInjectAttemptAt.get(robotPort) || 0
+  if (Date.now() - lastAt < MIN_INJECT_COOLDOWN_MS) {
+    const remainSec = Math.ceil((MIN_INJECT_COOLDOWN_MS - (Date.now() - lastAt)) / 1000)
+    console.log(`[注入] 端口 ${robotPort} 冷却中（剩余约 ${remainSec}s），跳过（${reason}）`)
     return false
   }
 
-  for (const robotPort of ports) {
-    const ok = await probeLoginOk(robotPort)
-    if (ok) continue
+  injectInProgressPorts.add(robotPort)
+  lastInjectAttemptAt.set(robotPort, Date.now())
+  try {
+    const result = await runInjectToolService({
+      port: robotPort,
+      serverPort,
+      key: injectKey
+    })
+    console.log(
+      `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${result.success}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
+    )
+    return result.success
+  } catch (e) {
+    console.error(`[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
+    return false
+  } finally {
+    injectInProgressPorts.delete(robotPort)
+  }
+}
 
-    try {
-      const injectToolPath = path.join(getAppPath(), 'bin/it.exe')
-      const child = spawn(injectToolPath, [
-        'start',
-        String(robotPort),
-        `--my_port=${serverPort}`,
-        `--key=${DEFAULT_INJECT_KEY}`
-      ])
-      let output = ''
-      child.stdout.on('data', (d) => { output += d.toString() })
-      child.stderr.on('data', (d) => { output += d.toString() })
-      child.on('close', (code) => {
-        console.log(`定时检查：端口 ${robotPort} 登录异常，已执行注入工具，退出码: ${code}`)
-      })
-      child.on('error', (e) => {
-        console.error('定时检查：执行注入工具失败:', e.message)
-      })
-    } catch (e) {
-      console.error('定时检查：重启企微客户端失败:', e.message)
+/**
+ * 单次执行：对配置中的每个企微端口检查登录状态；
+ * 仅在「未登录且进程/Hook 均已不可用」时才注入，避免误判重复启动。
+ */
+const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
+  const { serverPort, key: injectKey } = readInjectConfig()
+  const ports = getTimedCheckPorts()
+  if (ports.length === 0) return
+
+  for (const robotPort of ports) {
+    const loggedIn = await probeLoggedIn(robotPort)
+    if (loggedIn) {
+      if (fromCrashRecovery) {
+        crashRecoveryBackoffLevel = 0
+      }
+      continue
     }
+
+    const pid = await findPidByPort(robotPort)
+    const hookReachable = await isWecomHookReachable(robotPort)
+    if (hookReachable || pid > 0) {
+      console.log(
+        `[登录探测] 端口 ${robotPort} 未登录但进程或 Hook 仍存活（pid=${pid}），跳过注入`
+      )
+      continue
+    }
+
+    await runInjectForPort(robotPort, serverPort, injectKey, fromCrashRecovery ? '崩溃恢复' : '定时检查')
   }
 }
 
@@ -524,15 +580,47 @@ const startTimedLoginStatusCheck = () => {
     loginStatusCheckInterval = null
   }
   loginStatusCheckInterval = setInterval(() => {
+    if (Date.now() < timedCheckPausedUntil) {
+      return
+    }
     timedGetLoginStatus().catch((e) => {
       console.error('定时检查登录状态异常:', e.message)
     })
-  }, 5000)
-  console.log('定时检查登录状态已启动，间隔 30 秒')
+  }, TIMED_CHECK_INTERVAL_MS)
+  console.log(`定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
+}
+
+/** 崩溃后按退避策略延迟触发注入恢复 */
+const scheduleCrashRecovery = () => {
+  if (crashRecoveryTimer) {
+    return
+  }
+  const delayMs =
+    CRASH_RECOVERY_DELAYS_MS[
+      Math.min(crashRecoveryBackoffLevel, CRASH_RECOVERY_DELAYS_MS.length - 1)
+    ]
+  timedCheckPausedUntil = Date.now() + delayMs
+  console.log(
+    `[企微崩溃] 已检测到崩溃，${delayMs / 1000} 秒后尝试注入恢复（退避级别 ${crashRecoveryBackoffLevel}）`
+  )
+  crashRecoveryTimer = setTimeout(() => {
+    crashRecoveryTimer = null
+    console.log('[企微崩溃] 退避结束，开始登录探测与注入恢复')
+    timedGetLoginStatus({ fromCrashRecovery: true })
+      .catch((e) => {
+        console.error('[企微崩溃] 注入恢复检查失败:', e.message)
+      })
+      .finally(() => {
+        crashRecoveryBackoffLevel = Math.min(
+          crashRecoveryBackoffLevel + 1,
+          CRASH_RECOVERY_DELAYS_MS.length - 1
+        )
+      })
+  }, delayMs)
 }
 
 /**
- * Windows：周期性查找企微「错误报告」窗口并发送关闭，随后尽快走与定时任务相同的注入重启逻辑
+ * Windows：周期性查找企微「错误报告」窗口并发送关闭，随后按退避策略触发注入恢复
  */
 const startWecomCrashDialogWatch = () => {
   if (process.platform !== 'win32') return
@@ -541,22 +629,12 @@ const startWecomCrashDialogWatch = () => {
     wecomCrashDialogInterval = null
   }
   const intervalMs = 8000
-  const recoveryCooldownMs = 25000
   wecomCrashDialogInterval = setInterval(() => {
     tryCloseWecomCrashDialogs()
       .then((closed) => {
         if (closed <= 0) return
         console.log(`[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
-        const now = Date.now()
-        if (now - lastWecomCrashRecoveryAt < recoveryCooldownMs) {
-          console.log('[企微崩溃] 距上次注入恢复较短，跳过本轮（避免重复启动 it.exe）')
-          return
-        }
-        lastWecomCrashRecoveryAt = now
-        console.log('[企微崩溃] 开始对配置中的实例做登录探测，异常端口将执行注入重启')
-        timedGetLoginStatus().catch((e) => {
-          console.error('[企微崩溃] 注入恢复检查失败:', e.message)
-        })
+        scheduleCrashRecovery()
       })
       .catch((e) => {
         console.warn('[企微崩溃] 监视脚本异常:', e.message)
@@ -1007,19 +1085,19 @@ ipcMain.handle('save-config', (event, config) => {
 
 ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
   try {
-    const response = await axios({
-      method,
-      url,
-      data,
-      timeout: 10000
-    })
-    
-    // 提取端口号（URL格式：http://127.0.0.1:${port}/api）
     const portMatch = url.match(/http:\/\/127\.0\.0\.1:(\d+)\/api/)
-    const port = portMatch ? parseInt(portMatch[1]) : null
-    
+    const port = portMatch ? parseInt(portMatch[1], 10) : null
+
+    let responseData
+    if (port && method === 'POST' && data) {
+      responseData = await postToVWorkApi(port, data)
+    } else {
+      const response = await axios({ method, url, data, timeout: 10000 })
+      responseData = response.data
+    }
+
     // 如果成功获取响应，记录日志并发送回调
-    if (port && response.data) {
+    if (port && responseData) {
       try {
         // 读取配置
         const ini_config = readIni()
@@ -1147,12 +1225,12 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         
         // 判断API调用是否成功
         // 企微API通常返回 { code: 0, data: {...} } 格式，code为0表示成功
-        const responseData = response.data
-        const isSuccess = responseData && (
-          responseData.code === 0 || 
-          responseData.code === undefined || 
-          (responseData.status !== undefined && responseData.status === 1) ||
-          (!responseData.msg && !responseData.error && !responseData.message)
+        const responseDataForLog = responseData
+        const isSuccess = responseDataForLog && (
+          responseDataForLog.code === 0 || 
+          responseDataForLog.code === undefined || 
+          (responseDataForLog.status !== undefined && responseDataForLog.status === 1) ||
+          (!responseDataForLog.msg && !responseDataForLog.error && !responseDataForLog.message)
         )
         
         // 构建日志内容：成功时只显示成功信息，失败时显示失败原因
@@ -1161,7 +1239,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           logContent = '调用成功'
         } else {
           // 提取失败原因
-          const errorMsg = responseData.msg || responseData.error || responseData.message || responseData.err_msg || '未知错误'
+          const errorMsg = responseDataForLog.msg || responseDataForLog.error || responseDataForLog.message || responseDataForLog.err_msg || '未知错误'
           logContent = `调用失败: ${errorMsg}`
         }
         
@@ -1183,7 +1261,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           api_name: apiName,
           port: port,
           user_id: user_id,
-          response_data: response.data,
+          response_data: responseDataForLog,
           time_stamp: displayLogData.time_stamp
         }
         
@@ -1255,7 +1333,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
       }
     }
     
-    return { success: true, data: response.data }
+    return { success: true, data: responseData }
   } catch (error) {
     return { success: false, msg: error.message, data: null }
   }
