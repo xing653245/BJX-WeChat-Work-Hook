@@ -157,11 +157,9 @@ const recordCrashRecoveryCycleResult = async () => {
   }
 }
 
-// 更新配置
-// 注意：更新服务器配置在 package.json 的 build.publish 中设置
-// 1. 使用 GitHub Releases: 配置 provider 为 "github"，并设置 owner 和 repo
-// 2. 使用自定义服务器: 配置 provider 为 "generic"，并设置 url
-// 3. 使用 update.electronjs.org: 需要配置 repository 字段，并确保应用发布到 GitHub Releases
+// 更新配置（package.json build.publish）
+// 当前使用 Gitee Release + generic 源，发布命令: npm run electron:build:publish
+// 更新文件地址: https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/latest.yml
 autoUpdater.autoDownload = false // 默认不自动下载，需要用户确认
 autoUpdater.autoInstallOnAppQuit = true // 应用退出时自动安装更新
 

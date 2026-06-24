@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "1.1.6",
+  "version": "1.1.8",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "electron:build:dir": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && powershell -Command \"$env:CSC_IDENTITY_AUTO_DISCOVERY='false'; $env:GH_TOKEN=[System.Environment]::GetEnvironmentVariable('GH_TOKEN', 'User'); npx electron-builder --publish always\"",
+    "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/publish-gitee.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "keywords": [
@@ -23,7 +23,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/curatorOVO/vwork_electron.git"
+    "url": "https://gitee.com/ldsz_1/vworkqt.git"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -40,6 +40,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.3",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "electron": "^28.1.4",
     "electron-builder": "^24.9.1",
     "sharp": "^0.34.5",
@@ -96,9 +97,8 @@
     },
     "publish": [
       {
-        "provider": "github",
-        "owner": "curatorOVO",
-        "repo": "vwork_electron"
+        "provider": "generic",
+        "url": "https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/"
       }
     ]
   }

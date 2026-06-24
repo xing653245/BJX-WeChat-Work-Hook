@@ -103,6 +103,6 @@ Electron 主进程 (main.js) ◄──IPC──► Vue 前端 (src/)     │
 | `npm run dev` | 仅启动 Vite 开发服务器（端口 5173）。 |
 | `npm run electron:dev` | 同时启动 Vite + Electron，用于完整本地开发。 |
 | `npm run build` | 构建前端到 `dist/`。 |
-| `electron:build:publish` | 转换图标 → 构建前端 → 重置打包配置 → 上传github仓库。 |
+| `electron:build:publish` | 转换图标 → 构建前端 → 重置打包配置 → 打包 → 上传到 Gitee Release（`latest` 标签）。需设置 `GITEE_TOKEN`。 |
 
 ---

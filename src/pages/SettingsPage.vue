@@ -248,7 +248,7 @@
             <!-- 版本信息 -->
             <div v-if="updateStatus.version" class="update-info-item">
               <el-icon class="info-icon"><InfoFilled /></el-icon>
-              <span class="info-label">新版本：</span>
+              <span class="info-label">{{ updateStatus.status === 'available' ? '新版本：' : '服务器版本：' }}</span>
               <el-tag type="success" size="small">{{ updateStatus.version }}</el-tag>
             </div>
 
@@ -701,7 +701,7 @@ const handleUpdateStatusChange = (data) => {
         data.message,
         data.version
       )
-      ElMessage.info('当前已是最新版本')
+      ElMessage.info(data.message || '当前已是最新版本')
     },
     'downloaded': () => {
       updateStatus.value = createUpdateStatus(
