@@ -407,8 +407,8 @@ export class VWorkApi {
   }
 
   // 5018: 允许/禁止修改群名
-  static async allowOrDisallowModifyGroupName(port, chat_room_id, allow, type = 5018) {
-    return await callAPI(port, { type, chat_room_id, allow })
+  static async allowOrDisallowModifyGroupName(port, chat_room_id, state, type = 5018) {
+    return await callAPI(port, { type, chat_room_id, state })
   }
 
   // 5019: 开启/关闭邀请确认

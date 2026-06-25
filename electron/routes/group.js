@@ -422,7 +422,7 @@ router.post('/modify-name-setting', createAPIHandler(5018, '允许/禁止修改�
     valid: true,
     params: {
       chat_room_id: params.chat_room_id,
-      allow: params.allow
+      state: params.allow
     }
   }
 }))
