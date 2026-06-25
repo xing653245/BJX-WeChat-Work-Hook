@@ -472,9 +472,8 @@ const getTimedCheckPorts = () => {
 /** 企微 Hook HTTP 是否可访问（不要求已登录） */
 const isWecomHookReachable = async (robotPort) => {
   try {
-    const url = `http://127.0.0.1:${robotPort}/api`
-    const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
-    return response.data != null
+    const data = await postToVWorkApi(robotPort, { type: 1000 }, { timeout: 5000 })
+    return data != null
   } catch {
     return false
   }
@@ -486,10 +485,8 @@ const probeLoggedIn = async (robotPort) => {
   const delayMs = 3000
   for (let i = 0; i < attempts; i++) {
     try {
-      const url = `http://127.0.0.1:${robotPort}/api`
-      const response = await axios.post(url, { type: 1000 }, { timeout: 5000 })
-      const data = response.data && response.data.data
-      const status = data ? data.status : undefined
+      const data = await postToVWorkApi(robotPort, { type: 1000 }, { timeout: 5000 })
+      const status = data && data.data ? data.data.status : undefined
       if (status === 1) return true
     } catch {
       /* 切换企业/账号等过程中可能短暂失败 */
@@ -1108,7 +1105,11 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     if (directWecomPort && method === 'POST' && data) {
       responseData = await postToVWorkApi(directWecomPort, data)
     } else {
-      const response = await axios({ method, url, data, timeout: 10000 })
+      const isAppletCall =
+        (data && Number(data.type) === 3006) ||
+        (typeof url === 'string' && url.includes('/api/message/applet'))
+      const frameworkTimeout = isAppletCall ? 180000 : 10000
+      const response = await axios({ method, url, data, timeout: frameworkTimeout })
       responseData = response.data
     }
 

@@ -49,13 +49,14 @@ router.post('/image', createAPIHandler(3001, '发送图片消息', (params) => {
  *   "cover_path": "封面路径",
  *   "wechat_id": "微信ID",
  *   "page_path": "页面路径",
- *   "avatar_url": "头像地址(URL)",
+ *   "avatar_url": "头像地址(URL，必填)",
  *   "app_id": "小程序ID"
  * }
+ * 群发：可并发 POST，框架按端口自动串行（约 5s 间隔 + 5s 冷却）；队列超过 30 条返回 503，请勿超时重试。
  */
 router.post('/applet', createAPIHandler(3006, '发送小程序', (params) => {
   if (!params.user_id) {
-    return { valid: false, message: '缺少参数: user_id (用户ID)' }
+    return { valid: false, message: '缺少参数: user_id (用户ID/群ID)' }
   }
   if (!params.title) {
     return { valid: false, message: '缺少参数: title (标题)' }
@@ -64,7 +65,7 @@ router.post('/applet', createAPIHandler(3006, '发送小程序', (params) => {
     return { valid: false, message: '缺少参数: desc (描述)' }
   }
   if (!params.cover_path) {
-    return { valid: false, message: '缺少参数: cover_path (封面路径)' }
+    return { valid: false, message: '缺少参数: cover_path (封面路径，本机可读)' }
   }
   if (!params.wechat_id) {
     return { valid: false, message: '缺少参数: wechat_id (微信ID)' }

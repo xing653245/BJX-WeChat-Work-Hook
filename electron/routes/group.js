@@ -250,18 +250,16 @@ router.post('/welcome', createAPIHandler(5010, '获取欢迎语', (params) => {
   if (!params.content) {
     return { valid: false, message: '缺少参数: content (欢迎语内容)' }
   }
-  return {
-    valid: true,
-    params: {
-      content: params.content,
-      card_link: {
-        title: params.card_link.title,
-        desc: params.card_link.desc,
-        target_url: params.card_link.target_url,
-        cover_url: params.card_link.cover_url
-      }
+  const validated = { content: params.content }
+  if (params.card_link) {
+    validated.card_link = {
+      title: params.card_link.title,
+      desc: params.card_link.desc,
+      target_url: params.card_link.target_url,
+      cover_url: params.card_link.cover_url
     }
   }
+  return { valid: true, params: validated }
 }))
 
 /**

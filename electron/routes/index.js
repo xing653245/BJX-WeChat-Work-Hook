@@ -77,6 +77,9 @@ router.post('/call', async (req, res) => {
       if (error.message.includes('未授权') || error.message.includes('授权已到期')) {
         statusCode = 403
         errorMessage = error.message
+      } else if (error.code === 'APPLET_QUEUE_FULL') {
+        statusCode = 503
+        errorMessage = error.message
       } else if (error.code === 'ECONNREFUSED') {
         errorMessage = `无法连接到企微服务 (端口 ${port})，请确认企微已启动`
       } else if (error.code === 'ETIMEDOUT') {

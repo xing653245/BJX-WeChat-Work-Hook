@@ -147,8 +147,8 @@ export class VWorkApi {
     return await callAPI(port, { type, user_id: userId, friend_user_id: friendUserId })
   }
 
-  // 3006: 发送小程序
-  static async sendApplet(port, userId, title, desc, coverPath, wechatId, pagePath, type = 3006, avatarUrl = '', appId = '') {
+  // 3006: 发送小程序（avatarUrl 必填）
+  static async sendApplet(port, userId, title, desc, coverPath, wechatId, pagePath, avatarUrl, appId = '', type = 3006) {
     return await callAPI(port, {
       type,
       user_id: userId,
