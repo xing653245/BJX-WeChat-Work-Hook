@@ -25,6 +25,7 @@
       <div class="pay-dialog-content">
         <img src="../assets/wechat_pay.png" alt="微信支付二维码" class="pay-qr-img" />
         <p class="pay-tip">请使用微信扫码支付</p>
+        <p class="pay-refresh-tip">购买后请务必右键企微ID处刷新授权</p>
       </div>
     </el-dialog>
   </div>
@@ -152,6 +153,14 @@ const showWechatPay = () => {
 .pay-tip {
   color: #666;
   font-size: 14px;
+}
+
+.pay-refresh-tip {
+  color: #f56c6c;
+  font-size: 14px;
+  font-weight: bold;
+  text-align: center;
+  margin-top: 12px;
 }
 </style>
 
