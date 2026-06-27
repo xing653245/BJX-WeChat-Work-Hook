@@ -1,20 +1,18 @@
 /**
  * 将 dist-electron 打包产物上传到 Gitee Release，供 electron-updater（generic）自动更新。
  *
+ * 发布策略：
+ * 1. 创建/更新版本 Release（如 v1.2.0）——保留历史版本，不删除旧 Release
+ * 2. 同步更新 latest Release —— 供自动更新 URL 使用
+ *
  * 前置条件：
  * - 已执行 electron-builder，dist-electron 中存在 latest.yml 与安装包
  * - 环境变量 GITEE_TOKEN：Gitee 私人令牌（需 repo 权限）
- *
- * publish URL 示例：
- * https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/
  */
 const fs = require('fs')
 const path = require('path')
-const { execSync } = require('child_process')
 const axios = require('axios')
-
-const pkg = require('../package.json')
-const DIST_DIR = path.join(__dirname, '..', 'dist-electron')
+const { pkg, collectReleaseFiles, getDefaultBranch, getEnvToken } = require('./publish-utils')
 
 function parseGiteePublishConfig() {
   const pub = pkg.build?.publish?.[0]
@@ -25,67 +23,15 @@ function parseGiteePublishConfig() {
   if (!match) {
     throw new Error(`无法从 publish URL 解析 Gitee 仓库信息: ${pub.url}`)
   }
-  return { owner: match[1], repo: match[2], tag: match[3] }
+  return { owner: match[1], repo: match[2], latestTag: match[3] }
 }
 
 function getToken() {
-  let token = process.env.GITEE_TOKEN || process.env.GITEE_ACCESS_TOKEN
-  if (!token && process.platform === 'win32') {
-    try {
-      token = execSync(
-        'powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable(\'GITEE_TOKEN\', \'User\')"',
-        { encoding: 'utf-8' }
-      ).trim()
-    } catch {
-      // ignore
-    }
-  }
-  if (!token) {
-    throw new Error(
-      '请设置环境变量 GITEE_TOKEN（Gitee 设置 → 私人令牌）。' +
-      'PowerShell: [System.Environment]::SetEnvironmentVariable(\'GITEE_TOKEN\', \'你的token\', \'User\')'
-    )
-  }
-  return token
-}
-
-function collectReleaseFiles() {
-  if (!fs.existsSync(DIST_DIR)) {
-    throw new Error(`未找到打包目录: ${DIST_DIR}，请先执行 npm run electron:build`)
-  }
-
-  const latestYmlPath = path.join(DIST_DIR, 'latest.yml')
-  if (!fs.existsSync(latestYmlPath)) {
-    throw new Error(`未找到 latest.yml，请确认 electron-builder 已成功完成 Windows 打包`)
-  }
-
-  const latestYml = fs.readFileSync(latestYmlPath, 'utf-8')
-  const pathMatch = latestYml.match(/^path:\s*(.+)$/m)
-  if (!pathMatch) {
-    throw new Error('latest.yml 中缺少 path 字段')
-  }
-
-  const names = ['latest.yml', pathMatch[1].trim()]
-  const blockmapName = `${names[1]}.blockmap`
-  if (fs.existsSync(path.join(DIST_DIR, blockmapName))) {
-    names.push(blockmapName)
-  }
-
-  for (const name of names) {
-    if (name !== 'latest.yml' && !fs.existsSync(path.join(DIST_DIR, name))) {
-      throw new Error(`缺少发布文件: ${name}`)
-    }
-  }
-
-  return names.map((name) => path.join(DIST_DIR, name))
-}
-
-function getDefaultBranch() {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim()
-  } catch {
-    return 'master'
-  }
+  return getEnvToken(
+    ['GITEE_TOKEN', 'GITEE_ACCESS_TOKEN'],
+    '请设置环境变量 GITEE_TOKEN（Gitee 设置 → 私人令牌）。' +
+      "PowerShell: [System.Environment]::SetEnvironmentVariable('GITEE_TOKEN', '你的token', 'User')"
+  )
 }
 
 async function giteeRequest(method, apiPath, token, { params, data, headers } = {}) {
@@ -99,7 +45,7 @@ async function giteeRequest(method, apiPath, token, { params, data, headers } = 
       headers,
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
-      validateStatus: (status) => status < 500,
+      validateStatus: (status) => status < 500
     })
     if (response.status >= 400) {
       const detail = typeof response.data === 'object'
@@ -130,16 +76,33 @@ async function getReleaseByTag(owner, repo, tag, token) {
   }
 }
 
-async function createRelease(owner, repo, tag, token) {
-  const version = pkg.version
+async function createRelease(owner, repo, tag, token, { title, version } = {}) {
+  const ver = version || pkg.version
+  const name = title || tag
   return giteeRequest('POST', `/repos/${owner}/${repo}/releases`, token, {
     data: {
       tag_name: tag,
       target_commitish: getDefaultBranch(),
-      name: tag === 'latest' ? `Latest (${version})` : `v${version}`,
-      body: `北极熊企微框架Pro v${version}\n\n自动发布于 ${new Date().toLocaleString('zh-CN')}`,
-      prerelease: false,
-    },
+      name,
+      body: buildReleaseBody(ver),
+      prerelease: false
+    }
+  })
+}
+
+function buildReleaseBody(version) {
+  return `北极熊企微框架Pro v${version}\n\n自动发布于 ${new Date().toLocaleString('zh-CN')}`
+}
+
+async function updateRelease(owner, repo, releaseId, tag, token, { title, version } = {}) {
+  const ver = version || pkg.version
+  const name = title || tag
+  return giteeRequest('PATCH', `/repos/${owner}/${repo}/releases/${releaseId}`, token, {
+    data: {
+      tag_name: tag,
+      name,
+      body: buildReleaseBody(ver)
+    }
   })
 }
 
@@ -196,29 +159,67 @@ async function replaceReleaseAssets(owner, repo, releaseId, files, token) {
   }
 }
 
-async function main() {
-  const { owner, repo, tag } = parseGiteePublishConfig()
-  const token = getToken()
-  const files = collectReleaseFiles()
-
-  console.log(`[publish-gitee] 目标: gitee.com/${owner}/${repo} @ ${tag}`)
-  console.log(`[publish-gitee] 版本: v${pkg.version}`)
-  console.log(`[publish-gitee] 文件: ${files.map((f) => path.basename(f)).join(', ')}`)
+async function publishToTag(owner, repo, tag, token, files, { title, version } = {}) {
+  const ver = version || pkg.version
+  console.log(`\n[publish-gitee] ---- 标签: ${tag} ----`)
 
   let release = await getReleaseByTag(owner, repo, tag, token)
   if (!release) {
-    console.log(`[publish-gitee] 创建 Release 标签: ${tag}`)
-    release = await createRelease(owner, repo, tag, token)
+    console.log(`[publish-gitee] 创建 Release: ${tag}`)
+    release = await createRelease(owner, repo, tag, token, { title, version: ver })
+  } else {
+    console.log(`[publish-gitee] 更新已有 Release 信息: ${tag}`)
+    release = await updateRelease(owner, repo, release.id, tag, token, { title, version: ver })
   }
 
   await replaceReleaseAssets(owner, repo, release.id, files, token)
-
-  const baseUrl = pkg.build.publish[0].url.replace(/\/?$/, '/')
-  console.log('[publish-gitee] 发布完成')
-  console.log(`[publish-gitee] 更新地址: ${baseUrl}latest.yml`)
+  console.log(`[publish-gitee] 标签 ${tag} 发布完成`)
 }
 
-main().catch((err) => {
-  console.error('[publish-gitee] 失败:', err.message || err)
-  process.exit(1)
-})
+async function publishVersionOnly(version, files) {
+  const { owner, repo } = parseGiteePublishConfig()
+  const token = getToken()
+  const versionTag = version.startsWith('v') ? version : `v${version}`
+  await publishToTag(owner, repo, versionTag, token, files, {
+    title: versionTag,
+    version: version.replace(/^v/, '')
+  })
+  console.log(`[publish-gitee] 版本归档: https://gitee.com/${owner}/${repo}/releases/tag/${versionTag}`)
+}
+
+async function main() {
+  const { owner, repo, latestTag } = parseGiteePublishConfig()
+  const token = getToken()
+  const files = collectReleaseFiles()
+  const versionTag = `v${pkg.version}`
+
+  console.log(`[publish-gitee] 目标仓库: gitee.com/${owner}/${repo}`)
+  console.log(`[publish-gitee] 版本: v${pkg.version}`)
+  console.log(`[publish-gitee] 文件: ${files.map((f) => path.basename(f)).join(', ')}`)
+
+  // 1. 版本 Release：每次新版本追加一条，保留历史
+  await publishToTag(owner, repo, versionTag, token, files, {
+    title: `v${pkg.version}`
+  })
+
+  // 2. latest Release：供 electron-updater generic 源使用，仅覆盖 latest 附件
+  await publishToTag(owner, repo, latestTag, token, files, {
+    title: `Latest (${pkg.version})`
+  })
+
+  const baseUrl = pkg.build.publish[0].url.replace(/\/?$/, '/')
+  console.log('\n[publish-gitee] 全部发布完成')
+  console.log(`[publish-gitee] 自动更新地址: ${baseUrl}latest.yml`)
+  console.log(`[publish-gitee] 版本归档地址: https://gitee.com/${owner}/${repo}/releases/tag/${versionTag}`)
+}
+
+module.exports = {
+  publishVersionOnly
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[publish-gitee] 失败:', err.message || err)
+    process.exit(1)
+  })
+}

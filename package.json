@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "electron:build:dir": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/publish-gitee.js",
+    "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/publish-all.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "keywords": [
@@ -99,6 +99,11 @@
       {
         "provider": "generic",
         "url": "https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/"
+      },
+      {
+        "provider": "github",
+        "owner": "curatorOVO",
+        "repo": "vwork_electron"
       }
     ]
   }

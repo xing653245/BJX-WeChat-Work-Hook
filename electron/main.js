@@ -4,6 +4,12 @@ const { spawn } = require('child_process')
 const fs = require('fs')
 const net = require('net')
 const { autoUpdater } = require('electron-updater')
+const {
+  checkForUpdatesWithFallback,
+  formatUpdateError,
+  initUpdateFeeds,
+  shouldSuppressErrorEvent
+} = require('./services/updateService')
 let ini
 try {
   ini = require('ini')
@@ -157,17 +163,11 @@ const recordCrashRecoveryCycleResult = async () => {
   }
 }
 
-// 更新配置（package.json build.publish）
-// 当前使用 Gitee Release + generic 源，发布命令: npm run electron:build:publish
-// 更新文件地址: https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/latest.yml
+// 更新配置：优先 Gitee，失败后回退 GitHub（见 electron/configs/updateFeeds.js）
+// 发布命令: npm run electron:build:publish
 autoUpdater.autoDownload = false // 默认不自动下载，需要用户确认
 autoUpdater.autoInstallOnAppQuit = true // 应用退出时自动安装更新
-
-// 如果使用自定义更新服务器，可以在这里设置更新服务器地址
-// autoUpdater.setFeedURL({
-//   provider: 'generic',
-//   url: 'https://your-update-server.com/updates/'
-// })
+initUpdateFeeds()
 
 // 更新事件处理
 autoUpdater.on('checking-for-update', () => {
@@ -201,6 +201,10 @@ autoUpdater.on('update-not-available', (info) => {
 })
 
 autoUpdater.on('error', (err) => {
+  if (shouldSuppressErrorEvent()) {
+    console.warn('[update] 当前更新源失败，尝试备用源:', err?.message || err)
+    return
+  }
   console.error('更新检查失败:', err)
   if (mainWindow) {
     // 将常见错误转换为友好的中文提示
@@ -1038,8 +1042,14 @@ app.whenReady().then(() => {
     if (autoCheckUpdate) {
       // 延迟3秒后检查更新，避免影响应用启动速度
       setTimeout(() => {
-        autoUpdater.checkForUpdates().catch(err => {
+        checkForUpdatesWithFallback().catch((err) => {
           console.error('自动检查更新失败:', err)
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-status', {
+              status: 'error',
+              message: formatUpdateError(err)
+            })
+          }
         })
       }, 3000)
     }
@@ -1509,19 +1519,19 @@ ipcMain.handle('check-for-updates', async () => {
     if (!app.isPackaged) {
       return { success: false, message: '开发环境下无法检查更新' }
     }
-    await autoUpdater.checkForUpdates()
-    return { success: true, message: '正在检查更新，请稍候...' }
+    const { feed, usedFallback } = await checkForUpdatesWithFallback()
+    let message = '正在检查更新，请稍候...'
+    if (usedFallback) {
+      message = `Gitee 更新源不可用，已改用 ${feed.label} 检查更新`
+    }
+    return { success: true, message, feed: feed.id, usedFallback }
   } catch (error) {
-    // 将错误转换为友好的中文提示
-    let errorMessage = '检查更新失败'
-    if (error.message) {
-      if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
-        errorMessage = '无法连接到更新服务器，请检查网络连接'
-      } else if (error.message.includes('timeout')) {
-        errorMessage = '连接更新服务器超时，请稍后重试'
-      } else {
-        errorMessage = `检查更新失败: ${error.message}`
-      }
+    const errorMessage = formatUpdateError(error)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-status', {
+        status: 'error',
+        message: errorMessage
+      })
     }
     return { success: false, message: errorMessage }
   }

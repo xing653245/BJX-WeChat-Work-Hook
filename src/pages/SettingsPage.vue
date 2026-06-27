@@ -608,6 +608,8 @@ const handleCheckUpdate = async () => {
         result.message || '检查更新失败'
       )
       ElMessage.warning(result.message || '检查更新失败')
+    } else if (result.usedFallback) {
+      ElMessage.info(result.message || '已改用备用更新源检查更新')
     }
   } catch (error) {
     updateStatus.value = createUpdateStatus(
