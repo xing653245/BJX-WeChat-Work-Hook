@@ -12,7 +12,7 @@
 const fs = require('fs')
 const path = require('path')
 const axios = require('axios')
-const { pkg, collectReleaseFiles, getDefaultBranch, getEnvToken } = require('./publish-utils')
+const { pkg, collectReleaseFiles, getDefaultBranch, getEnvToken, normalizeReleaseFilesForPublish } = require('./publish-utils')
 
 function parseGiteePublishConfig() {
   const pub = pkg.build?.publish?.[0]
@@ -123,8 +123,8 @@ async function deleteAttachment(owner, repo, releaseId, attachId, token) {
   )
 }
 
-async function uploadAttachment(owner, repo, releaseId, filePath, token) {
-  const filename = path.basename(filePath)
+async function uploadAttachment(owner, repo, releaseId, filePath, token, uploadName) {
+  const filename = uploadName || path.basename(filePath)
   const bytes = fs.readFileSync(filePath)
   const form = new FormData()
   form.append('access_token', token)
@@ -139,41 +139,54 @@ async function uploadAttachment(owner, repo, releaseId, filePath, token) {
   return response.json()
 }
 
-async function replaceReleaseAssets(owner, repo, releaseId, files, token) {
+async function replaceReleaseAssets(owner, repo, releaseId, uploadPlan, token) {
   const existing = await listAttachments(owner, repo, releaseId, token)
+  const targetNames = new Set(uploadPlan.map((item) => item.uploadName))
+  const replacingExe = uploadPlan.some((item) => item.uploadName.endsWith('.exe'))
 
   for (const item of existing) {
     const name = item.name || item.filename
-    if (name) {
+    const shouldDelete =
+      name &&
+      (targetNames.has(name) ||
+        (replacingExe && (name.endsWith('.exe') || name.endsWith('.blockmap'))))
+    if (shouldDelete) {
       console.log(`[publish-gitee] 删除旧附件: ${name}`)
       await deleteAttachment(owner, repo, releaseId, item.id, token)
     }
   }
 
-  for (const filePath of files) {
-    const name = path.basename(filePath)
-    const sizeMb = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2)
-    console.log(`[publish-gitee] 上传: ${name} (${sizeMb} MB)`)
-    await uploadAttachment(owner, repo, releaseId, filePath, token)
-    console.log(`[publish-gitee] 完成: ${name}`)
+  for (const { localPath, uploadName } of uploadPlan) {
+    const sizeMb = (fs.statSync(localPath).size / 1024 / 1024).toFixed(2)
+    console.log(`[publish-gitee] 上传: ${uploadName} (${sizeMb} MB)`)
+    await uploadAttachment(owner, repo, releaseId, localPath, token, uploadName)
+    console.log(`[publish-gitee] 完成: ${uploadName}`)
   }
 }
 
-async function publishToTag(owner, repo, tag, token, files, { title, version } = {}) {
+async function publishToTag(owner, repo, tag, token, rawFiles, { title, version } = {}) {
   const ver = version || pkg.version
   console.log(`\n[publish-gitee] ---- 标签: ${tag} ----`)
 
-  let release = await getReleaseByTag(owner, repo, tag, token)
-  if (!release) {
-    console.log(`[publish-gitee] 创建 Release: ${tag}`)
-    release = await createRelease(owner, repo, tag, token, { title, version: ver })
-  } else {
-    console.log(`[publish-gitee] 更新已有 Release 信息: ${tag}`)
-    release = await updateRelease(owner, repo, release.id, tag, token, { title, version: ver })
-  }
+  const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles, ver)
 
-  await replaceReleaseAssets(owner, repo, release.id, files, token)
-  console.log(`[publish-gitee] 标签 ${tag} 发布完成`)
+  try {
+    let release = await getReleaseByTag(owner, repo, tag, token)
+    if (!release) {
+      console.log(`[publish-gitee] 创建 Release: ${tag}`)
+      release = await createRelease(owner, repo, tag, token, { title, version: ver })
+    } else {
+      console.log(`[publish-gitee] 更新已有 Release 信息: ${tag}`)
+      release = await updateRelease(owner, repo, release.id, tag, token, { title, version: ver })
+    }
+
+    await replaceReleaseAssets(owner, repo, release.id, uploadPlan, token)
+    console.log(`[publish-gitee] 标签 ${tag} 发布完成`)
+  } finally {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  }
 }
 
 async function publishVersionOnly(version, files) {

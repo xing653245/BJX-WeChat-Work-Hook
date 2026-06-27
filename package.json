@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -12,6 +12,8 @@
     "electron:build": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "electron:build:dir": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/publish-all.js",
+    "electron:publish:github": "node scripts/publish-github.js",
+    "electron:publish:gitee": "node scripts/publish-gitee.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "keywords": [
@@ -54,6 +56,7 @@
   "build": {
     "appId": "com.vwork.framework",
     "productName": "北极熊企微框架Pro",
+    "artifactName": "vwork-electron-setup-${version}.${ext}",
     "icon": "build/icon.ico",
     "directories": {
       "output": "dist-electron",

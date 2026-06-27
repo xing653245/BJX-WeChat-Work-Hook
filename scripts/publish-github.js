@@ -1,14 +1,14 @@
 /**
  * 将 dist-electron 打包产物上传到 GitHub Release，供 electron-updater（github provider）自动更新。
- *
- * 前置条件：
- * - 已执行 electron-builder，dist-electron 中存在 latest.yml 与安装包
- * - 环境变量 GH_TOKEN 或 GITHUB_TOKEN：GitHub Personal Access Token（需 repo 权限）
  */
 const fs = require('fs')
-const path = require('path')
 const axios = require('axios')
-const { pkg, collectReleaseFiles, getEnvToken } = require('./publish-utils')
+const {
+  pkg,
+  collectReleaseFiles,
+  normalizeReleaseFilesForPublish,
+  getEnvToken
+} = require('./publish-utils')
 
 function parseGithubPublishConfig() {
   const publishList = Array.isArray(pkg.build?.publish) ? pkg.build.publish : []
@@ -101,9 +101,8 @@ async function deleteReleaseAsset(owner, repo, assetId, token) {
   await githubRequest('DELETE', `/repos/${owner}/${repo}/releases/assets/${assetId}`, token)
 }
 
-async function uploadReleaseAsset(uploadUrl, filePath, token) {
-  const filename = path.basename(filePath)
-  const url = uploadUrl.replace(/\{[^}]+\}/, `?name=${encodeURIComponent(filename)}`)
+async function uploadReleaseAsset(uploadUrl, filePath, token, uploadName) {
+  const url = uploadUrl.replace(/\{[^}]+\}/, `?name=${encodeURIComponent(uploadName)}`)
   const bytes = fs.readFileSync(filePath)
 
   const response = await axios.post(url, bytes, {
@@ -122,52 +121,62 @@ async function uploadReleaseAsset(uploadUrl, filePath, token) {
     const detail = typeof response.data === 'object'
       ? JSON.stringify(response.data)
       : String(response.data || '')
-    throw new Error(`上传 ${filename} 失败 (${response.status}): ${detail}`)
+    throw new Error(`上传 ${uploadName} 失败 (${response.status}): ${detail}`)
   }
 
   return response.data
 }
 
-async function replaceReleaseAssets(owner, repo, release, files, token) {
+async function replaceReleaseAssets(owner, repo, release, uploadPlan, token) {
   const existing = Array.isArray(release.assets) ? release.assets : []
-  const uploadNames = new Set(files.map((filePath) => path.basename(filePath)))
+  const targetNames = new Set(uploadPlan.map((item) => item.uploadName))
+  const replacingExe = uploadPlan.some((item) => item.uploadName.endsWith('.exe'))
 
   for (const asset of existing) {
-    if (asset.name && uploadNames.has(asset.name)) {
+    const shouldDelete =
+      targetNames.has(asset.name) ||
+      (replacingExe && (asset.name.endsWith('.exe') || asset.name.endsWith('.blockmap')))
+    if (shouldDelete) {
       console.log(`[publish-github] 删除旧附件: ${asset.name}`)
       await deleteReleaseAsset(owner, repo, asset.id, token)
     }
   }
 
-  for (const filePath of files) {
-    const name = path.basename(filePath)
-    const sizeMb = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2)
-    console.log(`[publish-github] 上传: ${name} (${sizeMb} MB)`)
-    await uploadReleaseAsset(release.upload_url, filePath, token)
-    console.log(`[publish-github] 完成: ${name}`)
+  for (const { localPath, uploadName } of uploadPlan) {
+    const sizeMb = (fs.statSync(localPath).size / 1024 / 1024).toFixed(2)
+    console.log(`[publish-github] 上传: ${uploadName} (${sizeMb} MB)`)
+    await uploadReleaseAsset(release.upload_url, localPath, token, uploadName)
+    console.log(`[publish-github] 完成: ${uploadName}`)
   }
 }
 
 async function main() {
   const { owner, repo } = parseGithubPublishConfig()
   const token = getGithubToken()
-  const files = collectReleaseFiles()
+  const rawFiles = collectReleaseFiles()
+  const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles)
   const tag = `v${pkg.version}`
 
   console.log(`[publish-github] 目标: github.com/${owner}/${repo} @ ${tag}`)
   console.log(`[publish-github] 版本: v${pkg.version}`)
-  console.log(`[publish-github] 文件: ${files.map((f) => path.basename(f)).join(', ')}`)
+  console.log(`[publish-github] 上传文件: ${uploadPlan.map((item) => item.uploadName).join(', ')}`)
 
-  let release = await getReleaseByTag(owner, repo, tag, token)
-  if (!release) {
-    console.log(`[publish-github] 创建 Release 标签: ${tag}`)
-    release = await createRelease(owner, repo, tag, token)
+  try {
+    let release = await getReleaseByTag(owner, repo, tag, token)
+    if (!release) {
+      console.log(`[publish-github] 创建 Release 标签: ${tag}`)
+      release = await createRelease(owner, repo, tag, token)
+    }
+
+    await replaceReleaseAssets(owner, repo, release, uploadPlan, token)
+
+    console.log('[publish-github] 发布完成')
+    console.log(`[publish-github] 更新地址: https://github.com/${owner}/${repo}/releases/tag/${tag}`)
+  } finally {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
   }
-
-  await replaceReleaseAssets(owner, repo, release, files, token)
-
-  console.log('[publish-github] 发布完成')
-  console.log(`[publish-github] 更新地址: https://github.com/${owner}/${repo}/releases/tag/${tag}`)
 }
 
 main().catch((err) => {

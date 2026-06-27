@@ -219,7 +219,7 @@ const {
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime
-} = require('../../shared/authCheck.cjs')
+} = require('./authCheck.cjs')
 
 /**
  * 检查端口是否被占用

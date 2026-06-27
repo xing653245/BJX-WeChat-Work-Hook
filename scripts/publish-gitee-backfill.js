@@ -48,14 +48,16 @@ function sha512Base64(filePath) {
   return hash.digest('base64')
 }
 
-function buildLatestYml(version, exeFileName, size, sha512) {
+const { getStandardInstallerName } = require('./publish-utils')
+
+function buildLatestYml(version, installerName, size, sha512) {
   return [
     `version: ${version}`,
     'files:',
-    `  - url: ${exeFileName}`,
+    `  - url: ${installerName}`,
     `    sha512: ${sha512}`,
     `    size: ${size}`,
-    `path: ${exeFileName}`,
+    `path: ${installerName}`,
     `sha512: ${sha512}`,
     `releaseDate: '${new Date().toISOString()}'`,
     ''
@@ -70,19 +72,19 @@ function prepareFilesFromExe(exePath, version) {
     throw new Error(`请指定 .exe 安装包: ${exePath}`)
   }
 
-  const exeFileName = path.basename(exePath)
+  const installerName = getStandardInstallerName(version)
   const stat = fs.statSync(exePath)
   const sha512 = sha512Base64(exePath)
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-backfill-'))
   const latestYmlPath = path.join(tempDir, 'latest.yml')
 
-  fs.writeFileSync(latestYmlPath, buildLatestYml(version, exeFileName, stat.size, sha512), 'utf-8')
-  fs.copyFileSync(exePath, path.join(tempDir, exeFileName))
+  fs.writeFileSync(latestYmlPath, buildLatestYml(version, installerName, stat.size, sha512), 'utf-8')
+  fs.copyFileSync(exePath, path.join(tempDir, installerName))
 
   const blockmapSrc = `${exePath}.blockmap`
-  const files = [latestYmlPath, path.join(tempDir, exeFileName)]
+  const files = [latestYmlPath, path.join(tempDir, installerName)]
   if (fs.existsSync(blockmapSrc)) {
-    const blockmapDest = path.join(tempDir, `${exeFileName}.blockmap`)
+    const blockmapDest = path.join(tempDir, `${installerName}.blockmap`)
     fs.copyFileSync(blockmapSrc, blockmapDest)
     files.push(blockmapDest)
   }
