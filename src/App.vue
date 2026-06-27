@@ -1,5 +1,5 @@
 <template>
-  <el-container class="app-container">
+  <el-container class="app-container" :class="{ 'is-dark': isDark }">
     <el-main class="app-main">
       <el-tabs v-model="activeTab" type="border-card" class="main-tabs">
         <el-tab-pane label="首页" name="index">
@@ -17,27 +17,42 @@
       </el-tabs>
     </el-main>
     <CloseConfirmDialog v-model="closeConfirmVisible" />
+    <OnboardingDialog v-model="onboardingVisible" @go-tab="activeTab = $event" />
   </el-container>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, provide, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import IndexPage from './pages/IndexPage.vue'
 import RunLogsPage from './pages/RunLogsPage.vue'
 import VWorkManagerPage from './pages/VWorkManagerPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import CloseConfirmDialog from './components/CloseConfirmDialog.vue'
+import OnboardingDialog from './components/OnboardingDialog.vue'
 import { getCloseConfirmAutoAction } from './utils/closeConfirmPrefs'
 import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
 import { confirmLoggedIn } from './utils/loginStatusRetry'
 import { pickPersonalRecord } from './utils/personalInfo'
 import { AUTH_FETCH_FAILED_EXPIRE, resolveExpireAfterAuthFetch } from './utils/authExpire'
+import { shouldShowOnboarding } from './utils/onboarding'
+import { initTheme, setThemeMode } from './utils/theme'
 
-const activeTab = ref('index')
+const TAB_STORAGE_KEY = 'vwork_active_tab'
+
+const activeTab = ref(localStorage.getItem(TAB_STORAGE_KEY) || 'index')
 const vworkManagerRef = ref(null)
 const closeConfirmVisible = ref(false)
+const onboardingVisible = ref(false)
+const isDark = ref(false)
+
+provide('activeTab', activeTab)
+provide('setThemeMode', (mode) => {
+  setThemeMode(mode, (dark) => {
+    isDark.value = dark
+  })
+})
 
 /** 取消 fastapi-message 中退出登录逻辑订阅（与其它页面监听互不干扰） */
 let removeFastapiLogoutListener = null
@@ -306,6 +321,14 @@ const handleLogoutMessage = async (data) => {
 
 // 监听消息推送
 onMounted(() => {
+  initTheme((dark) => {
+    isDark.value = dark
+  })
+
+  if (shouldShowOnboarding()) {
+    onboardingVisible.value = true
+  }
+
   removeFastapiLogoutListener =
     window.electronAPI?.onFastAPIMessage?.(handleLogoutMessage) || null
   window.electronAPI?.onWecomInjectStarted?.((data) => {
@@ -331,9 +354,20 @@ onMounted(() => {
       showClose: true
     })
   })
+  window.electronAPI?.onServiceError?.((data) => {
+    ElMessageBox.alert(data?.detail || data?.message || '服务启动失败', data?.message || '服务异常', {
+      type: 'error',
+      confirmButtonText: '知道了'
+    }).catch(() => {})
+  })
 })
 
 watch(activeTab, (tab) => {
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, tab)
+  } catch {
+    /* ignore */
+  }
   if (tab === 'manager') {
     vworkManagerRef.value?.recoverOrphanedLoggedInPorts?.()
   }
@@ -344,6 +378,7 @@ onUnmounted(() => {
   removeFastapiLogoutListener = null
   window.electronAPI?.removeCloseConfirmRequestListener?.()
   window.electronAPI?.removeCrashRecoverySuspendedListener?.()
+  window.electronAPI?.removeServiceErrorListener?.()
 })
 </script>
 
@@ -359,13 +394,17 @@ body {
 }
 
 .app-container {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
 }
 
 .app-main {
   padding: 0;
-  height: calc(100vh - 60px);
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .main-tabs {

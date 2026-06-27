@@ -74,16 +74,6 @@ const showWechatPay = () => {
 
 <style scoped>
 .page-shell {
-  --sp-bg: #f4f6f9;
-  --sp-surface: #ffffff;
-  --sp-border: #e8ecf1;
-  --sp-text: #1f2937;
-  --sp-muted: #6b7280;
-  --sp-accent: #409eff;
-  --sp-accent-soft: rgba(64, 158, 255, 0.08);
-  --sp-radius: 12px;
-  --sp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
-
   display: flex;
   flex-direction: column;
   height: 100%;

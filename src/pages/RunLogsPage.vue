@@ -3,12 +3,18 @@
     <div class="page-body">
       <div class="section-card">
         <div class="section-toolbar">
-          <span class="toolbar-hint">右键行可复制内容或清空日志</span>
+          <div class="toolbar-left">
+            <span class="toolbar-hint">实时推送日志；{{ fileLogHint }}</span>
+          </div>
           <div class="toolbar-actions">
             <span v-if="logCount >= maxRows * 0.9" class="toolbar-warn">
               接近上限 {{ maxRows }} 条，将自动裁剪
             </span>
             <span class="toolbar-badge">{{ logCount }} 条</span>
+            <el-button size="small" plain :loading="loadingFileLogs" @click="mergeTodayFileLogs">
+              合并今日文件日志
+            </el-button>
+            <el-button size="small" plain @click="openLogFolder">打开日志目录</el-button>
             <el-button size="small" plain :disabled="logCount === 0" @click="clearLogs">
               清空
             </el-button>
@@ -54,16 +60,30 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getMsgTypeText } from '../utils/msgParser'
+import { useConfigStore } from '../stores/config'
 
+const configStore = useConfigStore()
 const logs = ref([])
 const selectedRow = ref(null)
 const maxRows = 1000
+const loadingFileLogs = ref(false)
+const logDirPath = ref('')
 
 const contextMenuVisible = ref(false)
 const contextMenuLeft = ref(0)
 const contextMenuTop = ref(0)
 
 const logCount = computed(() => logs.value.length)
+
+const fileLogHint = computed(() => {
+  const open = configStore.config.sys?.open_log
+  const save = configStore.config.sys?.save_log
+  const openOn = open === 'true' || open === true
+  const saveOn = save === 'true' || save === true
+  if (openOn && saveOn) return '已开启文件持久化，可与下方按钮合并查看'
+  if (openOn) return '未开启「保存日志」，仅内存显示（可在设置中开启）'
+  return '日志已关闭，请在设置中开启'
+})
 
 let removeFastapiLogListener = null
 
@@ -137,6 +157,11 @@ onMounted(() => {
     sys: true
   })
 
+  configStore.loadConfig()
+  window.electronAPI?.getLogDirectory?.().then((res) => {
+    if (res?.success) logDirPath.value = res.path
+  })
+
   document.addEventListener('click', closeContextMenu)
 
   if (window.electronAPI?.onFastAPIMessage) {
@@ -206,6 +231,90 @@ const clearLogs = () => {
   ElMessage.success('日志已清空')
 }
 
+function parseFileLogLine(line) {
+  const sysMatch = line.match(/^\[(.+?)\]\s*\[系统\]\s*(.*)$/)
+  if (sysMatch) {
+    return {
+      index: 0,
+      time: sysMatch[1],
+      sender: '系统提示',
+      type: '系统提示',
+      message: sysMatch[2],
+      rawData: { sys: true, content: sysMatch[2] }
+    }
+  }
+  const msgMatch = line.match(/^\[(.+?)\]\s*(\[发出\]|\[收到\])\s*(.*?)(?:\(([^)]*)\))?:\s*(.*)$/)
+  if (msgMatch) {
+    const dir = msgMatch[2] === '[发出]' ? '发送' : '接收'
+    return {
+      index: 0,
+      time: msgMatch[1],
+      sender: msgMatch[4] || '—',
+      type: `${dir}-消息`,
+      message: msgMatch[5],
+      rawData: {}
+    }
+  }
+  return {
+    index: 0,
+    time: '—',
+    sender: '文件日志',
+    type: '文件',
+    message: line,
+    rawData: {}
+  }
+}
+
+async function mergeTodayFileLogs() {
+  if (!window.electronAPI?.readTodayLogFile) {
+    ElMessage.warning('当前环境无法读取文件日志')
+    return
+  }
+  loadingFileLogs.value = true
+  try {
+    const res = await window.electronAPI.readTodayLogFile({ maxLines: 300 })
+    if (!res?.success) {
+      ElMessage.warning('读取文件日志失败')
+      return
+    }
+    if (!res.lines?.length) {
+      ElMessage.info('今日暂无文件日志（请确认已在设置中开启「保存日志」并重启）')
+      return
+    }
+    const existingKeys = new Set(logs.value.map((l) => `${l.time}|${l.message}`))
+    let added = 0
+    for (const line of res.lines) {
+      const entry = parseFileLogLine(line)
+      const key = `${entry.time}|${entry.message}`
+      if (existingKeys.has(key)) continue
+      existingKeys.add(key)
+      logs.value.push(entry)
+      added++
+    }
+    logs.value.forEach((log, index) => {
+      log.index = index + 1
+    })
+    ElMessage.success(added ? `已合并 ${added} 条文件日志` : '文件日志与当前列表一致，无新增')
+  } catch (e) {
+    ElMessage.error(e?.message || '读取文件日志失败')
+  } finally {
+    loadingFileLogs.value = false
+  }
+}
+
+async function openLogFolder() {
+  if (!window.electronAPI?.openLogDirectory) {
+    ElMessage.warning('当前环境无法打开日志目录')
+    return
+  }
+  const res = await window.electronAPI.openLogDirectory()
+  if (res?.success) {
+    if (res.path) logDirPath.value = res.path
+  } else {
+    ElMessage.warning(res?.error || '打开日志目录失败')
+  }
+}
+
 defineExpose({
   addLog
 })
@@ -213,16 +322,6 @@ defineExpose({
 
 <style scoped>
 .page-shell {
-  --sp-bg: #f4f6f9;
-  --sp-surface: #ffffff;
-  --sp-border: #e8ecf1;
-  --sp-text: #1f2937;
-  --sp-muted: #6b7280;
-  --sp-accent: #409eff;
-  --sp-accent-soft: rgba(64, 158, 255, 0.08);
-  --sp-radius: 12px;
-  --sp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
-
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -259,7 +358,12 @@ defineExpose({
   gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--sp-border);
-  background: #fafbfc;
+  background: var(--sp-toolbar-bg);
+}
+
+.toolbar-left {
+  min-width: 0;
+  flex: 1;
 }
 
 .toolbar-hint {
@@ -298,7 +402,7 @@ defineExpose({
 }
 
 .data-table :deep(.el-table__header th) {
-  background: #f8fafc !important;
+  background: var(--sp-table-header-bg) !important;
   font-weight: 600;
   font-size: 12px;
   color: var(--sp-muted);
@@ -307,7 +411,11 @@ defineExpose({
 :deep(.el-table) {
   font-size: 13px;
   --el-table-border-color: var(--sp-border);
-  --el-table-header-bg-color: #f8fafc;
+  --el-table-header-bg-color: var(--sp-table-header-bg);
+  --el-table-tr-bg-color: var(--sp-surface);
+  --el-table-row-hover-bg-color: var(--sp-subtle-bg);
+  --el-fill-color-blank: var(--sp-surface);
+  background: var(--sp-surface);
 }
 
 :deep(.el-table .cell) {

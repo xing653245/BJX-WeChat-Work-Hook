@@ -1254,16 +1254,6 @@ defineExpose({
 
 <style scoped>
 .page-shell {
-  --sp-bg: #f4f6f9;
-  --sp-surface: #ffffff;
-  --sp-border: #e8ecf1;
-  --sp-text: #1f2937;
-  --sp-muted: #6b7280;
-  --sp-accent: #409eff;
-  --sp-accent-soft: rgba(64, 158, 255, 0.08);
-  --sp-radius: 12px;
-  --sp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
-
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1301,7 +1291,7 @@ defineExpose({
   gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--sp-border);
-  background: #fafbfc;
+  background: var(--sp-toolbar-bg);
 }
 
 .toolbar-hint {
@@ -1334,7 +1324,7 @@ defineExpose({
 }
 
 .data-table :deep(.el-table__header th) {
-  background: #f8fafc !important;
+  background: var(--sp-table-header-bg) !important;
   font-weight: 600;
   font-size: 12px;
   color: var(--sp-muted);
@@ -1343,7 +1333,11 @@ defineExpose({
 :deep(.el-table) {
   font-size: 13px;
   --el-table-border-color: var(--sp-border);
-  --el-table-header-bg-color: #f8fafc;
+  --el-table-header-bg-color: var(--sp-table-header-bg);
+  --el-table-tr-bg-color: var(--sp-surface);
+  --el-table-row-hover-bg-color: var(--sp-subtle-bg);
+  --el-fill-color-blank: var(--sp-surface);
+  background: var(--sp-surface);
 }
 
 :deep(.el-table .cell) {

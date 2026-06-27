@@ -62,7 +62,11 @@ try {
   }
 }
 const axios = require('axios')
-const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, killProcessByPort } = require('./commons/common')
+const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
+const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
+const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
+const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
+const { initCrashDiagnostics, attachWebContentsDiagnostics } = require('./services/crashDiagnostics')
 const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
 const {
   checkPortListenAvailable,
@@ -103,6 +107,54 @@ let timedCheckPausedUntil = 0
 const MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN = 3
 let crashRecoveryCyclesWithoutLogin = 0
 let crashRecoveryAutoInjectSuspended = false
+
+/** 单实例：避免多开导致端口冲突 */
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+  return mainWindow
+}
+
+function notifyPortError({ port, service, detail }) {
+  const title = `${service} 端口 ${port} 不可用`
+  const message =
+    detail ||
+    `端口 ${port} 已被占用或无法绑定。\n\n请检查：\n1. 是否重复打开了本应用（应只保留一个实例）\n2. 是否有其他程序占用该端口\n3. 可在设置中更换 HTTP 监听端口后重启框架`
+
+  console.error(`[端口错误] ${title}: ${message}`)
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('service-error', { port, service, message: title, detail: message })
+  }
+
+  showDesktopNotification({
+    title: '服务启动失败',
+    body: `${title}。点击查看详情。`,
+    onClick: () => {
+      focusMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('service-error', { port, service, message: title, detail: message })
+      }
+    }
+  })
+
+  dialog
+    .showMessageBox(mainWindow || undefined, {
+      type: 'error',
+      title: '服务启动失败',
+      message: title,
+      detail: message,
+      buttons: ['知道了']
+    })
+    .catch(() => {})
+}
 
 const isAutoInjectReason = (reason) => reason === '崩溃恢复' || reason === '定时检查'
 
@@ -185,6 +237,10 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   console.log('发现新版本:', info.version)
+  showDesktopNotification({
+    title: '发现新版本',
+    body: `版本 ${info.version} 可用，打开「设置 → 更新」可下载安装。`
+  })
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'available',
@@ -236,6 +292,10 @@ autoUpdater.on('download-progress', (progressObj) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   console.log('更新下载完成:', info.version)
+  showDesktopNotification({
+    title: '更新已就绪',
+    body: `版本 ${info.version} 已下载完成，打开设置可立即重启安装。`
+  })
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'downloaded',
@@ -261,14 +321,21 @@ const getAppPath = () => {
 // 启动消息接收服务器（用于接收FastAPI推送的消息）
 const startMessageServer = () => {
   const http = require('http')
-  const messagePort = 9999 // 固定端口用于消息推送
-  
+  const messagePort = 9999
+
+  ensureMessageServerToken()
+
   if (messageServer) {
     messageServer.close()
   }
-  
+
   messageServer = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/message') {
+      if (!isValidMessageServerRequest(req)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: 'Forbidden' }))
+        return
+      }
       let body = ''
       req.on('data', chunk => {
         body += chunk.toString()
@@ -296,13 +363,23 @@ const startMessageServer = () => {
   
   messageServer.listen(messagePort, '127.0.0.1', () => {
     console.log(`消息接收服务器启动在端口 ${messagePort}`)
+    process.env.MESSAGE_SERVER_URL = `http://127.0.0.1:${messagePort}/message`
   })
-  
+
   messageServer.on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
-      console.log(`端口 ${messagePort} 已被占用，尝试使用其他端口`)
+      notifyPortError({
+        port: messagePort,
+        service: '消息推送服务',
+        detail: `端口 ${messagePort} 已被占用，运行日志/消息推送可能无法正常工作。\n\n若已打开另一个本框架实例，请关闭多余窗口；否则请结束占用该端口的进程后重启应用。`
+      })
     } else {
       console.error('消息服务器错误:', error)
+      notifyPortError({
+        port: messagePort,
+        service: '消息推送服务',
+        detail: error.message || String(error)
+      })
     }
   })
 }
@@ -345,6 +422,7 @@ const startExpressServer = async (port) => {
   await killProcessByPort(p)
 
   process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
+  ensureMessageServerToken()
   const { runServer } = require('./express_server')
   console.log(`启动Express服务器，端口: ${p}`)
 
@@ -357,6 +435,13 @@ const startExpressServer = async (port) => {
     const msg = error.message || String(error)
     console.error('启动Express服务器失败:', msg)
     expressServer = null
+    if (/EADDRINUSE|已被占用|address already in use/i.test(msg)) {
+      notifyPortError({
+        port: p,
+        service: 'HTTP 框架服务',
+        detail: `无法在端口 ${p} 启动 HTTP 服务：${msg}\n\n请在「设置」中更换监听端口，或结束占用该端口的进程后重启应用。`
+      })
+    }
     return { success: false, message: msg }
   }
 }
@@ -401,10 +486,9 @@ const findPidByPort = (port) => {
 
 // 读取配置文件
 const readConfig = () => {
-  // 使用 commons/common.js 中的 getConfigPath，确保开发环境和打包环境路径一致
   const configPath = getConfigPath()
   try {
-    const content = fs.readFileSync(configPath, 'utf-8')
+    const content = readConfigTextWithBackup(configPath)
     return ini.parse(content)
   } catch (error) {
     console.error('读取配置失败:', error)
@@ -436,12 +520,14 @@ function getWindowCloseBehavior() {
 
 // 保存配置文件
 const saveConfig = (config) => {
-  // 使用 commons/common.js 中的 getConfigPath，确保与读取路径一致
   const configPath = getConfigPath()
   try {
     const content = ini.stringify(config)
-    fs.writeFileSync(configPath, content, 'utf-8')
-    return { success: true }
+    const result = writeConfigAtomic(configPath, content)
+    if (!result.success) {
+      return { success: false, msg: result.msg || '保存配置失败' }
+    }
+    return { success: true, backupPath: result.backupPath }
   } catch (error) {
     console.error('保存配置失败:', error)
     return { success: false, msg: error.message }
@@ -876,6 +962,26 @@ function createWindow() {
     console.log('Page loaded successfully')
   })
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedExternalUrl(url)) {
+      shell.openExternal(url)
+    } else {
+      console.warn('[security] 阻止打开外部窗口:', url)
+    }
+    return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isDev && url.startsWith('http://localhost:5173')) return
+    if (url.startsWith('file://')) return
+    event.preventDefault()
+    if (isAllowedExternalUrl(url)) {
+      shell.openExternal(url)
+    }
+  })
+
+  attachWebContentsDiagnostics(mainWindow.webContents)
+
   mainWindow.on('close', (e) => {
     if (allowMainWindowClose) {
       return
@@ -1012,16 +1118,34 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return
+
+  initCrashDiagnostics({ getMainWindow: () => mainWindow })
+  initDesktopNotifications({
+    icon: resolveAppIconPath(),
+    focusMainWindow
+  })
+
+  app.on('second-instance', () => {
+    focusMainWindow()
+  })
+
   createWindow()
-  
-  // 启动消息接收服务器
+
   startMessageServer()
-  
-  // 启动Express服务器（Node.js版本）
+
   const config = readConfig()
   startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)).then((r) => {
     if (!r.success) {
       console.error('启动Express失败:', r.message)
+      const port = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
+      if (!/EADDRINUSE|已被占用|address already in use/i.test(r.message || '')) {
+        notifyPortError({
+          port,
+          service: 'HTTP 框架服务',
+          detail: r.message || 'Express 服务启动失败'
+        })
+      }
     }
   })
 
@@ -1100,10 +1224,15 @@ ipcMain.handle('read-config', () => {
 })
 
 ipcMain.handle('save-config', (event, config) => {
+  assertMainWindow(event, mainWindow)
   return saveConfig(config)
 })
 
 ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
+  assertMainWindow(event, mainWindow)
+  if (!isAllowedCallApiUrl(url)) {
+    return { success: false, msg: '仅允许访问本机 HTTP 接口 (127.0.0.1 / localhost)' }
+  }
   try {
     // 仅 http://127.0.0.1:{企微端口}/api 走直连；带路径的为框架 REST（如 /api/message/text）
     const directWecomMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/api\/?$/)
@@ -1297,9 +1426,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         if (shouldLog) {
           try {
             const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
-            await axios.post(MESSAGE_SERVER_URL, displayLogData, {
-              timeout: 1000
-            })
+            await axios.post(MESSAGE_SERVER_URL, displayLogData, messageServerAxiosConfig({ timeout: 1000 }))
           } catch (error) {
             console.error(`推送API调用日志到Electron失败: ${error.message}`)
           }
@@ -1339,9 +1466,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
               
               try {
                 const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
-                await axios.post(MESSAGE_SERVER_URL, callbackErrorLogData, {
-                  timeout: 1000
-                })
+                await axios.post(MESSAGE_SERVER_URL, callbackErrorLogData, messageServerAxiosConfig({ timeout: 1000 }))
               } catch (error) {
                 console.error(`推送回调日志到Electron失败: ${error.message}`)
               }
@@ -1484,7 +1609,12 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
 
 // 打开外部链接
 ipcMain.handle('open-external', async (event, url) => {
+  assertMainWindow(event, mainWindow)
+  if (!isAllowedExternalUrl(url)) {
+    return { success: false, message: '不允许打开此外部链接' }
+  }
   await shell.openExternal(url)
+  return { success: true }
 })
 
 // 根据端口查找PID
@@ -1494,6 +1624,7 @@ ipcMain.handle('find-pid-by-port', async (event, port) => {
 
 // 根据端口杀死进程
 ipcMain.handle('kill-process-by-port', async (event, port) => {
+  assertMainWindow(event, mainWindow)
   return await killProcessByPort(port)
 })
 
@@ -1580,6 +1711,25 @@ ipcMain.handle('quit-and-install', async () => {
 
 ipcMain.handle('get-app-version', () => {
   return app.getVersion()
+})
+
+ipcMain.handle('get-log-directory', () => {
+  return { success: true, path: getRunLogDirectory() }
+})
+
+ipcMain.handle('open-log-directory', async (event) => {
+  assertMainWindow(event, mainWindow)
+  const dir = getRunLogDirectory()
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+  const result = await shell.openPath(dir)
+  return { success: result === '', path: dir, error: result || null }
+})
+
+ipcMain.handle('read-today-log-file', async (event, { maxLines } = {}) => {
+  assertMainWindow(event, mainWindow)
+  return readTodayRunLogTail(maxLines || 400)
 })
 
 // 保存日志到文件

@@ -71,35 +71,112 @@ function getAppRootPath() {
 }
 
 /**
+ * 解析运行日志目录（与 saveLogToFile 写入位置一致）
+ * @returns {{ dir: string, writableRoot: string }}
+ */
+function resolveRunLogRoots() {
+  let baseDir
+  let fallbackDir = null
+
+  try {
+    const { app } = require('electron')
+    if (app && app.isPackaged) {
+      const installRoot = path.join(process.resourcesPath || app.getAppPath(), '..')
+      baseDir = installRoot
+      fallbackDir = app.getPath('userData')
+    }
+  } catch {
+    /* 非 Electron */
+  }
+
+  if (!baseDir) {
+    baseDir = getAppRootPath()
+  }
+
+  return { baseDir, fallbackDir }
+}
+
+function getRunLogDirectory() {
+  const { baseDir, fallbackDir } = resolveRunLogRoots()
+  const primary = path.join(baseDir, 'logs', 'runLog')
+  if (fs.existsSync(primary)) return primary
+  if (fallbackDir) {
+    const fallback = path.join(fallbackDir, 'logs', 'runLog')
+    if (fs.existsSync(fallback)) return fallback
+  }
+  return primary
+}
+
+/**
+ * @param {number} [maxLines=400]
+ */
+function readTodayRunLogTail(maxLines = 400) {
+  const logDir = getRunLogDirectory()
+  const now = new Date()
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const logFilePath = path.join(logDir, `${dateStr}.log`)
+  if (!fs.existsSync(logFilePath)) {
+    return { success: true, path: logFilePath, lines: [], content: '' }
+  }
+  const raw = fs.readFileSync(logFilePath, 'utf-8')
+  const lines = raw.split(/\r?\n/).filter(Boolean)
+  const tail = lines.slice(-maxLines)
+  return { success: true, path: logFilePath, lines: tail, content: tail.join('\n') }
+}
+
+/** 原子写入配置并保留 .bak 备份 */
+function writeConfigAtomic(configPath, content) {
+  const backupPath = `${configPath}.bak`
+  const tempPath = `${configPath}.${process.pid}.tmp`
+  try {
+    const dir = path.dirname(configPath)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+    if (fs.existsSync(configPath)) {
+      fs.copyFileSync(configPath, backupPath)
+    }
+    fs.writeFileSync(tempPath, content, 'utf-8')
+    fs.renameSync(tempPath, configPath)
+    return { success: true, backupPath }
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+    } catch {
+      /* ignore */
+    }
+    return { success: false, msg: error.message }
+  }
+}
+
+/** 读取配置文本，主文件失败时尝试 .bak */
+function readConfigTextWithBackup(configPath) {
+  try {
+    return fs.readFileSync(configPath, 'utf-8')
+  } catch (primaryErr) {
+    const backupPath = `${configPath}.bak`
+    if (fs.existsSync(backupPath)) {
+      console.warn(`主配置读取失败，使用备份: ${primaryErr.message}`)
+      const content = fs.readFileSync(backupPath, 'utf-8')
+      try {
+        writeConfigAtomic(configPath, content)
+      } catch {
+        /* 恢复失败仍返回备份内容 */
+      }
+      return content
+    }
+    throw primaryErr
+  }
+}
+
+/**
  * 保存日志到文件
  * @param {object} data - 日志数据对象
  * @returns {Promise<boolean>} 保存成功返回true，失败返回false
  */
 async function saveLogToFile(data) {
   try {
-    let baseDir
-    let fallbackDir = null
-
-    // 打包后的 Electron：优先把日志写到「安装目录/logs」，如果失败再回退到用户数据目录
-    try {
-      const { app } = require('electron')
-      if (app && app.isPackaged) {
-        // 安装目录：resources 的上级目录，例如 C:\Program Files\xxx\
-        const installRoot = path.join(process.resourcesPath || app.getAppPath(), '..')
-        const userDataPath = app.getPath('userData')
-        baseDir = installRoot
-        fallbackDir = userDataPath
-      }
-    } catch (e) {
-      // 非 Electron 环境或 app 未就绪时忽略，降级到项目根目录
-    }
-
-    if (!baseDir) {
-      // 开发环境或纯 Node 环境：使用项目根目录
-      baseDir = getAppRootPath()
-    }
-
-    // 封装一个实际写入日志的函数，方便主/备用目录复用
+    const { baseDir, fallbackDir } = resolveRunLogRoots()
     const writeToDir = (rootDir) => {
       const logDir = path.join(rootDir, 'logs', 'runLog')
       
@@ -395,6 +472,10 @@ function readIni(configPath = null) {
 module.exports = {
   getConfigPath,
   getAppRootPath,
+  getRunLogDirectory,
+  readTodayRunLogTail,
+  writeConfigAtomic,
+  readConfigTextWithBackup,
   sendCallback,
   AUTH_REASON,
   checkAuthExpire,

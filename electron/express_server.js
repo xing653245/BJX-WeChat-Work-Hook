@@ -7,6 +7,7 @@ const express = require('express')
 const cors = require('cors')
 const axios = require('axios')
 const { readIni, sendCallback, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
+const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
 
 // 导入路由
@@ -45,9 +46,7 @@ async function processIncomingWecomMessage(data) {
 
   if (ini_config.open_log && valid_auth) {
     try {
-      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', data, {
-        timeout: 15000
-      })
+      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', data, messageServerAxiosConfig())
     } catch (error) {
       console.error(`推送消息到Electron失败: ${error.message}`)
     }
@@ -71,9 +70,7 @@ async function processIncomingWecomMessage(data) {
         }
 
         try {
-          await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', callbackLogData, {
-            timeout: 1000
-          })
+          await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', callbackLogData, messageServerAxiosConfig({ timeout: 1000 }))
         } catch (error) {
           console.error(`推送回调日志到Electron失败: ${error.message}`)
         }
@@ -91,9 +88,7 @@ async function processIncomingWecomMessage(data) {
       sys: true
     }
     try {
-      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', error_data, {
-        timeout: 1000
-      })
+      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', error_data, messageServerAxiosConfig({ timeout: 1000 }))
     } catch (error) {
       console.error(`推送错误消息失败: ${error.message}`)
     }

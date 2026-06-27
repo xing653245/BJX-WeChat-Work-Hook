@@ -230,7 +230,7 @@
                 </div>
               </div>
               <p class="section-footnote">
-                修改后需重启框架生效
+                修改后需重启框架生效。运行日志页可「合并今日文件日志」与打开日志目录。
                 <el-tooltip
                   content="开启之后，会把运行日志保存到logs/runLog下&#10;如果需要开启的话，需要先打开[开启日志]才能生效"
                   placement="top"
@@ -238,6 +238,65 @@
                   <el-icon class="inline-help"><QuestionFilled /></el-icon>
                 </el-tooltip>
               </p>
+              <div class="log-dir-actions">
+                <el-button size="small" plain @click="openLogDirectory">打开日志目录</el-button>
+                <code v-if="logDirectoryPath" class="log-dir-path">{{ logDirectoryPath }}</code>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Appearance -->
+        <section :id="sectionDomId('appearance')" class="settings-section">
+          <div class="section-card">
+            <div class="section-head">
+              <div class="section-head-left">
+                <span class="section-icon"><el-icon><Sunny /></el-icon></span>
+                <div>
+                  <h2 class="section-title">外观</h2>
+                  <p class="section-desc">界面明暗主题</p>
+                </div>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="option-cards theme-cards">
+                <button
+                  type="button"
+                  class="option-card"
+                  :class="{ selected: themeMode === 'light' }"
+                  @click="setLocalTheme('light')"
+                >
+                  <span class="option-card-radio" aria-hidden="true" />
+                  <span class="option-card-content">
+                    <span class="option-card-title">浅色</span>
+                    <span class="option-card-desc">明亮背景，适合日间使用</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="option-card"
+                  :class="{ selected: themeMode === 'dark' }"
+                  @click="setLocalTheme('dark')"
+                >
+                  <span class="option-card-radio" aria-hidden="true" />
+                  <span class="option-card-content">
+                    <span class="option-card-title">深色</span>
+                    <span class="option-card-desc">降低屏幕亮度</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="option-card"
+                  :class="{ selected: themeMode === 'system' }"
+                  @click="setLocalTheme('system')"
+                >
+                  <span class="option-card-radio" aria-hidden="true" />
+                  <span class="option-card-content">
+                    <span class="option-card-title">跟随系统</span>
+                    <span class="option-card-desc">自动匹配 Windows 主题</span>
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -454,7 +513,7 @@
 
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   QuestionFilled,
@@ -469,24 +528,30 @@ import {
   Connection,
   Promotion,
   Monitor,
-  ArrowDown
+  ArrowDown,
+  Sunny
 } from '@element-plus/icons-vue'
 import { useConfigStore } from '../stores/config'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
+import { getStoredThemeMode } from '../utils/theme'
 
 const configStore = useConfigStore()
+const setThemeModeGlobal = inject('setThemeMode', null)
 const saving = ref(false)
 const isDirty = ref(false)
 const skipDirtyWatch = ref(false)
 const activeSection = ref('http')
 const mainScrollRef = ref(null)
 const sectionExpanded = reactive({ api: true })
+const themeMode = ref(getStoredThemeMode())
+const logDirectoryPath = ref('')
 
 const navSections = [
   { id: 'http', label: 'HTTP', icon: Connection },
   { id: 'api', label: '接口调试', icon: Promotion },
   { id: 'logs', label: '日志', icon: Document },
+  { id: 'appearance', label: '外观', icon: Sunny },
   { id: 'window', label: '窗口', icon: Monitor },
   { id: 'update', label: '更新', icon: Refresh }
 ]
@@ -504,6 +569,32 @@ function scrollToSection(id) {
 
 function toggleSection(id) {
   sectionExpanded[id] = !sectionExpanded[id]
+}
+
+function setLocalTheme(mode) {
+  themeMode.value = mode
+  setThemeModeGlobal?.(mode)
+}
+
+watch(
+  () => activeSection.value,
+  (id) => {
+    if (id === 'appearance') {
+      themeMode.value = getStoredThemeMode()
+    }
+  }
+)
+
+async function openLogDirectory() {
+  if (!window.electronAPI?.openLogDirectory) {
+    ElMessage.warning('当前环境无法打开日志目录')
+    return
+  }
+  const res = await window.electronAPI.openLogDirectory()
+  if (res?.path) logDirectoryPath.value = res.path
+  if (!res?.success && res?.error) {
+    ElMessage.warning(res.error)
+  }
 }
 
 function setupSectionObserver() {
@@ -1040,6 +1131,10 @@ onMounted(async () => {
   loadConfig()
   loadAppVersion()
   setupUpdateListeners()
+  themeMode.value = getStoredThemeMode()
+  window.electronAPI?.getLogDirectory?.().then((res) => {
+    if (res?.success) logDirectoryPath.value = res.path
+  })
   await nextTick()
   setupSectionObserver()
 })
@@ -1055,17 +1150,6 @@ onUnmounted(() => {
 
 <style scoped>
 .settings-page {
-  --sp-bg: #f4f6f9;
-  --sp-surface: #ffffff;
-  --sp-border: #e8ecf1;
-  --sp-text: #1f2937;
-  --sp-muted: #6b7280;
-  --sp-accent: #409eff;
-  --sp-accent-soft: rgba(64, 158, 255, 0.08);
-  --sp-radius: 12px;
-  --sp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
-  --sp-nav-w: 168px;
-
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1363,7 +1447,7 @@ onUnmounted(() => {
   padding: 14px 16px;
   border: 1px solid var(--sp-border);
   border-radius: 10px;
-  background: #fafbfc;
+  background: var(--sp-toolbar-bg);
   transition: border-color 0.2s, background 0.2s, transform 0.15s ease;
 }
 
@@ -1399,6 +1483,26 @@ onUnmounted(() => {
   color: var(--sp-muted);
 }
 
+.log-dir-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.log-dir-path {
+  font-size: 11px;
+  padding: 4px 8px;
+  background: var(--sp-accent-soft);
+  border-radius: 6px;
+  word-break: break-all;
+}
+
+.theme-cards {
+  margin-top: 0;
+}
+
 .option-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1412,7 +1516,7 @@ onUnmounted(() => {
   padding: 14px;
   border: 1px solid var(--sp-border);
   border-radius: 10px;
-  background: #fafbfc;
+  background: var(--sp-toolbar-bg);
   cursor: pointer;
   text-align: left;
   font: inherit;
@@ -1467,8 +1571,8 @@ onUnmounted(() => {
 .close-prefs-hint-box {
   margin-top: 16px;
   padding: 12px 14px;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  background: var(--sp-warning-bg);
+  border: 1px solid var(--sp-warning-border);
   border-radius: 10px;
 }
 
@@ -1476,7 +1580,7 @@ onUnmounted(() => {
   margin: 0 0 10px;
   font-size: 13px;
   line-height: 1.6;
-  color: #78716c;
+  color: var(--sp-warning-text);
 }
 
 .version-bar {
@@ -1517,7 +1621,7 @@ onUnmounted(() => {
 .update-status-panel {
   margin-top: 16px;
   padding: 16px;
-  background: #f8fafc;
+  background: var(--sp-subtle-bg);
   border: 1px solid var(--sp-border);
   border-radius: 10px;
   animation: fadeIn 0.3s ease;
@@ -1664,7 +1768,7 @@ onUnmounted(() => {
   gap: 16px;
   padding: 12px 24px;
   border-top: 1px solid var(--sp-border);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--sp-footer-bg);
   backdrop-filter: blur(8px);
   transition: box-shadow 0.3s ease, border-color 0.3s ease;
 }
@@ -1765,7 +1869,7 @@ onUnmounted(() => {
 .api-test-msg-code {
   display: block;
   padding: 8px 12px;
-  background: #f8fafc;
+  background: var(--sp-subtle-bg);
   border: 1px solid var(--sp-border);
   border-radius: 8px;
   font-size: 13px;
@@ -1789,7 +1893,7 @@ onUnmounted(() => {
 .api-test-request-visual {
   width: 100%;
   padding: 16px;
-  background: #f8fafc;
+  background: var(--sp-subtle-bg);
   border: 1px solid var(--sp-border);
   border-radius: 10px;
 }
@@ -1859,7 +1963,7 @@ onUnmounted(() => {
   padding: 8px 12px;
   max-height: 200px;
   overflow: auto;
-  background: #fff;
+  background: var(--sp-code-bg);
   border: 1px solid var(--sp-border);
   border-radius: 8px;
   font-family: ui-monospace, Consolas, monospace;
@@ -1880,7 +1984,7 @@ onUnmounted(() => {
   font-size: 13px;
   border: 1px dashed var(--sp-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--sp-code-bg);
 }
 
 .api-test-resp-placeholder {

@@ -114,6 +114,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeCloseConfirmRequestListener: () => {
     ipcRenderer.removeAllListeners('close-confirm-request')
   },
-  respondCloseConfirm: (action) => ipcRenderer.invoke('respond-close-confirm', action)
+  respondCloseConfirm: (action) => ipcRenderer.invoke('respond-close-confirm', action),
+
+  getLogDirectory: () => ipcRenderer.invoke('get-log-directory'),
+  openLogDirectory: () => ipcRenderer.invoke('open-log-directory'),
+  readTodayLogFile: (options) => ipcRenderer.invoke('read-today-log-file', options || {}),
+
+  onServiceError: (callback) => {
+    ipcRenderer.on('service-error', (_event, data) => callback(data))
+  },
+  removeServiceErrorListener: () => {
+    ipcRenderer.removeAllListeners('service-error')
+  }
 })
 

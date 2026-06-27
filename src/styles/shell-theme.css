@@ -1,0 +1,140 @@
+/**
+ * 全应用页面壳主题变量（浅色默认 + html.dark 覆盖）
+ * 各 page-shell / settings-page 继承使用，避免暗色硬编码色块不一致
+ */
+.page-shell,
+.settings-page {
+  --sp-bg: #eef1f5;
+  --sp-surface: #ffffff;
+  --sp-surface-raised: #ffffff;
+  --sp-toolbar-bg: #f7f8fa;
+  --sp-subtle-bg: #f4f6f8;
+  --sp-table-header-bg: #f4f6f8;
+  --sp-code-bg: #f4f6f8;
+  --sp-border: #dfe4ea;
+  --sp-text: #1c2430;
+  --sp-muted: #647086;
+  --sp-accent: #409eff;
+  --sp-accent-soft: rgba(64, 158, 255, 0.1);
+  --sp-radius: 12px;
+  --sp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.05);
+  --sp-nav-w: 168px;
+  --sp-warning-bg: #fffbeb;
+  --sp-warning-border: #fde68a;
+  --sp-warning-text: #78716c;
+  --sp-footer-bg: rgba(255, 255, 255, 0.92);
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark body {
+  background: #12171d;
+}
+
+html.dark .page-shell,
+html.dark .settings-page {
+  --sp-bg: #12171d;
+  --sp-surface: #1b222c;
+  --sp-surface-raised: #222b36;
+  --sp-toolbar-bg: #171e27;
+  --sp-subtle-bg: #1e2630;
+  --sp-table-header-bg: #1e2630;
+  --sp-code-bg: #252e3a;
+  --sp-border: #343f4d;
+  --sp-text: #e8edf3;
+  --sp-muted: #9aa7b8;
+  --sp-accent: #66b1ff;
+  --sp-accent-soft: rgba(102, 177, 255, 0.14);
+  --sp-shadow: 0 2px 10px rgba(0, 0, 0, 0.32);
+  --sp-warning-bg: rgba(245, 158, 11, 0.12);
+  --sp-warning-border: rgba(245, 158, 11, 0.35);
+  --sp-warning-text: #d4a574;
+  --sp-footer-bg: rgba(27, 34, 44, 0.94);
+}
+
+/* 顶栏 Tab 与暗色协调 */
+html.dark .main-tabs.el-tabs--border-card {
+  background: var(--sp-bg);
+  border-color: var(--sp-border);
+}
+
+html.dark .main-tabs.el-tabs--border-card > .el-tabs__header {
+  background: var(--sp-surface);
+  border-bottom-color: var(--sp-border);
+}
+
+html.dark .main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item {
+  color: var(--sp-muted);
+  border-color: transparent;
+}
+
+html.dark .main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
+  color: var(--sp-accent);
+  background: var(--sp-bg);
+  border-color: var(--sp-border);
+  border-bottom-color: var(--sp-bg);
+}
+
+html.dark .main-tabs .el-tabs__content {
+  background: var(--sp-bg);
+}
+
+html.dark .settings-footer.is-dirty {
+  border-top-color: var(--sp-warning-border);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.25);
+}
+
+html.dark .settings-footer {
+  background: var(--sp-footer-bg);
+  border-top-color: var(--sp-border);
+}
+
+/* 卡片 / 工具栏统一层级 */
+html.dark .section-toolbar,
+html.dark .switch-card,
+html.dark .option-card,
+html.dark .hero-card {
+  background: var(--sp-toolbar-bg);
+}
+
+html.dark .switch-card.active,
+html.dark .option-card.selected {
+  background: var(--sp-accent-soft);
+  border-color: rgba(102, 177, 255, 0.45);
+}
+
+html.dark .toolbar-badge {
+  background: var(--sp-subtle-bg);
+  border-color: var(--sp-border);
+  color: var(--sp-muted);
+}
+
+html.dark .version-badge,
+html.dark .header-badge {
+  background: var(--sp-accent-soft);
+  border-color: rgba(102, 177, 255, 0.35);
+  color: var(--sp-accent);
+}
+
+html.dark .api-test-request-visual,
+html.dark .update-status-panel {
+  background: var(--sp-subtle-bg);
+}
+
+html.dark .api-test-msg-code {
+  background: var(--sp-code-bg);
+  border-color: var(--sp-border);
+  color: var(--sp-text);
+}
+
+html.dark .data-table .el-table__row.el-table__row--striped td.el-table__cell {
+  background: var(--sp-subtle-bg);
+}
+
+html.dark .dirty-badge {
+  color: #fbbf24;
+  background: var(--sp-warning-bg);
+  border-color: var(--sp-warning-border);
+}
