@@ -7,6 +7,7 @@ const { autoUpdater } = require('electron-updater')
 const {
   checkForUpdatesWithFallback,
   formatUpdateError,
+  getActiveFeed,
   initUpdateFeeds,
   shouldSuppressErrorEvent
 } = require('./services/updateService')
@@ -207,22 +208,9 @@ autoUpdater.on('error', (err) => {
   }
   console.error('更新检查失败:', err)
   if (mainWindow) {
-    // 将常见错误转换为友好的中文提示
-    let errorMessage = '更新检查失败'
-    if (err.message) {
-      if (err.message.includes('ENOTFOUND') || err.message.includes('getaddrinfo')) {
-        errorMessage = '无法连接到更新服务器，请检查网络连接'
-      } else if (err.message.includes('timeout')) {
-        errorMessage = '连接更新服务器超时，请稍后重试'
-      } else if (err.message.includes('ECONNREFUSED')) {
-        errorMessage = '更新服务器拒绝连接，请稍后重试'
-      } else {
-        errorMessage = `更新检查失败: ${err.message}`
-      }
-    }
     mainWindow.webContents.send('update-status', {
       status: 'error',
-      message: errorMessage
+      message: formatUpdateError(err, { action: '检查', feed: getActiveFeed() })
     })
   }
 })
@@ -1391,6 +1379,8 @@ ipcMain.handle('reset-crash-recovery-protection', () => {
 })
 
 // 获取授权信息
+const { formatAuthFetchError } = require('./commons/authFetchError')
+
 ipcMain.handle('get-auth-info', async (event, wxid) => {
   const backendIp = '8.137.76.99'
   const authUrl = `http://${backendIp}:5516/polarBear/getAuthInfo/${wxid}`
@@ -1429,17 +1419,13 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
     
     return result
   } catch (error) {
-    let msg = '获取授权信息失败，请稍后重试'
-    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-      msg = '无法连接授权服务器，请检查网络后重试'
-    } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
-      msg = '连接授权服务器超时，请稍后重试'
-    } else if (error.response?.status === 404) {
-      msg = `账号 ${wxid} 在授权服务器上未找到，请确认已购买授权`
-    } else if (error.response?.data?.msg) {
-      msg = error.response.data.msg
+    const msg = formatAuthFetchError(error)
+    const result = {
+      success: false,
+      msg,
+      errorCode: 'AUTH_FETCH_FAILED',
+      data: null
     }
-    const result = { success: false, msg, data: null }
     
     // 读取配置，检查是否开启日志
     const config = readConfig()
@@ -1545,19 +1531,7 @@ ipcMain.handle('download-update', async () => {
     await autoUpdater.downloadUpdate()
     return { success: true, message: '开始下载更新，请稍候...' }
   } catch (error) {
-    // 将错误转换为友好的中文提示
-    let errorMessage = '下载更新失败'
-    if (error.message) {
-      if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
-        errorMessage = '无法连接到更新服务器，请检查网络连接'
-      } else if (error.message.includes('timeout')) {
-        errorMessage = '下载超时，请稍后重试'
-      } else if (error.message.includes('ECONNREFUSED')) {
-        errorMessage = '更新服务器拒绝连接，请稍后重试'
-      } else {
-        errorMessage = `下载更新失败: ${error.message}`
-      }
-    }
+    const errorMessage = formatUpdateError(error, { action: '下载', feed: getActiveFeed() })
     return { success: false, message: errorMessage }
   }
 })

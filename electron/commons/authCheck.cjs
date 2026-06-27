@@ -8,9 +8,12 @@ const AUTH_REASON = {
   PORT_NOT_FOUND: 'PORT_NOT_FOUND',
   USER_NOT_FOUND: 'USER_NOT_FOUND',
   NOT_AUTHORIZED: 'NOT_AUTHORIZED',
+  AUTH_FETCH_FAILED: 'AUTH_FETCH_FAILED',
   EXPIRED: 'EXPIRED',
   INVALID_DATE: 'INVALID_DATE'
 }
+
+const { AUTH_FETCH_FAILED_EXPIRE } = require('./authFetchError')
 
 /**
  * @param {string} expire - 授权到期时间或「未授权」
@@ -24,6 +27,14 @@ function checkAuthExpire(expire, ctx = {}) {
       valid: false,
       reason: AUTH_REASON.NOT_AUTHORIZED,
       message: `${accountHint}尚未写入授权信息，请在「企微管理」中右键企微ID选择「刷新授权」`
+    }
+  }
+
+  if (expire === AUTH_FETCH_FAILED_EXPIRE) {
+    return {
+      valid: false,
+      reason: AUTH_REASON.AUTH_FETCH_FAILED,
+      message: `${accountHint}授权状态未能确认（网络或代理异常），请关闭 VPN/代理 或检查网络后右键「刷新授权」`
     }
   }
 

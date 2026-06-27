@@ -38,57 +38,129 @@ function describeFeed(feed) {
   return feed.url
 }
 
-function isRetriableUpdateError(err) {
-  const msg = String(err?.message || err || '').toLowerCase()
-  if (!msg) return true
+function normalizeErrorMessage(err) {
+  return String(err?.message || err || '').trim()
+}
+
+function isNetworkUnreachableError(message) {
+  const lower = normalizeErrorMessage(message).toLowerCase()
+  if (!lower) return false
   return (
-    msg.includes('enotfound') ||
-    msg.includes('getaddrinfo') ||
-    msg.includes('timeout') ||
-    msg.includes('etimedout') ||
-    msg.includes('econnrefused') ||
-    msg.includes('econnreset') ||
-    msg.includes('network') ||
-    msg.includes('404') ||
-    msg.includes('403') ||
-    msg.includes('500') ||
-    msg.includes('502') ||
-    msg.includes('503') ||
-    msg.includes('httperror') ||
-    msg.includes('latest.yml') ||
-    msg.includes('net::') ||
-    msg.includes('socket hang up')
+    lower.includes('enotfound') ||
+    lower.includes('getaddrinfo') ||
+    lower.includes('timeout') ||
+    lower.includes('etimedout') ||
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('enetunreach') ||
+    lower.includes('ehostunreach') ||
+    lower.includes('network error') ||
+    lower.includes('socket hang up') ||
+    lower.includes('net::err_connection_timed_out') ||
+    lower.includes('net::err_connection_reset') ||
+    lower.includes('net::err_name_not_resolved') ||
+    lower.includes('net::err_internet_disconnected') ||
+    lower.includes('net::err_network_changed') ||
+    lower.includes('net::err_proxy')
   )
 }
 
-function formatUpdateError(err) {
-  const msg = err?.message || String(err || '')
-  if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
-    return '无法连接到更新服务器，请检查网络连接'
+function isGithubFeed(feed) {
+  return feed?.id === 'github' || feed?.provider === 'github'
+}
+
+function formatFeedNetworkError(feed, action = '检查') {
+  if (isGithubFeed(feed)) {
+    return `无法${action} GitHub 更新（连接超时），国内网络通常需开启 VPN/代理 后重试`
   }
-  if (msg.toLowerCase().includes('timeout') || msg.includes('ETIMEDOUT')) {
-    return '连接更新服务器超时，请稍后重试'
+  if (feed?.id === 'gitee') {
+    return `无法${action} Gitee 更新，请检查网络连接后重试`
   }
-  if (msg.includes('ECONNREFUSED')) {
-    return '更新服务器拒绝连接，请稍后重试'
+  return `无法${action}更新服务器，请检查网络连接后重试`
+}
+
+function formatFeedFailure(feed, err, action = '检查') {
+  const msg = normalizeErrorMessage(err)
+  if (isNetworkUnreachableError(msg)) {
+    return formatFeedNetworkError(feed, action)
   }
+  if (msg.includes('404') || msg.includes('Not Found')) {
+    return `${feed.label} 未找到对应版本安装包，请联系管理员重新发布`
+  }
+  const brief = msg.length > 120 ? `${msg.slice(0, 120)}…` : msg
+  return `${feed.label} ${action}失败：${brief}`
+}
+
+function formatUpdateError(err, { action = '检查', feed = null } = {}) {
+  const msg = normalizeErrorMessage(err)
+
+  if (!msg) {
+    return action === '下载' ? '下载更新失败，请稍后重试' : '检查更新失败，请稍后重试'
+  }
+
   if (msg.includes('所有更新源均不可用')) {
     return msg
   }
-  return msg ? `更新检查失败: ${msg}` : '更新检查失败'
+
+  if (feed && isNetworkUnreachableError(msg)) {
+    return formatFeedNetworkError(feed, action)
+  }
+
+  if (isNetworkUnreachableError(msg)) {
+    if (msg.toLowerCase().includes('github.com') || msg.toLowerCase().includes('github')) {
+      return `无法${action} GitHub 更新（连接超时），请开启 VPN/代理 后重试`
+    }
+    if (msg.toLowerCase().includes('gitee.com') || msg.toLowerCase().includes('gitee')) {
+      return `无法${action} Gitee 更新，请检查网络连接后重试`
+    }
+    return `网络不可达或连接超时，请检查网络；若使用 GitHub 更新源，请开启 VPN/代理 后重试`
+  }
+
+  if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
+    return '无法解析更新服务器地址，请检查网络或 DNS 设置'
+  }
+
+  if (msg.includes('ECONNREFUSED')) {
+    return '更新服务器拒绝连接，请稍后重试'
+  }
+
+  if (msg.includes('404') || msg.includes('Not Found')) {
+    return '未找到更新安装包，可能尚未发布，请稍后再试'
+  }
+
+  return action === '下载' ? `下载更新失败：${msg}` : `更新检查失败：${msg}`
 }
 
-function buildCombinedError(failures) {
+function isRetriableUpdateError(err) {
+  return isNetworkUnreachableError(normalizeErrorMessage(err)) || !normalizeErrorMessage(err)
+}
+
+function buildCombinedError(failures, action = '检查') {
   if (!failures.length) {
-    return new Error('检查更新失败')
+    return new Error(formatUpdateError(null, { action }))
   }
+
   if (failures.length === 1) {
-    return failures[0].err
+    return new Error(formatFeedFailure(failures[0].feed, failures[0].err, action))
   }
+
+  const giteeFailed = failures.find((item) => item.feed.id === 'gitee')
+  const githubFailed = failures.find((item) => item.feed.id === 'github')
+
+  if (giteeFailed && githubFailed) {
+    const giteeNet = isNetworkUnreachableError(giteeFailed.err)
+    const githubNet = isNetworkUnreachableError(githubFailed.err)
+    if (giteeNet && githubNet) {
+      return new Error(
+        '所有更新源均连接失败：Gitee 不可达，GitHub 连接超时（国内通常需开启 VPN/代理）。请检查网络或开启代理后重试'
+      )
+    }
+  }
+
   const detail = failures
-    .map(({ feed, err }) => `${feed.label}: ${err?.message || err}`)
+    .map(({ feed, err }) => formatFeedFailure(feed, err, action))
     .join('；')
-  return new Error(`所有更新源均不可用（${detail}）`)
+  return new Error(`所有更新源均不可用：${detail}`)
 }
 
 async function checkForUpdatesWithFallback() {
@@ -124,7 +196,7 @@ async function checkForUpdatesWithFallback() {
       }
     }
 
-    throw buildCombinedError(failures)
+    throw buildCombinedError(failures, '检查')
   } finally {
     suppressErrorEvents = false
   }

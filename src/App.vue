@@ -33,6 +33,7 @@ import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
 import { confirmLoggedIn } from './utils/loginStatusRetry'
 import { pickPersonalRecord } from './utils/personalInfo'
+import { AUTH_FETCH_FAILED_EXPIRE, resolveExpireAfterAuthFetch } from './utils/authExpire'
 
 const activeTab = ref('index')
 const vworkManagerRef = ref(null)
@@ -134,13 +135,34 @@ const watchAccountSwitchOnPort = (portNum) => {
       const portStr = String(portNum)
       const index = loginInfoList.findIndex((item) => parseInt(item.port, 10) === portNum)
       const prev = index >= 0 ? loginInfoList[index] : {}
+      const isSameUser = prev.user_id === data.user_id
+      const prevExpireForAuth = isSameUser ? prev.expire : undefined
       const updated = {
         ...prev,
         nick_name: data.nick_name || prev.nick_name || '-',
         user_id: data.user_id,
         port: portStr,
         pid: pid != null ? String(pid) : prev.pid || '-',
-        expire: '未授权'
+        expire:
+          prevExpireForAuth &&
+          prevExpireForAuth !== '未授权' &&
+          prevExpireForAuth !== AUTH_FETCH_FAILED_EXPIRE
+            ? prevExpireForAuth
+            : AUTH_FETCH_FAILED_EXPIRE
+      }
+
+      const persistUpdatedLoginInfo = async () => {
+        if (index >= 0) {
+          loginInfoList[index] = updated
+        } else {
+          const idx = loginInfoList.findIndex((item) => item.user_id === data.user_id)
+          if (idx >= 0) {
+            loginInfoList[idx] = updated
+          } else {
+            loginInfoList.push(updated)
+          }
+        }
+        await configStore.updateLoginInfo(loginInfoList)
       }
 
       if (index >= 0) {
@@ -154,21 +176,21 @@ const watchAccountSwitchOnPort = (portNum) => {
       if (window.electronAPI?.getAuthInfo) {
         try {
           const authResult = await window.electronAPI.getAuthInfo(data.user_id)
-          if (authResult.success && authResult.data?.data?.expire) {
-            updated.expire = authResult.data.data.expire
-            if (index >= 0) {
-              loginInfoList[index] = updated
-            } else {
-              const idx = loginInfoList.findIndex((item) => item.user_id === data.user_id)
-              if (idx >= 0) loginInfoList[idx] = updated
-            }
-            await configStore.updateLoginInfo(loginInfoList)
+          if (authResult.success && authResult.data?.data) {
+            updated.expire = resolveExpireAfterAuthFetch(authResult, prevExpireForAuth)
+            await persistUpdatedLoginInfo()
           } else if (!authResult.success) {
-            ElMessage.warning(authResult.msg || '切换账号后获取授权失败，请右键刷新授权')
+            updated.expire = resolveExpireAfterAuthFetch(authResult, prevExpireForAuth)
+            await persistUpdatedLoginInfo()
+            ElMessage.warning(
+              authResult.msg || '切换账号后获取授权失败，请关闭 VPN/代理 或检查网络后右键刷新授权'
+            )
           }
         } catch (e) {
           console.warn('[切换账号] 刷新授权失败:', e)
-          ElMessage.warning('切换账号后获取授权失败，请右键刷新授权')
+          updated.expire = resolveExpireAfterAuthFetch({ success: false }, prevExpireForAuth)
+          await persistUpdatedLoginInfo()
+          ElMessage.warning('切换账号后获取授权失败，请关闭 VPN/代理 或检查网络后右键刷新授权')
         }
       }
       await refreshManagerList({ light: true })

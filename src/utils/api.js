@@ -5,6 +5,7 @@
 
 import { ElMessage } from 'element-plus'
 import { ensureAuthorizedByPort } from './authGuard'
+import { AUTH_REASON } from './authCheck.js'
 
 /**
  * 基础URL生成
@@ -47,7 +48,11 @@ export const callAPI = async (port, jsonData) => {
   } catch (error) {
     // 授权失败统一提示
     if (error && error.code === 'NO_AUTH') {
-      ElMessage.error(error.message || '当前账号未授权或授权已到期，请重新购买授权')
+      if (error.reason === AUTH_REASON.AUTH_FETCH_FAILED) {
+        ElMessage.warning(error.message || '授权状态未能确认，请关闭 VPN/代理 后右键「刷新授权」')
+      } else {
+        ElMessage.error(error.message || '当前账号未授权或授权已到期，请重新购买授权')
+      }
     }
     throw error
   }
