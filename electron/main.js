@@ -1140,8 +1140,9 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           }
         }
         
-        // 构建API调用日志数据
-        const apiType = data && data.type ? data.type : 'unknown'
+        // 构建API调用日志数据（框架 REST 请求体常无 type，从 URL 推断）
+        const { resolveApiTypeForLog } = require('./configs/apiLogResolve')
+        const apiType = resolveApiTypeForLog(url, data)
         // 与 electron/routes 保持一致，用于 API 调用日志展示
         const apiTypeNames = {
           // login

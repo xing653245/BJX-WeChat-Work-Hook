@@ -209,10 +209,22 @@ const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT
 // 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
 const injectKey = computed(() => configStore.config.sys?.inject_key || '')
 
+/** 已请求关闭自动更新的企微端口，避免 completePortLogin 重复触发时打两次 */
+const autoUpdateOffRequestedPorts = new Set()
+
 /**
  * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api/settings/auto-update，state=0）
  */
 async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
+  const p = parseInt(String(wecomHttpPort), 10)
+  if (Number.isNaN(p) || p < 1) {
+    console.warn('[auto-update] 跳过：企微端口无效', { wecomHttpPort })
+    return
+  }
+  if (autoUpdateOffRequestedPorts.has(p)) {
+    return
+  }
+  autoUpdateOffRequestedPorts.add(p)
   if (!window.electronAPI?.callAPI) {
     console.warn('[auto-update] 跳过：electronAPI.callAPI 不可用')
     return
@@ -239,12 +251,6 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
     return
   }
 
-  const p = parseInt(String(wecomHttpPort), 10)
-  if (Number.isNaN(p) || p < 1) {
-    console.warn('[auto-update] 跳过：企微端口无效', { wecomHttpPort })
-    return
-  }
-
   const url = `http://127.0.0.1:${sp}/api/settings/auto-update`
   try {
     const result = await window.electronAPI.callAPI({
@@ -252,7 +258,8 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
       method: 'POST',
       data: {
         port: p,
-        state: 0
+        state: 0,
+        type: 7000
       }
     })
     if (!result?.success) {
