@@ -1,23 +1,34 @@
 <template>
-  <div 
-    class="vwork-manager-page"
+  <div
+    class="page-shell vwork-manager-page"
     @contextmenu="handleTableBlankContextMenu"
   >
-    <el-table
-      :data="tableData"
-      style="width: 100%"
-      height="100%"
-      stripe
-      highlight-current-row
-      @row-contextmenu="handleContextMenu"
-    >
-      <el-table-column prop="nick_name" label="昵称" width="150" align="center" />
-      <el-table-column prop="user_id" label="ID" width="200" align="center" show-overflow-tooltip />
-      <el-table-column prop="port" label="HTTP端口" width="120" align="center" />
-      <el-table-column prop="pid" label="PID" width="100" align="center" />
-      <el-table-column prop="expire" label="授权到期时间" width="180" align="center" />
-      <el-table-column prop="label" label="标签" align="center" />
-    </el-table>
+    <div class="page-body">
+      <div class="section-card">
+        <div class="section-toolbar">
+          <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、刷新授权、设置标签等</span>
+          <span class="toolbar-badge">{{ instanceCount }} 个实例</span>
+        </div>
+        <div class="table-wrap">
+          <el-table
+            :data="tableData"
+            style="width: 100%"
+            height="100%"
+            stripe
+            highlight-current-row
+            class="data-table"
+            @row-contextmenu="handleContextMenu"
+          >
+            <el-table-column prop="nick_name" label="昵称" width="150" align="center" />
+            <el-table-column prop="user_id" label="ID" width="200" align="center" show-overflow-tooltip />
+            <el-table-column prop="port" label="HTTP端口" width="120" align="center" />
+            <el-table-column prop="pid" label="PID" width="100" align="center" />
+            <el-table-column prop="expire" label="授权到期时间" width="180" align="center" />
+            <el-table-column prop="label" label="标签" align="center" min-width="120" />
+          </el-table>
+        </div>
+      </div>
+    </div>
 
     <!-- 添加企微对话框 -->
     <el-dialog
@@ -143,6 +154,7 @@ const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const showSubMenu = ref(false)
+const instanceCount = computed(() => tableData.value.length)
 /** 避免同一端口重复启动登录轮询 */
 const loginPollingPorts = new Set()
 /** 用户主动添加、尚未写入配置的端口（用于恢复表格） */
@@ -1241,39 +1253,129 @@ defineExpose({
 </script>
 
 <style scoped>
-.vwork-manager-page {
+.page-shell {
+  --sp-bg: #f4f6f9;
+  --sp-surface: #ffffff;
+  --sp-border: #e8ecf1;
+  --sp-text: #1f2937;
+  --sp-muted: #6b7280;
+  --sp-accent: #409eff;
+  --sp-accent-soft: rgba(64, 158, 255, 0.08);
+  --sp-radius: 12px;
+  --sp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
+
+  display: flex;
+  flex-direction: column;
   height: 100%;
-  padding: 10px;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sp-bg);
+  color: var(--sp-text);
   position: relative;
+}
+
+.page-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 20px 20px;
+  overflow: hidden;
+}
+
+.section-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--sp-surface);
+  border: 1px solid var(--sp-border);
+  border-radius: var(--sp-radius);
+  box-shadow: var(--sp-shadow);
+  overflow: hidden;
+}
+
+.section-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--sp-border);
+  background: #fafbfc;
+}
+
+.toolbar-hint {
+  font-size: 12px;
+  color: var(--sp-muted);
+  line-height: 1.5;
+}
+
+.toolbar-hint strong {
+  color: var(--sp-text);
+  font-weight: 600;
+}
+
+.toolbar-badge {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--sp-accent);
+  background: var(--sp-accent-soft);
+  border: 1px solid rgba(64, 158, 255, 0.2);
+  border-radius: 999px;
+}
+
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: 0 8px 8px;
+}
+
+.data-table :deep(.el-table__header th) {
+  background: #f8fafc !important;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--sp-muted);
 }
 
 :deep(.el-table) {
   font-size: 13px;
+  --el-table-border-color: var(--sp-border);
+  --el-table-header-bg-color: #f8fafc;
 }
 
-/* 自定义右键菜单样式 */
+:deep(.el-table .cell) {
+  padding: 8px 10px;
+}
+
+:deep(.el-table__row) {
+  transition: background-color 0.15s ease;
+}
+
 .custom-context-menu {
   position: fixed;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  padding: 4px 0;
   z-index: 9999;
-  min-width: 160px;
-  font-size: 14px;
+  min-width: 168px;
+  padding: 6px 0;
+  background: var(--sp-surface);
+  border: 1px solid var(--sp-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  font-size: 13px;
 }
 
 .context-menu-item {
-  padding: 8px 16px;
+  padding: 9px 16px;
   cursor: pointer;
-  color: #606266;
-  transition: background-color 0.2s;
+  color: var(--sp-text);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .context-menu-item:hover:not(.disabled) {
-  background-color: #f5f7fa;
-  color: #409eff;
+  background: var(--sp-accent-soft);
+  color: var(--sp-accent);
 }
 
 .context-menu-item.disabled {
@@ -1283,11 +1385,10 @@ defineExpose({
 
 .context-menu-divider {
   height: 1px;
-  background-color: #e4e7ed;
-  margin: 4px 0;
+  margin: 4px 8px;
+  background: var(--sp-border);
 }
 
-/* 父菜单项样式 */
 .context-menu-parent {
   position: relative;
   display: flex;
@@ -1297,23 +1398,28 @@ defineExpose({
 
 .submenu-arrow {
   font-size: 10px;
-  color: #909399;
+  color: var(--sp-muted);
   margin-left: 8px;
 }
 
-/* 子菜单样式 */
 .context-submenu {
   position: absolute;
   left: 100%;
-  top: 0;
+  top: -6px;
   margin-left: 4px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  padding: 4px 0;
-  min-width: 120px;
+  background: var(--sp-surface);
+  border: 1px solid var(--sp-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  padding: 6px 0;
+  min-width: 128px;
   z-index: 10000;
+}
+
+@media (max-width: 640px) {
+  .page-body {
+    padding: 12px;
+  }
 }
 </style>
 
