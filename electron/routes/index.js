@@ -74,7 +74,7 @@ router.post('/call', async (req, res) => {
       let errorMessage = '调用企微API失败'
       let statusCode = 500
 
-      if (error.message.includes('未授权') || error.message.includes('授权已到期')) {
+      if (error.code === 'NO_AUTH' || error.message.includes('未授权') || error.message.includes('授权已到期') || error.message.includes('刷新授权')) {
         statusCode = 403
         errorMessage = error.message
       } else if (error.code === 'APPLET_QUEUE_FULL') {

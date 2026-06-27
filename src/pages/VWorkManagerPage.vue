@@ -821,9 +821,12 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
     if (result.success && result.data) {
       if (result.data.data) {
         expire = result.data.data.expire || '未授权'
+        if (expire === '未授权') {
+          ElMessage.warning(`账号 ${userId} 在授权服务器上未查到有效授权，请确认已购买/续费后再刷新`)
+        }
       }
     } else {
-      ElMessage.error(result.msg || '获取授权信息失败')
+      ElMessage.error(result.msg || '获取授权信息失败，请检查网络后重试')
     }
     
     updateTableItem(rowIndex, { expire })
@@ -914,7 +917,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
       }
     }
   } catch (error) {
-    ElMessage.error('获取授权信息失败: ' + error.message)
+    ElMessage.error('获取授权信息失败: ' + (error.message || '请检查网络后重试'))
     updateTableItem(rowIndex, { expire: '未授权' })
   }
 }

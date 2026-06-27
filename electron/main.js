@@ -1419,7 +1419,17 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
     
     return result
   } catch (error) {
-    const result = { success: false, msg: '获取授权信息失败，请稍后重试', data: null }
+    let msg = '获取授权信息失败，请稍后重试'
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      msg = '无法连接授权服务器，请检查网络后重试'
+    } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+      msg = '连接授权服务器超时，请稍后重试'
+    } else if (error.response?.status === 404) {
+      msg = `账号 ${wxid} 在授权服务器上未找到，请确认已购买授权`
+    } else if (error.response?.data?.msg) {
+      msg = error.response.data.msg
+    }
+    const result = { success: false, msg, data: null }
     
     // 读取配置，检查是否开启日志
     const config = readConfig()
@@ -1429,7 +1439,7 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
     // 如果开启了日志，写入错误日志
     if (openLog && saveLog) {
       const logData = {
-        content: `刷新授权失败: ${wxid}, 错误: ${error.message || '获取授权信息失败，请稍后重试'}`,
+        content: `刷新授权失败: ${wxid}, 错误: ${msg}`,
         sys: true,
         time_stamp: Math.floor(Date.now() / 1000)
       }

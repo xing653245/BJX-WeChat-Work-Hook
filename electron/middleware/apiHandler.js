@@ -2,7 +2,7 @@
  * API处理中间件
  * 提供统一的API调用处理逻辑
  */
-const { readIni, validAuthDatetime } = require('../commons/common')
+const { readIni, checkAuthByPort } = require('../commons/common')
 const { postToVWorkApi } = require('../services/wecomApiClient')
 
 /**
@@ -25,21 +25,12 @@ async function callVWorkAPI(port, type, params = {}) {
   if (!LOGIN_RELATED_TYPES.has(type)) {
     const ini_config = readIni()
     
-    // 根据端口查找对应的登录信息（用于验证授权）
-    let target_item = null
-    for (const item of ini_config.login_info) {
-      if (String(item.port) === String(port)) {
-        target_item = item
-        break
-      }
-    }
-
-    // 验证授权
-    const expire = target_item ? target_item.expire : ''
-    const valid_auth = validAuthDatetime(expire)
-    
-    if (!valid_auth) {
-      throw new Error('当前账号未授权或授权已到期，请重新购买授权')
+    const authResult = checkAuthByPort(port, ini_config.login_info)
+    if (!authResult.valid) {
+      const err = new Error(authResult.message)
+      err.code = 'NO_AUTH'
+      err.reason = authResult.reason
+      throw err
     }
   }
 
@@ -95,7 +86,7 @@ function createAPIHandler(type, apiName, paramsValidator = null) {
         let errorMessage = `${apiName}失败`
         let statusCode = 500
 
-        if (error.message.includes('未授权') || error.message.includes('授权已到期')) {
+        if (error.code === 'NO_AUTH' || error.message.includes('未授权') || error.message.includes('授权已到期') || error.message.includes('刷新授权')) {
           statusCode = 403
           errorMessage = error.message
         } else if (error.code === 'APPLET_QUEUE_FULL') {

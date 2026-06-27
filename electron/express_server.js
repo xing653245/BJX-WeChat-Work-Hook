@@ -6,7 +6,7 @@
 const express = require('express')
 const cors = require('cors')
 const axios = require('axios')
-const { readIni, sendCallback, validAuthDatetime, killProcessByPort, saveLogToFile } = require('./commons/common')
+const { readIni, sendCallback, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
 
 // 导入路由
@@ -38,17 +38,10 @@ async function processIncomingWecomMessage(data) {
   }
 
   const ini_config = readIni()
-  let target_item = null
-  for (const item of ini_config.login_info) {
-    if (item.user_id === self_user_id) {
-      target_item = item
-      break
-    }
-  }
 
-  const expire = target_item ? target_item.expire : ''
+  const authResult = checkAuthByUserId(self_user_id, ini_config.login_info)
+  const valid_auth = authResult.valid
   const user_id = data && data.user_id ? data.user_id : 'unknown'
-  const valid_auth = user_id === 'unknown' ? true : validAuthDatetime(expire)
 
   if (ini_config.open_log && valid_auth) {
     try {
@@ -94,7 +87,7 @@ async function processIncomingWecomMessage(data) {
     }
   } else {
     const error_data = {
-      content: '当前授权已到期，请重新购买授权',
+      content: authResult.message || '当前授权已到期，请重新购买授权',
       sys: true
     }
     try {

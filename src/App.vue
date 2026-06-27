@@ -139,7 +139,8 @@ const watchAccountSwitchOnPort = (portNum) => {
         nick_name: data.nick_name || prev.nick_name || '-',
         user_id: data.user_id,
         port: portStr,
-        pid: pid != null ? String(pid) : prev.pid || '-'
+        pid: pid != null ? String(pid) : prev.pid || '-',
+        expire: '未授权'
       }
 
       if (index >= 0) {
@@ -148,6 +149,28 @@ const watchAccountSwitchOnPort = (portNum) => {
         loginInfoList.push(updated)
       }
       await configStore.updateLoginInfo(loginInfoList)
+
+      // 切换账号后重新拉取授权，避免沿用上一账号的到期时间
+      if (window.electronAPI?.getAuthInfo) {
+        try {
+          const authResult = await window.electronAPI.getAuthInfo(data.user_id)
+          if (authResult.success && authResult.data?.data?.expire) {
+            updated.expire = authResult.data.data.expire
+            if (index >= 0) {
+              loginInfoList[index] = updated
+            } else {
+              const idx = loginInfoList.findIndex((item) => item.user_id === data.user_id)
+              if (idx >= 0) loginInfoList[idx] = updated
+            }
+            await configStore.updateLoginInfo(loginInfoList)
+          } else if (!authResult.success) {
+            ElMessage.warning(authResult.msg || '切换账号后获取授权失败，请右键刷新授权')
+          }
+        } catch (e) {
+          console.warn('[切换账号] 刷新授权失败:', e)
+          ElMessage.warning('切换账号后获取授权失败，请右键刷新授权')
+        }
+      }
       await refreshManagerList({ light: true })
 
       ElMessage.success({

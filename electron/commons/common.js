@@ -213,23 +213,13 @@ async function sendCallback(url, data) {
   }
 }
 
-/**
- * 判断授权是否有效
- * @param {string} dateStr - 日期字符串，格式：'YYYY-MM-DD HH:mm:ss'
- * @returns {boolean} True表示有效，False表示无效
- */
-function validAuthDatetime(dateStr) {
-  try {
-    if (!dateStr || dateStr === '未授权') {
-      return false
-    }
-    const dt = new Date(dateStr.replace(/-/g, '/'))
-    const now = new Date()
-    return now <= dt
-  } catch (error) {
-    return false
-  }
-}
+const {
+  AUTH_REASON,
+  checkAuthExpire,
+  checkAuthByPort,
+  checkAuthByUserId,
+  validAuthDatetime
+} = require('../../shared/authCheck.cjs')
 
 /**
  * 检查端口是否被占用
@@ -406,6 +396,10 @@ module.exports = {
   getConfigPath,
   getAppRootPath,
   sendCallback,
+  AUTH_REASON,
+  checkAuthExpire,
+  checkAuthByPort,
+  checkAuthByUserId,
   validAuthDatetime,
   isPortInUse,
   killProcessByPort,
