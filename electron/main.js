@@ -73,6 +73,14 @@ const {
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
+const {
+  canInjectPort,
+  markPortStabilizing,
+  markPortLoggedIn,
+  markPortAccountSwitch,
+  recordInjectAttempt,
+  isPortSafeForCrashRecoveryInject
+} = require('./services/wecomStability')
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -84,9 +92,6 @@ let loginStatusCheckInterval = null // 定时检查登录状态
 let wecomCrashDialogInterval = null // Windows：监视企微「错误报告」崩溃窗口
 /** 同一端口注入互斥：避免定时检查、崩溃恢复、手动添加并发 it.exe */
 const injectInProgressPorts = new Set()
-/** 各端口上次注入时间戳，用于单端口冷却 */
-const lastInjectAttemptAt = new Map()
-const MIN_INJECT_COOLDOWN_MS = 120000 // 单端口两次注入至少间隔 2 分钟
 const TIMED_CHECK_INTERVAL_MS = 30000 // 定时登录探测间隔 30 秒
 /** 崩溃恢复退避：60s → 120s → 300s */
 const CRASH_RECOVERY_DELAYS_MS = [60000, 120000, 300000, 300000]
@@ -497,37 +502,42 @@ const probeLoggedIn = async (robotPort) => {
 const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
   if (isAutoInjectReason(reason) && crashRecoveryAutoInjectSuspended) {
     console.log(`[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
-    return false
+    return { success: false, output: '自动恢复已暂停', blocked: true }
   }
   if (injectInProgressPorts.has(robotPort)) {
     console.log(`[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
-    return false
+    return { success: false, output: '该端口注入进行中', blocked: true }
   }
-  const lastAt = lastInjectAttemptAt.get(robotPort) || 0
-  if (Date.now() - lastAt < MIN_INJECT_COOLDOWN_MS) {
-    const remainSec = Math.ceil((MIN_INJECT_COOLDOWN_MS - (Date.now() - lastAt)) / 1000)
-    console.log(`[注入] 端口 ${robotPort} 冷却中（剩余约 ${remainSec}s），跳过（${reason}）`)
-    return false
+
+  const safety = await canInjectPort(robotPort, { reason })
+  if (!safety.allowed) {
+    console.log(`[注入] 端口 ${robotPort} 跳过（${reason}）: ${safety.reason}`)
+    return { success: false, output: safety.reason, blocked: true }
   }
 
   injectInProgressPorts.add(robotPort)
-  lastInjectAttemptAt.set(robotPort, Date.now())
   try {
     const result = await runInjectToolService({
       port: robotPort,
       serverPort,
       key: injectKey
     })
+    const ok = result.success || (result.output && result.output.includes('注入成功'))
+    recordInjectAttempt(robotPort, ok)
     console.log(
-      `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${result.success}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
+      `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
     )
-    if (result.success && isAutoInjectReason(reason)) {
-      notifyWecomInjectStarted(robotPort, reason)
+    if (ok) {
+      markPortStabilizing(robotPort)
+      if (isAutoInjectReason(reason)) {
+        notifyWecomInjectStarted(robotPort, reason)
+      }
     }
-    return result.success
+    return { success: ok, output: result.output || '' }
   } catch (e) {
+    recordInjectAttempt(robotPort, false)
     console.error(`[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
-    return false
+    return { success: false, output: e.message }
   } finally {
     injectInProgressPorts.delete(robotPort)
   }
@@ -549,9 +559,9 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
       continue
     }
 
-    const pid = await findPidByPort(robotPort)
-    const hookReachable = await isWecomHookReachable(robotPort)
-    if (hookReachable || pid > 0) {
+    const safeToInject = await isPortSafeForCrashRecoveryInject(robotPort)
+    if (!safeToInject) {
+      const pid = await findPidByPort(robotPort)
       console.log(
         `[登录探测] 端口 ${robotPort} 未登录但进程或 Hook 仍存活（pid=${pid}），跳过注入`
       )
@@ -1366,11 +1376,27 @@ ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
   return findAvailablePortForInject(startPort, endPort)
 })
 
-// 执行注入工具（需要根据实际情况调整）
+// 执行注入工具（统一走 runInjectForPort，含重复注入防护）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
   resetCrashRecoveryProtection()
   const injectKey = key || DEFAULT_INJECT_KEY
-  return runInjectToolService({ port, serverPort, key: injectKey })
+  const sp = parseInt(serverPort, 10) || readInjectConfig().serverPort
+  return runInjectForPort(Number(port), sp, injectKey, '手动')
+})
+
+ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {
+  markPortStabilizing(port)
+  return { success: true }
+})
+
+ipcMain.handle('mark-wecom-port-logged-in', (_event, port) => {
+  markPortLoggedIn(port)
+  return { success: true }
+})
+
+ipcMain.handle('mark-wecom-port-account-switch', (_event, port) => {
+  markPortAccountSwitch(port)
+  return { success: true }
 })
 
 ipcMain.handle('reset-crash-recovery-protection', () => {

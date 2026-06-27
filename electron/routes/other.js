@@ -10,6 +10,7 @@ const { createAPIHandler } = require('../middleware/apiHandler')
 const { isPortInUse } = require('../commons/common')
 const { findAvailablePort, runInjectTool, readInjectConfig } = require('../services/wecomInject')
 const { notifyWecomInjectStarted } = require('../services/wecomNotify')
+const { canInjectPort, markPortStabilizing, recordInjectAttempt } = require('../services/wecomStability')
 
 /**
  * 清空聊天记录
@@ -91,9 +92,21 @@ router.post('/start-wecom', async (req, res) => {
     }
 
     const { serverPort, key } = readInjectConfig()
+
+    const safety = await canInjectPort(port)
+    if (!safety.allowed) {
+      return res.status(409).json({
+        success: false,
+        code: 'INJECT_UNSAFE',
+        message: safety.reason
+      })
+    }
+
     const result = await runInjectTool({ port, serverPort, key })
     const ok = result.success || (result.output && result.output.includes('注入成功'))
+    recordInjectAttempt(port, ok)
     if (ok) {
+      markPortStabilizing(port)
       notifyWecomInjectStarted(port)
       return res.json({
         success: true,

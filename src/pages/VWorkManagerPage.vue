@@ -147,6 +147,20 @@ const showSubMenu = ref(false)
 const loginPollingPorts = new Set()
 /** 用户主动添加、尚未写入配置的端口（用于恢复表格） */
 const PENDING_PORTS_KEY = 'vwork_pending_wecom_ports'
+/** 每次应用会话仅做一次启动清理，避免 HMR/重复挂载误删刚添加的企微 */
+const STARTUP_CLEANUP_DONE_KEY = 'vwork_startup_cleanup_done'
+
+const getPendingPortSet = () => {
+  try {
+    return new Set(
+      JSON.parse(sessionStorage.getItem(PENDING_PORTS_KEY) || '[]')
+        .map(Number)
+        .filter((p) => !Number.isNaN(p) && p > 0)
+    )
+  } catch {
+    return new Set()
+  }
+}
 
 const trackPendingPort = (port) => {
   const p = Number(port)
@@ -297,27 +311,69 @@ const isWecomPortReachable = async (port) => {
   }
 }
 
+/** 进程或 Hook 是否仍在（避免登录过程中误杀企微） */
+const isWecomProcessAlive = async (port) => {
+  if (await isWecomPortReachable(port)) return true
+  if (window.electronAPI?.isPortInUse) {
+    try {
+      const check = await window.electronAPI.isPortInUse(port)
+      if (check?.inUse) return true
+    } catch {
+      /* ignore */
+    }
+  }
+  if (window.electronAPI?.findPidByPort) {
+    try {
+      const pid = await window.electronAPI.findPidByPort(port)
+      if (pid > 0) return true
+    } catch {
+      /* ignore */
+    }
+  }
+  return false
+}
+
 // 启动时检查登录状态：未登录且进程已退出时才从配置移除（不主动杀仍在运行的进程）
 const cleanupUnloggedOnMount = async () => {
   if (!window.electronAPI) return
+  if (sessionStorage.getItem(STARTUP_CLEANUP_DONE_KEY) === '1') {
+    return
+  }
 
-  const loginInfoList = configStore.getLoginInfo()
-  if (!Array.isArray(loginInfoList) || loginInfoList.length === 0) return
+  const snapshotList = configStore.getLoginInfo()
+  if (!Array.isArray(snapshotList) || snapshotList.length === 0) {
+    sessionStorage.setItem(STARTUP_CLEANUP_DONE_KEY, '1')
+    return
+  }
 
+  const pendingPorts = getPendingPortSet()
   const remainList = []
 
-  for (const item of loginInfoList) {
+  for (const item of snapshotList) {
     if (!item.port) {
       remainList.push(item)
       continue
     }
 
-    const port = parseInt(item.port)
+    const port = parseInt(item.port, 10)
     if (!port || Number.isNaN(port)) continue
 
+    if (pendingPorts.has(port) || loginPollingPorts.has(port)) {
+      console.info(`[启动清理] 端口 ${port} 正在登录中，跳过清理`)
+      remainList.push(item)
+      continue
+    }
+
+    const row = tableData.value.find((r) => r.port === String(port))
+    if (row?.nick_name === '登录中') {
+      console.info(`[启动清理] 端口 ${port} 表格状态为登录中，跳过清理`)
+      remainList.push(item)
+      continue
+    }
+
     const ok = await confirmLoggedIn(() => VWorkApi.getLoginStatus(port), {
-      attempts: 15,
-      intervalMs: 2000
+      attempts: 3,
+      intervalMs: 1500
     })
 
     if (ok) {
@@ -325,9 +381,7 @@ const cleanupUnloggedOnMount = async () => {
       continue
     }
 
-    const portCheck = await window.electronAPI.isPortInUse(port)
-    const hookAlive = portCheck?.inUse || (await isWecomPortReachable(port))
-    if (hookAlive) {
+    if (await isWecomProcessAlive(port)) {
       console.warn(
         `端口 ${port} 暂未登录但进程/Hook 仍在，保留配置（可能正在登录或切换账号）`
       )
@@ -338,13 +392,31 @@ const cleanupUnloggedOnMount = async () => {
     console.warn(`端口 ${port} 未登录且进程已退出，从配置中移除`)
   }
 
-  if (remainList.length !== loginInfoList.length) {
+  // 清理过程中若有新登录写入配置，合并保留（避免与「添加企微」竞态导致误删）
+  const currentList = configStore.getLoginInfo()
+  const remainPorts = new Set(
+    remainList.map((item) => String(item.port)).filter((p) => p && p !== 'undefined')
+  )
+  for (const item of currentList) {
+    if (!item?.port) continue
+    const ps = String(item.port)
+    if (remainPorts.has(ps)) continue
+    const port = parseInt(item.port, 10)
+    if (pendingPorts.has(port) || loginPollingPorts.has(port)) {
+      remainList.push(item)
+      remainPorts.add(ps)
+    }
+  }
+
+  if (remainList.length !== snapshotList.length) {
     try {
       await configStore.updateLoginInfo(remainList)
     } catch (e) {
       console.error('更新配置以移除未登录进程失败:', e)
     }
   }
+
+  sessionStorage.setItem(STARTUP_CLEANUP_DONE_KEY, '1')
 }
 
 // 检查端口是否在使用
@@ -523,11 +595,9 @@ const executeAddWechat = async (portType, customPortValue) => {
         ElMessage.success('企微启动成功，正在登录...')
         trackPendingPort(port)
         const rowIndex = addTableItem({ nick_name: '登录中', port: String(port) })
-        
-        // 定时检查登录状态
         checkLoginStatus(port, rowIndex)
       } else {
-        ElMessage.error('启动失败: ' + result.output)
+        ElMessage.error(result.output || '启动失败')
       }
     } catch (error) {
       ElMessage.error('启动失败: ' + error.message)
@@ -578,7 +648,8 @@ const completePortLogin = async (port, options = {}) => {
   })
 
   untrackPendingPort(p)
-  setTimeout(() => invokeDefaultAutoUpdateOff(p), 8000)
+  window.electronAPI?.markWecomPortLoggedIn?.(p)
+  setTimeout(() => invokeDefaultAutoUpdateOff(p), 20000)
   return true
 }
 
@@ -611,13 +682,23 @@ const checkLoginStatus = async (port, rowIndex) => {
   const maxAttempts = 90 // 最多检查90次（3分钟，每2秒一次）
   let attempts = 0
   let consecutiveErrors = 0
-  const maxConsecutiveErrors = 8 // 连续 8 次失败（约 16 秒）才判定不可用
+  const maxConsecutiveErrors = 20 // 连续 20 次失败（约 40 秒）才判定不可用
   let loginCacheExpire = Date.now() + 180000 // 3分钟缓存
+  let aliveExtendCount = 0
+  const maxAliveExtend = 3 // 进程仍在时最多延长 3 次（共约 6 分钟）
 
   const checkInterval = setInterval(async () => {
     attempts++
 
     if (Date.now() > loginCacheExpire) {
+      if (await isWecomProcessAlive(port)) {
+        if (aliveExtendCount < maxAliveExtend) {
+          aliveExtendCount++
+          loginCacheExpire = Date.now() + 60000
+          console.warn(`[登录轮询] 端口 ${port} 超时但进程仍在，延长等待 (${aliveExtendCount}/${maxAliveExtend})`)
+          return
+        }
+      }
       clearInterval(checkInterval)
       finishPolling()
       ElMessage.warning('登录超时，已关闭')
@@ -647,6 +728,15 @@ const checkLoginStatus = async (port, rowIndex) => {
       }
 
       if (attempts >= maxAttempts) {
+        if (await isWecomProcessAlive(port)) {
+          if (aliveExtendCount < maxAliveExtend) {
+            aliveExtendCount++
+            attempts = 0
+            loginCacheExpire = Date.now() + 60000
+            console.warn(`[登录轮询] 端口 ${port} 多次未登录但进程仍在，延长等待`)
+            return
+          }
+        }
         clearInterval(checkInterval)
         finishPolling()
         ElMessage.warning('登录超时')
@@ -665,13 +755,13 @@ const checkLoginStatus = async (port, rowIndex) => {
       if (consecutiveErrors < maxConsecutiveErrors) {
         return
       }
-      clearInterval(checkInterval)
-      finishPolling()
-      const hookAlive = await isWecomPortReachable(port)
-      if (hookAlive) {
-        ElMessage.warning(`端口 ${port} 登录探测多次失败，但进程仍在运行，请稍后手动检查`)
+      if (await isWecomProcessAlive(port)) {
+        consecutiveErrors = 0
+        console.warn(`[登录轮询] 端口 ${port} 探测失败但进程仍在，继续等待登录`)
         return
       }
+      clearInterval(checkInterval)
+      finishPolling()
       if (window.electronAPI) {
         await window.electronAPI.killProcessByPort(port)
       }
@@ -1015,23 +1105,25 @@ onMounted(async () => {
   // 强制等待配置加载完成（无论配置是否已存在，都重新加载确保最新）
   if (window.electronAPI) {
     await configStore.loadConfig()
-    // 启动时先检查并清理所有“未登录”的企业微信进程
-    await cleanupUnloggedOnMount()
   }
-  
-  await loadLoginInfo()
-  
-  // 确保表格渲染
-  await nextTick()
 
-  // 若在挂载前已通过 HTTP 启动企微，此处消费队列
+  await loadLoginInfo()
+
+  // 先恢复「登录中」/pending 端口，再启动清理，避免与「添加企微」竞态
   if (wecomApiInjectPorts.value.length) {
     const batch = [...wecomApiInjectPorts.value]
     wecomApiInjectPorts.value.splice(0, wecomApiInjectPorts.value.length)
     batch.forEach((port) => handleApiInjectPort(port))
   }
-
   await resumePendingLoginPolling()
+
+  if (window.electronAPI) {
+    await cleanupUnloggedOnMount()
+  }
+
+  // 确保表格渲染
+  await nextTick()
+
   await recoverOrphanedLoggedInPorts()
   
   // 添加点击外部关闭菜单的监听

@@ -20,11 +20,13 @@ const HEAVY_MESSAGE_TYPES = new Set([3001, 3003, 3004, 3007, 3011, 9000])
 /** 小程序（3006）：群发场景 Hook 需读封面并上传，单独加长间隔与冷却 */
 const APPLET_MESSAGE_TYPE = 3006
 
+const { heavyApiDeferMs } = require('./wecomStability')
+
 const MIN_INTERVAL_MS = {
-  message: 800,
-  group: 800,
-  heavy: 1500,
-  applet: 5000
+  message: 1000,
+  group: 1000,
+  heavy: 2000,
+  applet: 6000
 }
 
 /** 请求结束后额外冷却（Hook 可能在 HTTP 返回后仍在处理封面/发送） */
@@ -33,10 +35,10 @@ const POST_COMPLETION_COOLDOWN_MS = {
 }
 
 /** 小程序请求失败/超时后额外等待，避免 Hook 仍在处理时收到下一请求 */
-const APPLET_ERROR_RECOVERY_MS = 10000
+const APPLET_ERROR_RECOVERY_MS = 12000
 
 /** 单端口小程序待发队列上限，超出直接拒绝，防止客户端超时重试压垮 Hook */
-const MAX_APPLET_QUEUE_DEPTH = 30
+const MAX_APPLET_QUEUE_DEPTH = 20
 
 /** 按 type 的请求超时（小程序封面上传可能较慢） */
 const REQUEST_TIMEOUT_MS = {
@@ -106,6 +108,14 @@ function enqueuePortTask(port, type, taskFn) {
   }
 
   const run = async () => {
+    const stabilizingWait = heavyApiDeferMs(port, type)
+    if (stabilizingWait > 0) {
+      console.log(
+        `[Hook队列] 端口 ${port} 登录保护期内，写操作延迟 ${Math.round(stabilizingWait / 1000)}s（type ${type}）`
+      )
+      await sleep(stabilizingWait)
+    }
+
     const interval = getMinInterval(type)
     if (interval > 0) {
       const wait = interval - (Date.now() - q.lastDoneAt)

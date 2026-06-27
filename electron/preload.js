@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 注入工具
   runInjectTool: (options) => ipcRenderer.invoke('run-inject-tool', options),
+  markWecomPortStabilizing: (port) => ipcRenderer.invoke('mark-wecom-port-stabilizing', port),
+  markWecomPortLoggedIn: (port) => ipcRenderer.invoke('mark-wecom-port-logged-in', port),
+  markWecomPortAccountSwitch: (port) => ipcRenderer.invoke('mark-wecom-port-account-switch', port),
   resetCrashRecoveryProtection: () => ipcRenderer.invoke('reset-crash-recovery-protection'),
   onCrashRecoverySuspended: (callback) => {
     ipcRenderer.on('crash-recovery-suspended', (_event, data) => callback(data))

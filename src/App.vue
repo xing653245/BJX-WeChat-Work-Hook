@@ -73,6 +73,7 @@ const refreshManagerList = async ({ light = false } = {}) => {
 const watchAccountSwitchOnPort = (portNum) => {
   if (accountSwitchWatchers.has(portNum)) return
   accountSwitchWatchers.set(portNum, true)
+  window.electronAPI?.markWecomPortAccountSwitch?.(portNum)
 
   ;(async () => {
     try {
