@@ -7,7 +7,6 @@
       <div class="section-card">
         <div class="section-toolbar">
           <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、刷新授权、设置标签等</span>
-          <span class="toolbar-badge">{{ instanceCount }} 个实例</span>
         </div>
         <div class="table-wrap">
           <el-table
@@ -154,7 +153,6 @@ const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const showSubMenu = ref(false)
-const instanceCount = computed(() => tableData.value.length)
 /** 避免同一端口重复启动登录轮询 */
 const loginPollingPorts = new Set()
 /** 用户主动添加、尚未写入配置的端口（用于恢复表格） */

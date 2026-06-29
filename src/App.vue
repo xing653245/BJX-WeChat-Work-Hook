@@ -17,7 +17,6 @@
       </el-tabs>
     </el-main>
     <CloseConfirmDialog v-model="closeConfirmVisible" />
-    <OnboardingDialog v-model="onboardingVisible" @go-tab="activeTab = $event" />
   </el-container>
 </template>
 
@@ -29,14 +28,12 @@ import RunLogsPage from './pages/RunLogsPage.vue'
 import VWorkManagerPage from './pages/VWorkManagerPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import CloseConfirmDialog from './components/CloseConfirmDialog.vue'
-import OnboardingDialog from './components/OnboardingDialog.vue'
 import { getCloseConfirmAutoAction } from './utils/closeConfirmPrefs'
 import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
 import { confirmLoggedIn } from './utils/loginStatusRetry'
 import { pickPersonalRecord } from './utils/personalInfo'
 import { AUTH_FETCH_FAILED_EXPIRE, resolveExpireAfterAuthFetch } from './utils/authExpire'
-import { shouldShowOnboarding } from './utils/onboarding'
 import { initTheme, setThemeMode } from './utils/theme'
 
 const TAB_STORAGE_KEY = 'vwork_active_tab'
@@ -44,7 +41,6 @@ const TAB_STORAGE_KEY = 'vwork_active_tab'
 const activeTab = ref(localStorage.getItem(TAB_STORAGE_KEY) || 'index')
 const vworkManagerRef = ref(null)
 const closeConfirmVisible = ref(false)
-const onboardingVisible = ref(false)
 const isDark = ref(false)
 
 provide('activeTab', activeTab)
@@ -324,10 +320,6 @@ onMounted(() => {
   initTheme((dark) => {
     isDark.value = dark
   })
-
-  if (shouldShowOnboarding()) {
-    onboardingVisible.value = true
-  }
 
   removeFastapiLogoutListener =
     window.electronAPI?.onFastAPIMessage?.(handleLogoutMessage) || null
