@@ -26,16 +26,16 @@ const MIN_INTERVAL_MS = {
   message: 1000,
   group: 1000,
   heavy: 2000,
-  applet: 6000
+  applet: 4000
 }
 
 /** 请求结束后额外冷却（Hook 可能在 HTTP 返回后仍在处理封面/发送） */
 const POST_COMPLETION_COOLDOWN_MS = {
-  [APPLET_MESSAGE_TYPE]: 5000
+  [APPLET_MESSAGE_TYPE]: 3000
 }
 
 /** 小程序请求失败/超时后额外等待，避免 Hook 仍在处理时收到下一请求 */
-const APPLET_ERROR_RECOVERY_MS = 12000
+const APPLET_ERROR_RECOVERY_MS = 8000
 
 /** 单端口小程序待发队列上限，超出直接拒绝，防止客户端超时重试压垮 Hook */
 const MAX_APPLET_QUEUE_DEPTH = 20

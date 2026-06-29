@@ -52,7 +52,8 @@ router.post('/image', createAPIHandler(3001, '发送图片消息', (params) => {
  *   "avatar_url": "头像地址(URL，必填)",
  *   "app_id": "小程序ID"
  * }
- * 群发：可并发 POST，框架按端口自动串行（约 5s 间隔 + 5s 冷却）；队列超过 30 条返回 503，请勿超时重试。
+ * 群发：勿多路并发 POST；请脚本串行调用本接口（企微 Hook 无原生多群接口，type 3006 仅单条）
+ * 群发：可并发 POST，框架按端口自动串行（约 4s 间隔 + 3s 冷却）；队列超过 20 条返回 503，请勿超时重试。
  */
 router.post('/applet', createAPIHandler(3006, '发送小程序', (params) => {
   if (!params.user_id) {
