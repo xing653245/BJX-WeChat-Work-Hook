@@ -4,6 +4,7 @@
  */
 const { readIni, checkAuthByPort } = require('../commons/common')
 const { postToVWorkApi } = require('../services/wecomApiClient')
+const { normalizeHookResponse, shouldNormalizeHookResponse } = require('../utils/hookResponse')
 
 /**
  * 调用企微API的通用处理函数
@@ -77,7 +78,10 @@ function createAPIHandler(type, apiName, paramsValidator = null) {
       }
 
       try {
-        const data = await callVWorkAPI(port, type, validatedParams)
+        const raw = await callVWorkAPI(port, type, validatedParams)
+        const data = shouldNormalizeHookResponse(type)
+          ? normalizeHookResponse(raw)
+          : raw
         res.json({
           success: true,
           data: data

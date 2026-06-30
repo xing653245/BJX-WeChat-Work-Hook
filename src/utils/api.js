@@ -6,6 +6,7 @@
 import { ElMessage } from 'element-plus'
 import { ensureAuthorizedByPort } from './authGuard'
 import { AUTH_REASON } from './authCheck.js'
+import { normalizeHookResponse } from './hookResponse.js'
 
 /**
  * 基础URL生成
@@ -486,22 +487,22 @@ export class VWorkApi {
 
   // 8000: 企业用户ID转开放平台ID
   static async corpUserIdToOpenPlatformId(port, user_id, type = 8000) {
-    return await callAPI(port, { type, user_id })
+    return normalizeHookResponse(await callAPI(port, { type, user_id }))
   }
 
   // 8001: 企业群ID转开放平台ID
   static async corpChatRoomIdToOpenPlatformId(port, chat_room_id, type = 8001) {
-    return await callAPI(port, { type, chat_room_id })
+    return normalizeHookResponse(await callAPI(port, { type, chat_room_id }))
   }
 
   // 8002: 开放平台ID转企业用户ID
   static async openPlatformIdToCorpUserId(port, open_id, type = 8002) {
-    return await callAPI(port, { type, open_id })
+    return normalizeHookResponse(await callAPI(port, { type, open_id }))
   }
 
   // 8003: 开放平台ID转企业群ID
   static async openPlatformIdToCorpChatRoomId(port, open_id, type = 8003) {
-    return await callAPI(port, { type, open_id })
+    return normalizeHookResponse(await callAPI(port, { type, open_id }))
   }
 
   // 9000: CDN上传文件
