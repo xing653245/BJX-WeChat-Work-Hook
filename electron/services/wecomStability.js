@@ -92,6 +92,7 @@ function shouldDeferWriteDuringProtection(type) {
   if (t >= 7001 && t <= 7003) return true
   if (t >= 9000 && t <= 9004) return true
   if (t === 10000 || t === 10003) return true
+  if (t >= 6000 && t <= 6007) return true
   return false
 }
 

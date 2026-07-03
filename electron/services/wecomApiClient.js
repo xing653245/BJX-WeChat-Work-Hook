@@ -20,13 +20,17 @@ const HEAVY_MESSAGE_TYPES = new Set([3001, 3003, 3004, 3007, 3011, 9000])
 /** 小程序（3006）：群发场景 Hook 需读封面并上传，单独加长间隔与冷却 */
 const APPLET_MESSAGE_TYPE = 3006
 
+/** 标签读操作（6000 标签组、6006 标签联系人），连续调用易压 Hook */
+const TAG_READ_TYPES = new Set([6000, 6006])
+
 const { heavyApiDeferMs } = require('./wecomStability')
 
 const MIN_INTERVAL_MS = {
   message: 1000,
   group: 1000,
   heavy: 2000,
-  applet: 4000
+  applet: 4000,
+  tagRead: 400
 }
 
 /** 请求结束后额外冷却（Hook 可能在 HTTP 返回后仍在处理封面/发送） */
@@ -63,6 +67,7 @@ function getMinInterval(type) {
   if (HEAVY_MESSAGE_TYPES.has(t)) return MIN_INTERVAL_MS.heavy
   if (MESSAGE_SEND_TYPES.has(t)) return MIN_INTERVAL_MS.message
   if (GROUP_WRITE_TYPES.has(t)) return MIN_INTERVAL_MS.group
+  if (TAG_READ_TYPES.has(t)) return MIN_INTERVAL_MS.tagRead
   return 0
 }
 

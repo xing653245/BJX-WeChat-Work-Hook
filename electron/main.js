@@ -1245,7 +1245,8 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
       const isAppletCall =
         (data && Number(data.type) === 3006) ||
         (typeof url === 'string' && url.includes('/api/message/applet'))
-      const frameworkTimeout = isAppletCall ? 180000 : 10000
+      const isUserTagsCall = typeof url === 'string' && url.includes('/api/tag/user-tags')
+      const frameworkTimeout = isAppletCall ? 180000 : (isUserTagsCall ? 120000 : 10000)
       const response = await axios({ method, url, data, timeout: frameworkTimeout })
       responseData = response.data
     }
@@ -1342,6 +1343,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           6005: '一个标签打多个好友',
           6006: '获取标签下的联系人',
           6007: '删除标签下的联系人',
+          'user-tags': '获取用户标签',
           // settings
           7000: '开启/关闭自动更新',
           7001: '开启/关闭自动登录',
