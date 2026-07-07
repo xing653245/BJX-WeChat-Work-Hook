@@ -225,6 +225,7 @@ module.exports = {
   markPortAccountSwitch,
   recordInjectAttempt,
   heavyApiDeferMs,
+  getProtectionUntil,
   canInjectPort,
   isPortSafeForCrashRecoveryInject,
   probeHookReachable,

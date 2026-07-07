@@ -7,6 +7,7 @@
 const express = require('express')
 const router = express.Router()
 const { createAPIHandler } = require('../middleware/apiHandler')
+const { validateAddNetworkParams } = require('../services/friendNetworkGuard')
 
 /**
  * 添加好友【群成员】
@@ -203,46 +204,36 @@ router.post('/query-network', createAPIHandler(4008, '网络查询陌生人信�
 /**
  * 添加好友【网络查询】
  * POST /api/friend/add-network
- * 请求体: { 
- *   "port": 8080, 
- *   "add_type": "添加类型 1:企微 2:个微",
- *   "corp_id?": "企业ID (当add_type=1时必填)",
- *   "user_id": "用户ID",
- *   "openid_or_ticket": "OpenID或Ticket",
- *   "msg": "验证消息"
- * }
+ *
+ * 须先调用 query-network，再原样使用其返回字段。
+ * add_type=1: { port, add_type: 1, corp_id, user_id, openid_or_ticket, msg }
+ * add_type=2: { port, add_type: 2, user_id, openid_or_ticket, msg }
  */
-router.post('/add-network', createAPIHandler(4009, '添加好友【网络查询】', (params) => {
-  if (params.add_type === undefined || params.add_type === null) {
-    return { valid: false, message: '缺少参数: add_type (添加类型)' }
-  }
-  // 只有在 add_type=1 时，corp_id 才是必填的
-  if (params.add_type === 1 && !params.corp_id) {
-    return { valid: false, message: '当 add_type=1 时，缺少参数: corp_id (企业ID)' }
+router.post('/add-network', createAPIHandler(4009, '添加好友【网络查询】', (params, port) => {
+  if (params.add_type === undefined || params.add_type === null || params.add_type === '') {
+    return { valid: false, message: '缺少参数: add_type (添加类型，1=企微 2=个微)' }
   }
   if (!params.user_id) {
     return { valid: false, message: '缺少参数: user_id (用户ID)' }
   }
   if (!params.openid_or_ticket) {
-    return { valid: false, message: '缺少参数: openid_or_ticket (OpenID或Ticket)' }
+    return { valid: false, message: '缺少参数: openid_or_ticket（原样使用 query-network 返回值）' }
   }
   if (!params.msg) {
     return { valid: false, message: '缺少参数: msg (验证消息)' }
   }
-  const resultParams = {
+  const addType = Number(params.add_type)
+  if (addType === 1 && !params.corp_id) {
+    return { valid: false, message: '当 add_type=1 时，缺少参数: corp_id (企业ID)' }
+  }
+
+  return validateAddNetworkParams(port, {
     add_type: params.add_type,
     user_id: params.user_id,
     openid_or_ticket: params.openid_or_ticket,
-    msg: params.msg
-  }
-  // 只有当 corp_id 存在时才添加到参数中
-  if (params.corp_id) {
-    resultParams.corp_id = params.corp_id
-  }
-  return {
-    valid: true,
-    params: resultParams
-  }
+    msg: params.msg,
+    corp_id: params.corp_id
+  })
 }))
 
 module.exports = router

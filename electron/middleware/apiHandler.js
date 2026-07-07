@@ -67,7 +67,7 @@ function createAPIHandler(type, apiName, paramsValidator = null) {
       // 自定义参数验证
       let validatedParams = otherParams
       if (paramsValidator) {
-        const validationResult = paramsValidator(otherParams)
+        const validationResult = paramsValidator(otherParams, port)
         if (!validationResult.valid) {
           return res.status(400).json({
             success: false,
@@ -96,10 +96,19 @@ function createAPIHandler(type, apiName, paramsValidator = null) {
         } else if (error.code === 'APPLET_QUEUE_FULL') {
           statusCode = 503
           errorMessage = error.message
+        } else if (error.code === 'WECOM_NOT_READY' || error.code === 'WECOM_NOT_LOGGED_IN') {
+          statusCode = 409
+          errorMessage = error.message
+        } else if (error.code === 'WECOM_HOOK_UNREACHABLE') {
+          statusCode = 503
+          errorMessage = error.message
+        } else if (error.code === 'INVALID_FRIEND_NETWORK_PARAMS') {
+          statusCode = 400
+          errorMessage = error.message
         } else if (error.code === 'ECONNREFUSED') {
           errorMessage = `无法连接到企微服务 (端口 ${port})，请确认企微已启动`
         } else if (error.code === 'ETIMEDOUT') {
-          errorMessage = '请求超时，请稍后重试'
+          errorMessage = '请求超时：企微 Hook 无响应，可能已崩溃。请重新打开企微、确认注入成功，并先调用 query-network 再调用 add-network'
         } else if (error.response) {
           errorMessage = `企微API返回错误: HTTP ${error.response.status}`
           if (error.response.data) {

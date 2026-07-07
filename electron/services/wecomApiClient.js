@@ -23,6 +23,9 @@ const APPLET_MESSAGE_TYPE = 3006
 /** 标签读操作（6000 标签组、6006 标签联系人），连续调用易压 Hook */
 const TAG_READ_TYPES = new Set([6000, 6006])
 
+/** 网络好友（4008 查询、4009 加好友），Hook 敏感且可能较慢 */
+const FRIEND_NETWORK_TYPES = new Set([4008, 4009])
+
 const { heavyApiDeferMs } = require('./wecomStability')
 
 const MIN_INTERVAL_MS = {
@@ -30,7 +33,8 @@ const MIN_INTERVAL_MS = {
   group: 1000,
   heavy: 2000,
   applet: 4000,
-  tagRead: 400
+  tagRead: 400,
+  friendNetwork: 2000
 }
 
 /** 请求结束后额外冷却（Hook 可能在 HTTP 返回后仍在处理封面/发送） */
@@ -46,7 +50,9 @@ const MAX_APPLET_QUEUE_DEPTH = 20
 
 /** 按 type 的请求超时（小程序封面上传可能较慢） */
 const REQUEST_TIMEOUT_MS = {
-  [APPLET_MESSAGE_TYPE]: 120000
+  [APPLET_MESSAGE_TYPE]: 120000,
+  4008: 60000,
+  4009: 60000
 }
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000
 const HEAVY_REQUEST_TIMEOUT_MS = 60000
@@ -68,6 +74,7 @@ function getMinInterval(type) {
   if (MESSAGE_SEND_TYPES.has(t)) return MIN_INTERVAL_MS.message
   if (GROUP_WRITE_TYPES.has(t)) return MIN_INTERVAL_MS.group
   if (TAG_READ_TYPES.has(t)) return MIN_INTERVAL_MS.tagRead
+  if (FRIEND_NETWORK_TYPES.has(t)) return MIN_INTERVAL_MS.friendNetwork
   return 0
 }
 
@@ -168,9 +175,41 @@ function enqueuePortTask(port, type, taskFn) {
  * @param {{ timeout?: number }} [options]
  */
 async function postToVWorkApi(port, requestData, options = {}) {
-  const type = requestData?.type
+  const type = Number(requestData?.type)
   const url = `http://127.0.0.1:${port}/api`
   const timeout = options.timeout ?? getRequestTimeout(type)
+
+  if (type === 4008 || type === 4009) {
+    const {
+      assertFriendNetworkReady,
+      recordNetworkQuery,
+      validateAddNetworkParams,
+      buildAddNetworkHookPayload
+    } = require('./friendNetworkGuard')
+
+    await assertFriendNetworkReady(port)
+
+    let hookPayload = requestData
+    if (type === 4009) {
+      const check = validateAddNetworkParams(port, requestData)
+      if (!check.valid) {
+        const err = new Error(check.message)
+        err.code = 'INVALID_FRIEND_NETWORK_PARAMS'
+        throw err
+      }
+      hookPayload = buildAddNetworkHookPayload(check.params)
+    }
+
+    const data = await enqueuePortTask(port, type, () =>
+      axios.post(url, hookPayload, { timeout }).then((res) => res.data)
+    )
+
+    if (type === 4008) {
+      recordNetworkQuery(port, requestData.key, data)
+    }
+
+    return data
+  }
 
   return enqueuePortTask(port, type, () =>
     axios.post(url, requestData, { timeout }).then((res) => res.data)

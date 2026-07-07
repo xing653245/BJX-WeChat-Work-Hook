@@ -279,25 +279,25 @@ export class VWorkApi {
 
   // 4009: 添加好友【网络查询】
   static async addFriendNetwork(port, add_type, corp_id = null, userId, openid_or_ticket, msg, type = 4009) {
+    const addType = Number(add_type)
+    if (![1, 2].includes(addType)) {
+      throw new Error('add_type 无效，仅支持 1（企微）或 2（个微）')
+    }
     const requestData = {
       type,
-      add_type,
+      add_type: addType,
       user_id: userId,
       openid_or_ticket,
       msg
     }
-    
-    // 只有在 add_type=1 时才需要 corp_id
-    if (add_type === 1) {
+
+    if (addType === 1) {
       if (!corp_id) {
         throw new Error('当 add_type=1 时，corp_id 为必填参数')
       }
       requestData.corp_id = corp_id
-    } else if (corp_id) {
-      // 如果 add_type 不是 1 但传入了 corp_id，也包含在请求中
-      requestData.corp_id = corp_id
     }
-    
+
     return await callAPI(port, requestData)
   }
 
