@@ -94,35 +94,25 @@ function resolveMatchedContact(cache, userId) {
 
 function normalizeAddNetworkParams(params, matched) {
   const addType = Number(params.add_type)
-  const normalized = {
+  return {
     add_type: addType,
+    corp_id: pickString(params.corp_id, matched?.corp_id),
     user_id: String(params.user_id),
     msg: params.msg,
     openid_or_ticket: pickString(params.openid_or_ticket, matched?.openid_or_ticket)
   }
-
-  if (addType === 1) {
-    normalized.corp_id = pickString(params.corp_id)
-  }
-
-  return normalized
 }
 
 function buildAddNetworkHookPayload(params) {
   const addType = Number(params.add_type)
-  const base = {
+  return {
     type: 4009,
     add_type: addType,
+    corp_id: params.corp_id ?? '',
     user_id: params.user_id,
     msg: params.msg,
     openid_or_ticket: params.openid_or_ticket
   }
-
-  if (addType === 1) {
-    return { ...base, corp_id: params.corp_id }
-  }
-
-  return base
 }
 
 async function probeHookAlive(port) {
@@ -243,18 +233,14 @@ function validateAddNetworkParams(port, params) {
     }
   }
 
-  if (addType === 1) {
-    if (!params.corp_id) {
-      return { valid: false, message: '当 add_type=1 时，缺少参数: corp_id (企业ID)' }
-    }
-    if (!normalized.corp_id) {
-      return { valid: false, message: '当 add_type=1 时，缺少参数: corp_id (企业ID)' }
-    }
-    if (matched.corp_id && normalized.corp_id !== matched.corp_id) {
-      return {
-        valid: false,
-        message: 'corp_id 与 query-network 结果不一致，请使用查询返回的 corp_id'
-      }
+  if (params.corp_id === undefined || params.corp_id === null) {
+    return { valid: false, message: '缺少参数: corp_id (企业ID，无企业ID时传空字符串 "")' }
+  }
+
+  if (normalized.corp_id !== pickString(matched.corp_id)) {
+    return {
+      valid: false,
+      message: 'corp_id 与 query-network 结果不一致，请使用查询返回的 corp_id（个微无企业ID时传 ""）'
     }
   }
 

@@ -278,27 +278,22 @@ export class VWorkApi {
   }
 
   // 4009: 添加好友【网络查询】
-  static async addFriendNetwork(port, add_type, corp_id = null, userId, openid_or_ticket, msg, type = 4009) {
+  static async addFriendNetwork(port, add_type, corp_id, userId, openid_or_ticket, msg, type = 4009) {
     const addType = Number(add_type)
     if (![1, 2].includes(addType)) {
       throw new Error('add_type 无效，仅支持 1（企微）或 2（个微）')
     }
-    const requestData = {
+    if (corp_id === undefined || corp_id === null) {
+      throw new Error('corp_id 为必填参数，无企业ID时传空字符串 ""')
+    }
+    return await callAPI(port, {
       type,
       add_type: addType,
+      corp_id,
       user_id: userId,
       openid_or_ticket,
       msg
-    }
-
-    if (addType === 1) {
-      if (!corp_id) {
-        throw new Error('当 add_type=1 时，corp_id 为必填参数')
-      }
-      requestData.corp_id = corp_id
-    }
-
-    return await callAPI(port, requestData)
+    })
   }
 
   // 5000: 创建群聊【外部】

@@ -207,11 +207,14 @@ router.post('/query-network', createAPIHandler(4008, '网络查询陌生人信�
  *
  * 须先调用 query-network，再原样使用其返回字段。
  * add_type=1: { port, add_type: 1, corp_id, user_id, openid_or_ticket, msg }
- * add_type=2: { port, add_type: 2, user_id, openid_or_ticket, msg }
+ * add_type=2: { port, add_type: 2, corp_id: "", user_id, openid_or_ticket, msg }
  */
 router.post('/add-network', createAPIHandler(4009, '添加好友【网络查询】', (params, port) => {
   if (params.add_type === undefined || params.add_type === null || params.add_type === '') {
     return { valid: false, message: '缺少参数: add_type (添加类型，1=企微 2=个微)' }
+  }
+  if (params.corp_id === undefined || params.corp_id === null) {
+    return { valid: false, message: '缺少参数: corp_id (企业ID，无企业ID时传空字符串 "")' }
   }
   if (!params.user_id) {
     return { valid: false, message: '缺少参数: user_id (用户ID)' }
@@ -221,10 +224,6 @@ router.post('/add-network', createAPIHandler(4009, '添加好友【网络查询�
   }
   if (!params.msg) {
     return { valid: false, message: '缺少参数: msg (验证消息)' }
-  }
-  const addType = Number(params.add_type)
-  if (addType === 1 && !params.corp_id) {
-    return { valid: false, message: '当 add_type=1 时，缺少参数: corp_id (企业ID)' }
   }
 
   return validateAddNetworkParams(port, {
