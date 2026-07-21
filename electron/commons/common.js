@@ -295,7 +295,8 @@ const {
   checkAuthExpire,
   checkAuthByPort,
   checkAuthByUserId,
-  validAuthDatetime
+  validAuthDatetime,
+  isAuthorizedAuthState
 } = require('./authCheck.cjs')
 
 /**
@@ -482,6 +483,7 @@ module.exports = {
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime,
+  isAuthorizedAuthState,
   isPortInUse,
   killProcessByPort,
   readIni,

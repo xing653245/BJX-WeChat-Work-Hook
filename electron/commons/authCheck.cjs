@@ -8,6 +8,7 @@ const AUTH_REASON = {
   PORT_NOT_FOUND: 'PORT_NOT_FOUND',
   USER_NOT_FOUND: 'USER_NOT_FOUND',
   NOT_AUTHORIZED: 'NOT_AUTHORIZED',
+  DEACTIVATED: 'DEACTIVATED',
   AUTH_FETCH_FAILED: 'AUTH_FETCH_FAILED',
   EXPIRED: 'EXPIRED',
   INVALID_DATE: 'INVALID_DATE'
@@ -15,26 +16,62 @@ const AUTH_REASON = {
 
 const { AUTH_FETCH_FAILED_EXPIRE } = require('./authFetchError')
 
+function parseExpireDate(expire) {
+  if (!expire || expire === '未授权' || expire === AUTH_FETCH_FAILED_EXPIRE) {
+    return null
+  }
+  const dt = new Date(String(expire).replace(/-/g, '/'))
+  return Number.isNaN(dt.getTime()) ? null : dt
+}
+
+function isExpireNotExpired(expire) {
+  const dt = parseExpireDate(expire)
+  if (!dt) return false
+  return new Date() <= dt
+}
+
+/** 仅有 active===true 且 expire 未到期时才算有授权 */
+function isAuthorizedAuthState(expire, authActive) {
+  return authActive === true && isExpireNotExpired(expire)
+}
+
 /**
  * @param {string} expire - 授权到期时间或「未授权」
- * @param {{ port?: string|number, userId?: string, nickName?: string }} [ctx]
+ * @param {{ port?: string|number, userId?: string, nickName?: string, auth_active?: boolean }} [ctx]
  */
 function checkAuthExpire(expire, ctx = {}) {
   const accountHint = buildAccountHint(ctx)
-
-  if (!expire || expire === '未授权') {
-    return {
-      valid: false,
-      reason: AUTH_REASON.NOT_AUTHORIZED,
-      message: `${accountHint}尚未写入授权信息，请在「企微管理」中右键企微ID选择「刷新授权」`
-    }
-  }
 
   if (expire === AUTH_FETCH_FAILED_EXPIRE) {
     return {
       valid: false,
       reason: AUTH_REASON.AUTH_FETCH_FAILED,
       message: `${accountHint}授权状态未能确认（网络或代理异常），请关闭 VPN/代理 或检查网络后右键「刷新授权」`
+    }
+  }
+
+  if (isAuthorizedAuthState(expire, ctx.auth_active)) {
+    return {
+      valid: true,
+      reason: AUTH_REASON.OK,
+      message: '',
+      expire
+    }
+  }
+
+  if (ctx.auth_active === false) {
+    return {
+      valid: false,
+      reason: AUTH_REASON.DEACTIVATED,
+      message: `${accountHint}授权已被管理员停用，请联系管理员在后台开启激活后右键「刷新授权」`
+    }
+  }
+
+  if (!expire || expire === '未授权') {
+    return {
+      valid: false,
+      reason: AUTH_REASON.NOT_AUTHORIZED,
+      message: `${accountHint}尚未写入授权信息，请在「企微管理」中右键企微ID选择「刷新授权」`
     }
   }
 
@@ -57,10 +94,9 @@ function checkAuthExpire(expire, ctx = {}) {
   }
 
   return {
-    valid: true,
-    reason: AUTH_REASON.OK,
-    message: '',
-    expire
+    valid: false,
+    reason: AUTH_REASON.NOT_AUTHORIZED,
+    message: `${accountHint}授权未激活或状态未确认，请在「企微管理」中右键「刷新授权」`
   }
 }
 
@@ -91,7 +127,8 @@ function checkAuthByPort(port, loginInfoList) {
   return checkAuthExpire(target.expire, {
     port,
     userId: target.user_id,
-    nickName: target.nick_name
+    nickName: target.nick_name,
+    auth_active: target.auth_active
   })
 }
 
@@ -118,7 +155,8 @@ function checkAuthByUserId(userId, loginInfoList) {
   return checkAuthExpire(target.expire, {
     port: target.port,
     userId: target.user_id,
-    nickName: target.nick_name
+    nickName: target.nick_name,
+    auth_active: target.auth_active
   })
 }
 
@@ -136,8 +174,8 @@ function buildAccountHint(ctx) {
   return '当前账号'
 }
 
-function validAuthDatetime(dateStr) {
-  return checkAuthExpire(dateStr).valid
+function validAuthDatetime(dateStr, authActive) {
+  return checkAuthExpire(dateStr, { auth_active: authActive }).valid
 }
 
 module.exports = {
@@ -145,5 +183,6 @@ module.exports = {
   checkAuthExpire,
   checkAuthByPort,
   checkAuthByUserId,
-  validAuthDatetime
+  validAuthDatetime,
+  isAuthorizedAuthState
 }

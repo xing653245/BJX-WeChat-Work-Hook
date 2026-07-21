@@ -62,7 +62,7 @@ try {
   }
 }
 const axios = require('axios')
-const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
+const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
 const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
@@ -1370,7 +1370,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         
         // 检查授权是否有效
         const expire = target_item ? target_item.expire : ''
-        const valid_auth = validAuthDatetime(expire)
+        const valid_auth = validAuthDatetime(expire, target_item?.auth_active)
         
         // 登录相关的API类型（这些API在登录过程中会被调用，即使还没有授权信息也应该记录日志）
         const LOGIN_RELATED_API_TYPES = new Set([1000, 1002]) // 1000: 获取登录状态, 1002: 获取个人信息
@@ -1537,10 +1537,13 @@ const { formatAuthFetchError } = require('./commons/authFetchError')
 
 ipcMain.handle('get-auth-info', async (event, wxid) => {
   const backendIp = '8.137.76.99'
+  // const backendIp = '192.168.1.18'
   const authUrl = `http://${backendIp}:5516/polarBear/getAuthInfo/${wxid}`
   try {
     const response = await axios.get(authUrl, { timeout: 10000 })
     const result = { success: true, data: response.data }
+    
+    console.log("result授权返回", result);
     
     // 读取配置，检查是否开启日志
     const config = readConfig()
@@ -1550,12 +1553,17 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
     // 如果开启了日志，写入运行日志
     if (openLog && saveLog) {
       let expire = '未授权'
+      let activeNote = ''
       if (result.data && result.data.data) {
-        expire = result.data.data.expire || '未授权'
+        const authData = result.data.data
+        const auth_active = authData.active === true
+        const rawExpire = authData.expire || '未授权'
+        expire = isAuthorizedAuthState(rawExpire, auth_active) ? rawExpire : '未授权'
+        activeNote = `, 激活状态: ${auth_active ? '开' : '关'}`
       }
       
       const logData = {
-        content: `刷新授权: ${wxid}, 到期时间: ${expire}`,
+        content: `刷新授权: ${wxid}, 到期时间: ${expire}${activeNote}`,
         sys: true,
         time_stamp: Math.floor(Date.now() / 1000)
       }

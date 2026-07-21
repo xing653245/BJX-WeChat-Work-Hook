@@ -33,7 +33,7 @@ import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
 import { confirmLoggedIn } from './utils/loginStatusRetry'
 import { pickPersonalRecord } from './utils/personalInfo'
-import { AUTH_FETCH_FAILED_EXPIRE, resolveExpireAfterAuthFetch } from './utils/authExpire'
+import { AUTH_FETCH_FAILED_EXPIRE, resolveAuthFieldsAfterAuthFetch } from './utils/authExpire'
 import { initTheme, setThemeMode } from './utils/theme'
 
 const TAB_STORAGE_KEY = 'vwork_active_tab'
@@ -149,6 +149,7 @@ const watchAccountSwitchOnPort = (portNum) => {
       const prev = index >= 0 ? loginInfoList[index] : {}
       const isSameUser = prev.user_id === data.user_id
       const prevExpireForAuth = isSameUser ? prev.expire : undefined
+      const prevAuthActiveForAuth = isSameUser ? prev.auth_active : undefined
       const updated = {
         ...prev,
         nick_name: data.nick_name || prev.nick_name || '-',
@@ -160,7 +161,8 @@ const watchAccountSwitchOnPort = (portNum) => {
           prevExpireForAuth !== '未授权' &&
           prevExpireForAuth !== AUTH_FETCH_FAILED_EXPIRE
             ? prevExpireForAuth
-            : AUTH_FETCH_FAILED_EXPIRE
+            : AUTH_FETCH_FAILED_EXPIRE,
+        auth_active: prevAuthActiveForAuth === true
       }
 
       const persistUpdatedLoginInfo = async () => {
@@ -188,11 +190,15 @@ const watchAccountSwitchOnPort = (portNum) => {
       if (window.electronAPI?.getAuthInfo) {
         try {
           const authResult = await window.electronAPI.getAuthInfo(data.user_id)
+          const authFields = resolveAuthFieldsAfterAuthFetch(authResult, {
+            expire: prevExpireForAuth,
+            auth_active: prevAuthActiveForAuth
+          })
+          updated.expire = authFields.expire
+          updated.auth_active = authFields.auth_active
           if (authResult.success && authResult.data?.data) {
-            updated.expire = resolveExpireAfterAuthFetch(authResult, prevExpireForAuth)
             await persistUpdatedLoginInfo()
           } else if (!authResult.success) {
-            updated.expire = resolveExpireAfterAuthFetch(authResult, prevExpireForAuth)
             await persistUpdatedLoginInfo()
             ElMessage.warning(
               authResult.msg || '切换账号后获取授权失败，请关闭 VPN/代理 或检查网络后右键刷新授权'
@@ -200,7 +206,15 @@ const watchAccountSwitchOnPort = (portNum) => {
           }
         } catch (e) {
           console.warn('[切换账号] 刷新授权失败:', e)
-          updated.expire = resolveExpireAfterAuthFetch({ success: false }, prevExpireForAuth)
+          const authFields = resolveAuthFieldsAfterAuthFetch(
+            { success: false },
+            {
+              expire: prevExpireForAuth,
+              auth_active: prevAuthActiveForAuth
+            }
+          )
+          updated.expire = authFields.expire
+          updated.auth_active = authFields.auth_active
           await persistUpdatedLoginInfo()
           ElMessage.warning('切换账号后获取授权失败，请关闭 VPN/代理 或检查网络后右键刷新授权')
         }

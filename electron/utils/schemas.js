@@ -23,6 +23,7 @@ class LoginInfo {
     this.port = data.port || ''
     this.pid = data.pid || ''
     this.expire = data.expire || '未授权'
+    this.auth_active = data.auth_active === true
     this.label = data.label || ''
   }
 
@@ -46,6 +47,7 @@ class LoginInfo {
       port: this.port,
       pid: this.pid,
       expire: this.expire,
+      auth_active: this.auth_active,
       label: this.label
     }
   }

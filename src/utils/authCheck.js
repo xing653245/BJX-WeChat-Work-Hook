@@ -2,13 +2,14 @@
  * 前端授权校验（ESM，供 Vite 打包）
  * 逻辑与 electron/commons/authCheck.cjs 保持一致
  */
-import { AUTH_FETCH_FAILED_EXPIRE } from './authExpire'
+import { AUTH_FETCH_FAILED_EXPIRE, isAuthorizedAuthState } from './authExpire'
 
 export const AUTH_REASON = {
   OK: 'OK',
   PORT_NOT_FOUND: 'PORT_NOT_FOUND',
   USER_NOT_FOUND: 'USER_NOT_FOUND',
   NOT_AUTHORIZED: 'NOT_AUTHORIZED',
+  DEACTIVATED: 'DEACTIVATED',
   AUTH_FETCH_FAILED: 'AUTH_FETCH_FAILED',
   EXPIRED: 'EXPIRED',
   INVALID_DATE: 'INVALID_DATE'
@@ -30,24 +31,41 @@ function buildAccountHint(ctx) {
 
 /**
  * @param {string} expire
- * @param {{ port?: string|number, userId?: string, nickName?: string }} [ctx]
+ * @param {{ port?: string|number, userId?: string, nickName?: string, auth_active?: boolean }} [ctx]
  */
 export function checkAuthExpire(expire, ctx = {}) {
   const accountHint = buildAccountHint(ctx)
-
-  if (!expire || expire === '未授权') {
-    return {
-      valid: false,
-      reason: AUTH_REASON.NOT_AUTHORIZED,
-      message: `${accountHint}尚未写入授权信息，请在「企微管理」中右键企微ID选择「刷新授权」`
-    }
-  }
 
   if (expire === AUTH_FETCH_FAILED_EXPIRE) {
     return {
       valid: false,
       reason: AUTH_REASON.AUTH_FETCH_FAILED,
       message: `${accountHint}授权状态未能确认（网络或代理异常），请关闭 VPN/代理 或检查网络后右键「刷新授权」`
+    }
+  }
+
+  if (isAuthorizedAuthState(expire, ctx.auth_active)) {
+    return {
+      valid: true,
+      reason: AUTH_REASON.OK,
+      message: '',
+      expire
+    }
+  }
+
+  if (ctx.auth_active === false) {
+    return {
+      valid: false,
+      reason: AUTH_REASON.DEACTIVATED,
+      message: `${accountHint}授权已被管理员停用，请联系管理员在后台开启激活后右键「刷新授权」`
+    }
+  }
+
+  if (!expire || expire === '未授权') {
+    return {
+      valid: false,
+      reason: AUTH_REASON.NOT_AUTHORIZED,
+      message: `${accountHint}尚未写入授权信息，请在「企微管理」中右键企微ID选择「刷新授权」`
     }
   }
 
@@ -70,10 +88,9 @@ export function checkAuthExpire(expire, ctx = {}) {
   }
 
   return {
-    valid: true,
-    reason: AUTH_REASON.OK,
-    message: '',
-    expire
+    valid: false,
+    reason: AUTH_REASON.NOT_AUTHORIZED,
+    message: `${accountHint}授权未激活或状态未确认，请在「企微管理」中右键「刷新授权」`
   }
 }
 
@@ -104,7 +121,8 @@ export function checkAuthByPort(port, loginInfoList) {
   return checkAuthExpire(target.expire, {
     port,
     userId: target.user_id,
-    nickName: target.nick_name
+    nickName: target.nick_name,
+    auth_active: target.auth_active
   })
 }
 
@@ -131,10 +149,11 @@ export function checkAuthByUserId(userId, loginInfoList) {
   return checkAuthExpire(target.expire, {
     port: target.port,
     userId: target.user_id,
-    nickName: target.nick_name
+    nickName: target.nick_name,
+    auth_active: target.auth_active
   })
 }
 
-export function isValidAuthDatetime(dateStr) {
-  return checkAuthExpire(dateStr).valid
+export function isValidAuthDatetime(dateStr, authActive) {
+  return checkAuthExpire(dateStr, { auth_active: authActive }).valid
 }

@@ -131,9 +131,10 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, defineExpose, inject, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  isAuthFetchFailedExpire,
-  resolveExpireAfterAuthFetch
+  isAuthorizedAuthState,
+  resolveAuthFieldsAfterAuthFetch
 } from '../utils/authExpire'
+import { isValidAuthDatetime } from '../utils/authCheck'
 import { useConfigStore } from '../stores/config'
 import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
@@ -903,20 +904,6 @@ const handleRefreshAuth = async () => {
   await refreshAuthForRow(selectedRowIndex.value, row.user_id, row)
 }
 
-// 判断授权是否有效
-const validAuthDatetime = (dateStr) => {
-  try {
-    if (!dateStr || dateStr === '未授权' || isAuthFetchFailedExpire(dateStr)) {
-      return false
-    }
-    const dt = new Date(dateStr.replace(/-/g, '/'))
-    const now = new Date()
-    return now <= dt
-  } catch (error) {
-    return false
-  }
-}
-
 // 刷新授权（内部方法）
 const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
   try {
@@ -925,23 +912,34 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
       return
     }
 
-    const prevExpire =
-      loginInfo?.expire ||
-      tableData.value[rowIndex]?.expire ||
-      configStore.getLoginInfo().find((item) => item.user_id === userId)?.expire
+    const prevLoginInfo =
+      loginInfo ||
+      tableData.value[rowIndex] ||
+      configStore.getLoginInfo().find((item) => item.user_id === userId) ||
+      {}
+    const prevExpire = prevLoginInfo.expire
 
     const result = await window.electronAPI.getAuthInfo(userId)
-    const expire = resolveExpireAfterAuthFetch(result, prevExpire)
+    const { expire, auth_active: authActive } = resolveAuthFieldsAfterAuthFetch(result, {
+      expire: prevExpire,
+      auth_active: prevLoginInfo.auth_active
+    })
 
     if (result.success && result.data?.data) {
-      if (expire === '未授权') {
-        ElMessage.warning(`账号 ${userId} 在授权服务器上未查到有效授权，请确认已购买/续费后再刷新`)
+      if (!isAuthorizedAuthState(expire, authActive)) {
+        if (authActive === false) {
+          ElMessage.warning(`账号 ${userId} 授权已停用`)
+        } else if (expire === '未授权') {
+          ElMessage.warning(`账号 ${userId} 在授权服务器上未查到有效授权，请确认已购买/续费后再刷新`)
+        } else {
+          ElMessage.warning(`账号 ${userId} 授权未生效，请确认后台状态后刷新`)
+        }
       }
     } else {
       ElMessage.error(result.msg || '获取授权信息失败，请检查网络或代理设置后重试')
     }
     
-    updateTableItem(rowIndex, { expire })
+    updateTableItem(rowIndex, { expire, auth_active: authActive })
 
     const portNum = parseInt(loginInfo?.port ?? tableData.value[rowIndex]?.port, 10)
     if (
@@ -955,7 +953,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
     // 注意：这里会基于当前配置列表（已过滤掉已关闭进程）进行更新或添加
     const loginInfoList = configStore.getLoginInfo()
     const index = loginInfoList.findIndex(item => item.user_id === userId)
-    const updatedInfo = { ...loginInfo, expire }
+    const updatedInfo = { ...loginInfo, expire, auth_active: authActive }
     
     if (index >= 0) {
       // 如果已存在相同 user_id，更新数据（可能来自历史数据）
@@ -982,7 +980,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
     const openLog = config.sys?.open_log === 'true' || config.sys?.open_log === true
     const saveLog = config.sys?.save_log === 'true' || config.sys?.save_log === true
     const callback = config.sys?.callback || ''
-    const validAuth = validAuthDatetime(expire)
+    const validAuth = isValidAuthDatetime(expire, authActive)
 
     // 如果开启了日志，保存日志到文件
     if (openLog && saveLog) {
@@ -1029,18 +1027,25 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
       }
     }
   } catch (error) {
-    const prevExpire =
-      loginInfo?.expire ||
-      tableData.value[rowIndex]?.expire ||
-      configStore.getLoginInfo().find((item) => item.user_id === userId)?.expire
+    const prevLoginInfo =
+      loginInfo ||
+      tableData.value[rowIndex] ||
+      configStore.getLoginInfo().find((item) => item.user_id === userId) ||
+      {}
     ElMessage.error('获取授权信息失败: ' + (error.message || '请检查网络或代理设置后重试'))
-    const expire = resolveExpireAfterAuthFetch({ success: false }, prevExpire)
-    updateTableItem(rowIndex, { expire })
+    const { expire, auth_active: authActive } = resolveAuthFieldsAfterAuthFetch(
+      { success: false },
+      {
+        expire: prevLoginInfo.expire,
+        auth_active: prevLoginInfo.auth_active
+      }
+    )
+    updateTableItem(rowIndex, { expire, auth_active: authActive })
 
     const loginInfoList = configStore.getLoginInfo()
     const configIndex = loginInfoList.findIndex((item) => item.user_id === userId)
     if (configIndex >= 0) {
-      loginInfoList[configIndex] = { ...loginInfoList[configIndex], expire }
+      loginInfoList[configIndex] = { ...loginInfoList[configIndex], expire, auth_active: authActive }
       await configStore.updateLoginInfo(loginInfoList)
     }
   }
