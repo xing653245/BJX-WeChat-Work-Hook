@@ -59,7 +59,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getMsgTypeText } from '../utils/msgParser'
+import { formatMessageContent, formatMessageTypeLabel } from '../utils/msgParser'
 import { useConfigStore } from '../stores/config'
 
 const configStore = useConfigStore()
@@ -99,47 +99,19 @@ const formatTime = (timestamp) => {
   })
 }
 
-const getDirectionText = (data) => {
-  if (data.is_self_msg === 1) return '发送'
-  if (data.msg_id) return '接收'
-  return ''
-}
-
-const getMessageType = (data) => {
-  if (data.sys) return '系统提示'
-  if (data.type === 'api_call') return 'API调用'
-
-  const direction = getDirectionText(data)
-  const msgTypeText = getMsgTypeText(data.msg_type)
-
-  return direction ? `${direction}-${msgTypeText}` : msgTypeText
-}
-
 const addLog = (data) => {
   if (logs.value.length >= maxRows) {
     logs.value = logs.value.slice(maxRows / 2)
   }
 
   const timestamp = data.time_stamp || Math.floor(Date.now() / 1000)
-  let content
-
-  if (data.sys) {
-    content = data.content
-  } else if (Number(data.msg_type) === 2) {
-    content = typeof data.content === 'string' ? data.content : String(data.content ?? '')
-  } else {
-    try {
-      content = JSON.stringify(data.content ?? {}, null, 2)
-    } catch (e) {
-      content = String(data.content ?? '')
-    }
-  }
+  const content = formatMessageContent(data)
 
   const logEntry = {
     index: logs.value.length + 1,
     time: formatTime(timestamp),
     sender: data.self_user_id || '系统提示',
-    type: getMessageType(data),
+    type: formatMessageTypeLabel(data),
     message: content,
     rawData: data
   }

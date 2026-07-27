@@ -31,6 +31,9 @@ app.post('/msg', (req, res) => {
     
     // 打印接收到的消息（可以在这里处理你的业务逻辑）
     console.log(`[${new Date().toLocaleString('zh-CN')}] 收到回调消息:`)
+    if (data.msg_type != null) {
+      console.log(`  msg_type: ${data.msg_type}${data.msg_type_text ? ` (${data.msg_type_text})` : ''}`)
+    }
     console.log(JSON.stringify(data, null, 2))
     
     // 这里可以添加你的业务逻辑，比如：

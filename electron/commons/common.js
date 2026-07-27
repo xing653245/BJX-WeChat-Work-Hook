@@ -11,6 +11,7 @@ const { exec } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
+const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
 
 /**
  * 获取配置文件路径
@@ -212,12 +213,15 @@ async function saveLogToFile(data) {
         // 系统消息
         logContent = `[${timeStr}] [系统] ${data.content || ''}\n`
       } else {
-        // 普通消息
+        // 普通消息（含未知 msg_type）
         const sender = data.sender || data.nick_name || ''
         const userId = data.user_id || ''
-        const content = data.content || ''
-        const msgType = data.is_self_msg === 1 ? '[发出]' : '[收到]'
-        logContent = `[${timeStr}] ${msgType} ${sender}(${userId}): ${content}\n`
+        const content = formatMessageContent(data)
+        const direction = data.is_self_msg === 1 ? '[发出]' : '[收到]'
+        const typeHint = data.msg_type != null && data.msg_type !== ''
+          ? `[${getMsgTypeText(data.msg_type)}]`
+          : ''
+        logContent = `[${timeStr}] ${direction}${typeHint} ${sender}(${userId}): ${content}\n`
       }
 
       fs.appendFileSync(logFilePath, logContent, 'utf-8')

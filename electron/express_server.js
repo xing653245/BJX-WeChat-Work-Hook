@@ -7,6 +7,7 @@ const express = require('express')
 const cors = require('cors')
 const axios = require('axios')
 const { readIni, sendCallback, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
+const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
 
@@ -33,26 +34,29 @@ const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL
  * 异步处理企微消息推送（日志、回调），不阻塞对注入层的 HTTP 响应
  */
 async function processIncomingWecomMessage(data) {
-  let self_user_id = data.self_user_id || ''
+  // 不按 msg_type 过滤；未知类型同样推送日志与回调，并补充 msg_type_text 便于排查
+  const payload = enrichWecomMessage(data)
+
+  let self_user_id = payload.self_user_id || ''
   if (self_user_id === '') {
-    self_user_id = data.user_id || ''
+    self_user_id = payload.user_id || ''
   }
 
   const ini_config = readIni()
 
   const authResult = checkAuthByUserId(self_user_id, ini_config.login_info)
   const valid_auth = authResult.valid
-  const user_id = data && data.user_id ? data.user_id : 'unknown'
+  const user_id = payload && payload.user_id ? payload.user_id : 'unknown'
 
   if (ini_config.open_log && valid_auth) {
     try {
-      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', data, messageServerAxiosConfig())
+      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', payload, messageServerAxiosConfig())
     } catch (error) {
       console.error(`推送消息到Electron失败: ${error.message}`)
     }
 
     if (ini_config.save_log) {
-      saveLogToFile(data).catch(err => {
+      saveLogToFile(payload).catch(err => {
         console.error(`保存日志到文件失败: ${err.message}`)
       })
     }
@@ -60,7 +64,7 @@ async function processIncomingWecomMessage(data) {
 
   if (valid_auth) {
     if (ini_config.callback && ini_config.callback.includes('http') && ini_config.callback.includes('://')) {
-      const callbackResult = await sendCallback(ini_config.callback, data)
+      const callbackResult = await sendCallback(ini_config.callback, payload)
 
       if (ini_config.open_log && !callbackResult.success) {
         const callbackLogData = {
