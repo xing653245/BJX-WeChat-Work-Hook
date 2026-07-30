@@ -150,6 +150,7 @@ const watchAccountSwitchOnPort = (portNum) => {
       const isSameUser = prev.user_id === data.user_id
       const prevExpireForAuth = isSameUser ? prev.expire : undefined
       const prevAuthActiveForAuth = isSameUser ? prev.auth_active : undefined
+      const prevCardKeyForAuth = isSameUser ? prev.card_key || '' : ''
       const updated = {
         ...prev,
         nick_name: data.nick_name || prev.nick_name || '-',
@@ -162,7 +163,8 @@ const watchAccountSwitchOnPort = (portNum) => {
           prevExpireForAuth !== AUTH_FETCH_FAILED_EXPIRE
             ? prevExpireForAuth
             : AUTH_FETCH_FAILED_EXPIRE,
-        auth_active: prevAuthActiveForAuth === true
+        auth_active: prevAuthActiveForAuth === true,
+        card_key: prevCardKeyForAuth
       }
 
       const persistUpdatedLoginInfo = async () => {
@@ -192,10 +194,12 @@ const watchAccountSwitchOnPort = (portNum) => {
           const authResult = await window.electronAPI.getAuthInfo(data.user_id)
           const authFields = resolveAuthFieldsAfterAuthFetch(authResult, {
             expire: prevExpireForAuth,
-            auth_active: prevAuthActiveForAuth
+            auth_active: prevAuthActiveForAuth,
+            card_key: prevCardKeyForAuth
           })
           updated.expire = authFields.expire
           updated.auth_active = authFields.auth_active
+          updated.card_key = authFields.card_key || prevCardKeyForAuth
           if (authResult.success && authResult.data?.data) {
             await persistUpdatedLoginInfo()
           } else if (!authResult.success) {
@@ -210,11 +214,13 @@ const watchAccountSwitchOnPort = (portNum) => {
             { success: false },
             {
               expire: prevExpireForAuth,
-              auth_active: prevAuthActiveForAuth
+              auth_active: prevAuthActiveForAuth,
+              card_key: prevCardKeyForAuth
             }
           )
           updated.expire = authFields.expire
           updated.auth_active = authFields.auth_active
+          updated.card_key = authFields.card_key || prevCardKeyForAuth
           await persistUpdatedLoginInfo()
           ElMessage.warning('切换账号后获取授权失败，请关闭 VPN/代理 或检查网络后右键刷新授权')
         }

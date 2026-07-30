@@ -53,6 +53,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 获取授权信息
   getAuthInfo: (wxid) => ipcRenderer.invoke('get-auth-info', wxid),
+
+  // 卡密绑定 / 解绑
+  bindCard: (payload) => ipcRenderer.invoke('card-bind', payload),
+  unbindCard: (payload) => ipcRenderer.invoke('card-unbind', payload),
+  convertCardByWxid: (payload) => ipcRenderer.invoke('card-convert-by-wxid', payload),
   
   // 打开外部链接
   openExternal: (url) => ipcRenderer.invoke('open-external', url),

@@ -6,7 +6,7 @@
     <div class="page-body">
       <div class="section-card">
         <div class="section-toolbar">
-          <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、刷新授权、授权绑定/取消、设置标签等</span>
+          <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、授权管理、设置标签等</span>
         </div>
         <div class="table-wrap">
           <el-table
@@ -23,6 +23,13 @@
             <el-table-column prop="port" label="HTTP端口" width="120" align="center" />
             <el-table-column prop="pid" label="PID" width="100" align="center" />
             <el-table-column prop="expire" label="授权到期时间" width="180" align="center" />
+            <el-table-column
+              prop="card_key"
+              label="卡密"
+              min-width="200"
+              align="center"
+              show-overflow-tooltip
+            />
             <el-table-column prop="label" label="标签" align="center" min-width="120" />
           </el-table>
         </div>
@@ -100,13 +107,12 @@
     >
       <div 
         class="context-menu-item context-menu-parent"
-        @click.stop="toggleSubMenu"
+        @click.stop="toggleSubMenu('add')"
       >
         添加企微
         <span class="submenu-arrow">▶</span>
-        <!-- 子菜单 -->
         <div 
-          v-if="showSubMenu"
+          v-if="activeSubMenu === 'add'"
           class="context-submenu"
           @click.stop
         >
@@ -124,28 +130,48 @@
           </div>
         </div>
       </div>
+      <div 
+        class="context-menu-item context-menu-parent"
+        @click.stop="toggleSubMenu('auth')"
+      >
+        授权管理
+        <span class="submenu-arrow">▶</span>
+        <div 
+          v-if="activeSubMenu === 'auth'"
+          class="context-submenu"
+          @click.stop
+        >
+          <div 
+            class="context-menu-item" 
+            :class="{ disabled: !selectedRow }"
+            @click="selectedRow && handleMenuCommand('refresh-auth')"
+          >
+            刷新授权
+          </div>
+          <div 
+            class="context-menu-item" 
+            :class="{ disabled: !selectedRowAuthorized }"
+            @click="selectedRowAuthorized && handleMenuCommand('auth-bind')"
+          >
+            授权绑定
+          </div>
+          <div 
+            class="context-menu-item" 
+            :class="{ disabled: !selectedRowAuthorized }"
+            @click="selectedRowAuthorized && handleMenuCommand('auth-unbind')"
+          >
+            授权取消
+          </div>
+          <div 
+            class="context-menu-item" 
+            :class="{ disabled: !selectedRowAuthorized }"
+            @click="selectedRowAuthorized && handleMenuCommand('auth-convert')"
+          >
+            授权迁移
+          </div>
+        </div>
+      </div>
       <div class="context-menu-divider"></div>
-      <div 
-        class="context-menu-item" 
-        :class="{ disabled: !selectedRow }"
-        @click="selectedRow && handleMenuCommand('refresh-auth')"
-      >
-        刷新授权
-      </div>
-      <div 
-        class="context-menu-item" 
-        :class="{ disabled: !selectedRowAuthorized }"
-        @click="selectedRowAuthorized && handleMenuCommand('auth-bind')"
-      >
-        授权绑定
-      </div>
-      <div 
-        class="context-menu-item" 
-        :class="{ disabled: !selectedRowAuthorized }"
-        @click="selectedRowAuthorized && handleMenuCommand('auth-unbind')"
-      >
-        授权取消
-      </div>
       <div 
         class="context-menu-item" 
         :class="{ disabled: !selectedRow }"
@@ -177,10 +203,16 @@ import { ref, computed, reactive, onMounted, onUnmounted, nextTick, defineExpose
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   isAuthorizedAuthState,
+  pickCardKeyFromPayload,
   resolveAuthFieldsAfterAuthFetch
 } from '../utils/authExpire'
 import { isValidAuthDatetime } from '../utils/authCheck'
-import { bindAuthorization, unbindAuthorization } from '../services/authBindingService'
+import {
+  bindAuthorization,
+  convertAuthorizationByWxid,
+  pickCardKeyFromConvertResult,
+  unbindAuthorization
+} from '../services/authBindingService'
 import { useConfigStore } from '../stores/config'
 import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
@@ -204,7 +236,8 @@ const cardKeySubmitting = ref(false)
 const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
-const showSubMenu = ref(false)
+/** 右键子菜单：'add' | 'auth' | null */
+const activeSubMenu = ref(null)
 /** 授权绑定 / 取消请求中（按 wxid） */
 const authBindingLoading = reactive({})
 
@@ -369,6 +402,8 @@ const loadLoginInfo = async () => {
       port,
       pid: String(item.pid || '-'),
       expire: item.expire || '未授权',
+      auth_active: item.auth_active === true,
+      card_key: item.card_key || '',
       label: item.label || ''
     })
   }
@@ -515,6 +550,8 @@ const addTableItem = (item) => {
     port: String(item.port || '-'),
     pid: String(item.pid || '-'),
     expire: item.expire || '未授权',
+    auth_active: item.auth_active === true,
+    card_key: item.card_key || '',
     label: item.label || ''
   }
   tableData.value.push(newItem)
@@ -549,7 +586,7 @@ const handleContextMenu = (row, column, event) => {
   
   // 显示菜单，重置子菜单状态
   contextMenuVisible.value = true
-  showSubMenu.value = false
+  activeSubMenu.value = null
 }
 
 // 右键菜单处理（表格空白区域）
@@ -577,19 +614,18 @@ const handleTableBlankContextMenu = (event) => {
   
   // 显示菜单（只显示"添加企微"选项，其他项会被禁用），重置子菜单状态
   contextMenuVisible.value = true
-  showSubMenu.value = false
+  activeSubMenu.value = null
 }
 
-// 切换子菜单显示状态
-const toggleSubMenu = () => {
-  showSubMenu.value = !showSubMenu.value
+// 切换子菜单显示状态（同一时刻只展开一个）
+const toggleSubMenu = (key) => {
+  activeSubMenu.value = activeSubMenu.value === key ? null : key
 }
 
 // 菜单命令处理
 const handleMenuCommand = async (command) => {
-  // 关闭菜单和子菜单
   contextMenuVisible.value = false
-  showSubMenu.value = false
+  activeSubMenu.value = null
   
   switch (command) {
     case 'add-random':
@@ -610,6 +646,9 @@ const handleMenuCommand = async (command) => {
     case 'auth-unbind':
       await handleAuthUnbind()
       break
+    case 'auth-convert':
+      await handleAuthConvert()
+      break
     case 'copy-id':
       handleCopyId()
       break
@@ -629,13 +668,10 @@ const handleMenuCommand = async (command) => {
 const handleClickOutside = (event) => {
   if (contextMenuVisible.value) {
     const contextMenu = document.querySelector('.custom-context-menu')
-    const subMenu = document.querySelector('.context-submenu')
-    // 如果点击不在菜单内（包括子菜单），关闭菜单和子菜单
     const isClickInMenu = contextMenu && contextMenu.contains(event.target)
-    const isClickInSubMenu = subMenu && subMenu.contains(event.target)
-    if (!isClickInMenu && !isClickInSubMenu) {
+    if (!isClickInMenu) {
       contextMenuVisible.value = false
-      showSubMenu.value = false
+      activeSubMenu.value = null
     }
   }
 }
@@ -1036,7 +1072,12 @@ const submitCardKeyDialog = async () => {
     }
     showCardKeyDialog.value = false
     ElMessage.success(result.msg || `${actionLabel}成功`)
-    await refreshAuthForRow(selectedRowIndex.value, wxid, row)
+
+    const nextCardKey = mode === 'bind' ? cardKey : ''
+    const rowIndex = selectedRowIndex.value
+    updateTableItem(rowIndex, { card_key: nextCardKey })
+    await persistRowCardKey(wxid, row, nextCardKey)
+    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: nextCardKey })
   } catch (error) {
     console.error(`[${actionLabel}] 失败:`, error)
     ElMessage.error(error.message || `${actionLabel}失败`)
@@ -1046,12 +1087,76 @@ const submitCardKeyDialog = async () => {
   }
 }
 
+/** 将卡密写入配置 login_info，便于重启后仍显示 */
+async function persistRowCardKey(wxid, row, cardKey) {
+  const loginInfoList = configStore.getLoginInfo()
+  const index = loginInfoList.findIndex((item) => item.user_id === wxid)
+  const base = index >= 0 ? loginInfoList[index] : { ...row, user_id: wxid }
+  const updated = { ...base, card_key: cardKey || '' }
+  if (index >= 0) {
+    loginInfoList[index] = updated
+  } else {
+    loginInfoList.push(updated)
+  }
+  await configStore.updateLoginInfo(loginInfoList)
+}
+
 const handleAuthBind = () => {
   openCardKeyDialog('bind')
 }
 
 const handleAuthUnbind = () => {
   openCardKeyDialog('unbind')
+}
+
+const handleAuthConvert = async () => {
+  const row = selectedRow.value
+  if (!ensureRowAuthorizedForAction(row, '执行授权迁移')) return
+
+  const wxid = row.user_id
+  if (authBindingLoading[wxid]) return
+
+  const nick = row.nick_name || wxid
+  try {
+    await ElMessageBox.confirm(
+      `将为账号 ${nick}（${wxid}）生成新卡密：新卡密继承当前到期时间，当前授权将立即过期。是否继续？`,
+      '授权迁移',
+      { type: 'warning', confirmButtonText: '确定迁移', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+
+  authBindingLoading[wxid] = true
+  try {
+    const result = await convertAuthorizationByWxid({ wxid })
+    if (!result.success) {
+      ElMessage.warning(result.msg || '授权迁移失败')
+      return
+    }
+
+    const cardKey = pickCardKeyFromConvertResult(result.data)
+    if (cardKey) {
+      ElMessage.success({
+        message: `授权迁移成功，新卡密：${cardKey}`,
+        duration: 8000,
+        showClose: true
+      })
+    } else {
+      ElMessage.success(result.msg || '授权迁移成功')
+    }
+
+    // 原 wxid 授权已过期，列表中清空卡密
+    const rowIndex = selectedRowIndex.value
+    updateTableItem(rowIndex, { card_key: '' })
+    await persistRowCardKey(wxid, row, '')
+    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: '' })
+  } catch (error) {
+    console.error('[授权迁移] 失败:', error)
+    ElMessage.error(error.message || '授权迁移失败')
+  } finally {
+    delete authBindingLoading[wxid]
+  }
 }
 
 // 刷新授权（内部方法）
@@ -1070,10 +1175,17 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
     const prevExpire = prevLoginInfo.expire
 
     const result = await window.electronAPI.getAuthInfo(userId)
-    const { expire, auth_active: authActive } = resolveAuthFieldsAfterAuthFetch(result, {
-      expire: prevExpire,
-      auth_active: prevLoginInfo.auth_active
-    })
+    const { expire, auth_active: authActive, card_key: resolvedCardKey } =
+      resolveAuthFieldsAfterAuthFetch(result, {
+        expire: prevExpire,
+        auth_active: prevLoginInfo.auth_active,
+        card_key: prevLoginInfo.card_key
+      })
+    const cardKey =
+      resolvedCardKey ||
+      pickCardKeyFromPayload(result?.data) ||
+      (typeof prevLoginInfo.card_key === 'string' ? prevLoginInfo.card_key : '') ||
+      ''
 
     if (result.success && result.data?.data) {
       if (!isAuthorizedAuthState(expire, authActive)) {
@@ -1089,7 +1201,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
       ElMessage.error(result.msg || '获取授权信息失败，请检查网络或代理设置后重试')
     }
     
-    updateTableItem(rowIndex, { expire, auth_active: authActive })
+    updateTableItem(rowIndex, { expire, auth_active: authActive, card_key: cardKey })
 
     const portNum = parseInt(loginInfo?.port ?? tableData.value[rowIndex]?.port, 10)
     if (
@@ -1103,7 +1215,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
     // 注意：这里会基于当前配置列表（已过滤掉已关闭进程）进行更新或添加
     const loginInfoList = configStore.getLoginInfo()
     const index = loginInfoList.findIndex(item => item.user_id === userId)
-    const updatedInfo = { ...loginInfo, expire, auth_active: authActive }
+    const updatedInfo = { ...loginInfo, expire, auth_active: authActive, card_key: cardKey }
     
     if (index >= 0) {
       // 如果已存在相同 user_id，更新数据（可能来自历史数据）
@@ -1183,19 +1295,26 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
       configStore.getLoginInfo().find((item) => item.user_id === userId) ||
       {}
     ElMessage.error('获取授权信息失败: ' + (error.message || '请检查网络或代理设置后重试'))
-    const { expire, auth_active: authActive } = resolveAuthFieldsAfterAuthFetch(
-      { success: false },
-      {
-        expire: prevLoginInfo.expire,
-        auth_active: prevLoginInfo.auth_active
-      }
-    )
-    updateTableItem(rowIndex, { expire, auth_active: authActive })
+    const { expire, auth_active: authActive, card_key: cardKey } =
+      resolveAuthFieldsAfterAuthFetch(
+        { success: false },
+        {
+          expire: prevLoginInfo.expire,
+          auth_active: prevLoginInfo.auth_active,
+          card_key: prevLoginInfo.card_key
+        }
+      )
+    updateTableItem(rowIndex, { expire, auth_active: authActive, card_key: cardKey || '' })
 
     const loginInfoList = configStore.getLoginInfo()
     const configIndex = loginInfoList.findIndex((item) => item.user_id === userId)
     if (configIndex >= 0) {
-      loginInfoList[configIndex] = { ...loginInfoList[configIndex], expire, auth_active: authActive }
+      loginInfoList[configIndex] = {
+        ...loginInfoList[configIndex],
+        expire,
+        auth_active: authActive,
+        card_key: cardKey || loginInfoList[configIndex].card_key || ''
+      }
       await configStore.updateLoginInfo(loginInfoList)
     }
   }

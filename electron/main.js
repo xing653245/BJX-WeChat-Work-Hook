@@ -1534,16 +1534,17 @@ ipcMain.handle('reset-crash-recovery-protection', () => {
 
 // 获取授权信息
 const { formatAuthFetchError } = require('./commons/authFetchError')
+const { getPolarBearBaseUrl } = require('./configs/polarBearBackend')
+const { bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
 
 ipcMain.handle('get-auth-info', async (event, wxid) => {
-  const backendIp = '8.137.76.99'
-  // const backendIp = '192.168.1.18'
-  const authUrl = `http://${backendIp}:5516/polarBear/getAuthInfo/${wxid}`
+  const authUrl = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo/?wxid=${encodeURIComponent(wxid)}`
   try {
-    const response = await axios.get(authUrl, { timeout: 10000 })
+    const response = await axios.get(authUrl, { timeout: 10000 });
     const result = { success: true, data: response.data }
+
+    console.log("result授权返回", JSON.stringify(result));
     
-    console.log("result授权返回", result);
     
     // 读取配置，检查是否开启日志
     const config = readConfig()
@@ -1616,6 +1617,12 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
     return result
   }
 })
+
+ipcMain.handle('card-bind', async (_event, payload) => bindCard(payload))
+
+ipcMain.handle('card-unbind', async (_event, payload) => unbindCard(payload))
+
+ipcMain.handle('card-convert-by-wxid', async (_event, payload) => convertCardByWxid(payload))
 
 // 打开外部链接
 ipcMain.handle('open-external', async (event, url) => {

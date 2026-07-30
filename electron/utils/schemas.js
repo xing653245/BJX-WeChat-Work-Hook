@@ -24,6 +24,7 @@ class LoginInfo {
     this.pid = data.pid || ''
     this.expire = data.expire || '未授权'
     this.auth_active = data.auth_active === true
+    this.card_key = data.card_key || ''
     this.label = data.label || ''
   }
 
@@ -48,6 +49,7 @@ class LoginInfo {
       pid: this.pid,
       expire: this.expire,
       auth_active: this.auth_active,
+      card_key: this.card_key,
       label: this.label
     }
   }
