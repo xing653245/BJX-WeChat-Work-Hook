@@ -6,7 +6,7 @@
     <div class="page-body">
       <div class="section-card">
         <div class="section-toolbar">
-          <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、刷新授权、设置标签等</span>
+          <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、刷新授权、授权绑定/取消、设置标签等</span>
         </div>
         <div class="table-wrap">
           <el-table
@@ -58,6 +58,37 @@
       </template>
     </el-dialog>
 
+    <!-- 授权绑定 / 取消：卡密输入 -->
+    <el-dialog
+      v-model="showCardKeyDialog"
+      :title="cardKeyDialogMode === 'bind' ? '授权绑定' : '授权取消'"
+      width="420px"
+      align-center
+      destroy-on-close
+      @closed="cardKeyValue = ''"
+    >
+      <div v-if="cardKeyDialogRow" class="card-key-dialog-body">
+        <p class="card-key-account">
+          账号：{{ cardKeyDialogRow.nick_name || '—' }}（{{ cardKeyDialogRow.user_id }}）
+        </p>
+        <el-input
+          v-model="cardKeyValue"
+          type="password"
+          show-password
+          maxlength="128"
+          clearable
+          placeholder="请输入卡密"
+          @keyup.enter="submitCardKeyDialog"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="showCardKeyDialog = false">取消</el-button>
+        <el-button type="primary" :loading="cardKeySubmitting" @click="submitCardKeyDialog">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 自定义右键菜单 -->
     <div 
       v-if="contextMenuVisible"
@@ -103,6 +134,20 @@
       </div>
       <div 
         class="context-menu-item" 
+        :class="{ disabled: !selectedRowAuthorized }"
+        @click="selectedRowAuthorized && handleMenuCommand('auth-bind')"
+      >
+        授权绑定
+      </div>
+      <div 
+        class="context-menu-item" 
+        :class="{ disabled: !selectedRowAuthorized }"
+        @click="selectedRowAuthorized && handleMenuCommand('auth-unbind')"
+      >
+        授权取消
+      </div>
+      <div 
+        class="context-menu-item" 
         :class="{ disabled: !selectedRow }"
         @click="selectedRow && handleMenuCommand('copy-id')"
       >
@@ -128,13 +173,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, defineExpose, inject, watch } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, nextTick, defineExpose, inject, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   isAuthorizedAuthState,
   resolveAuthFieldsAfterAuthFetch
 } from '../utils/authExpire'
 import { isValidAuthDatetime } from '../utils/authCheck'
+import { bindAuthorization, unbindAuthorization } from '../services/authBindingService'
 import { useConfigStore } from '../stores/config'
 import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
@@ -150,10 +196,27 @@ const showAddDialog = ref(false)
 const customPort = ref('')
 const showTagDialog = ref(false)
 const tagValue = ref('')
+const showCardKeyDialog = ref(false)
+const cardKeyDialogMode = ref('bind')
+const cardKeyDialogRow = ref(null)
+const cardKeyValue = ref('')
+const cardKeySubmitting = ref(false)
 const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const showSubMenu = ref(false)
+/** 授权绑定 / 取消请求中（按 wxid） */
+const authBindingLoading = reactive({})
+
+const isRowAuthorized = (row) => {
+  if (!row?.user_id || row.user_id === '-') return false
+  return isAuthorizedAuthState(row.expire, row.auth_active)
+}
+
+const selectedRowAuthorized = computed(() =>
+  selectedRow.value ? isRowAuthorized(selectedRow.value) : false
+)
+
 /** 避免同一端口重复启动登录轮询 */
 const loginPollingPorts = new Set()
 /** 用户主动添加、尚未写入配置的端口（用于恢复表格） */
@@ -541,6 +604,12 @@ const handleMenuCommand = async (command) => {
     case 'refresh-auth':
       await handleRefreshAuth()
       break
+    case 'auth-bind':
+      await handleAuthBind()
+      break
+    case 'auth-unbind':
+      await handleAuthUnbind()
+      break
     case 'copy-id':
       handleCopyId()
       break
@@ -902,6 +971,87 @@ const handleRefreshAuth = async () => {
   }
 
   await refreshAuthForRow(selectedRowIndex.value, row.user_id, row)
+}
+
+function ensureRowAuthorizedForAction(row, actionLabel) {
+  if (!row) {
+    ElMessage.warning('请先选择一行企微')
+    return false
+  }
+  if (!row.user_id || row.user_id === '-') {
+    ElMessage.warning('该行数据无效')
+    return false
+  }
+  if (!isRowAuthorized(row)) {
+    ElMessage.warning(`当前账号未授权或授权已失效，无法${actionLabel}，请先刷新授权或购买/续费`)
+    return false
+  }
+  return true
+}
+
+function buildAuthBindingPayload(row, cardKey) {
+  return {
+    wxid: row.user_id,
+    port: row.port,
+    nickName: row.nick_name,
+    cardKey: cardKey.trim()
+  }
+}
+
+const openCardKeyDialog = (mode) => {
+  const row = selectedRow.value
+  const actionLabel = mode === 'bind' ? '执行授权绑定' : '执行授权取消'
+  if (!ensureRowAuthorizedForAction(row, actionLabel)) return
+
+  cardKeyDialogMode.value = mode
+  cardKeyDialogRow.value = row
+  cardKeyValue.value = ''
+  showCardKeyDialog.value = true
+}
+
+const submitCardKeyDialog = async () => {
+  const row = cardKeyDialogRow.value
+  const mode = cardKeyDialogMode.value
+  const cardKey = cardKeyValue.value.trim()
+
+  if (!row) return
+  if (!cardKey) {
+    ElMessage.warning('请输入卡密')
+    return
+  }
+
+  const wxid = row.user_id
+  if (authBindingLoading[wxid] || cardKeySubmitting.value) return
+
+  const actionLabel = mode === 'bind' ? '授权绑定' : '授权取消'
+  cardKeySubmitting.value = true
+  authBindingLoading[wxid] = true
+  try {
+    const payload = buildAuthBindingPayload(row, cardKey)
+    const result =
+      mode === 'bind' ? await bindAuthorization(payload) : await unbindAuthorization(payload)
+    if (!result.success) {
+      ElMessage.warning(result.msg || `${actionLabel}失败`)
+      return
+    }
+    showCardKeyDialog.value = false
+    ElMessage.success(result.msg || `${actionLabel}成功`)
+    await refreshAuthForRow(selectedRowIndex.value, wxid, row)
+  } catch (error) {
+    console.error(`[${actionLabel}] 失败:`, error)
+    ElMessage.error(error.message || `${actionLabel}失败`)
+  } finally {
+    cardKeySubmitting.value = false
+    delete authBindingLoading[wxid]
+  }
+}
+
+const handleAuthBind = () => {
+  openCardKeyDialog('bind')
+}
+
+const handleAuthUnbind = () => {
+  openCardKeyDialog('unbind')
 }
 
 // 刷新授权（内部方法）
@@ -1411,6 +1561,20 @@ defineExpose({
   padding: 6px 0;
   min-width: 128px;
   z-index: 10000;
+}
+
+.card-key-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-key-account {
+  margin: 0;
+  font-size: 13px;
+  color: var(--sp-muted);
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 @media (max-width: 640px) {
