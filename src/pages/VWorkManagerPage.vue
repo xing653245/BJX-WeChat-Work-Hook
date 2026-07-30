@@ -150,15 +150,15 @@
           </div>
           <div 
             class="context-menu-item" 
-            :class="{ disabled: !selectedRowAuthorized }"
-            @click="selectedRowAuthorized && handleMenuCommand('auth-bind')"
+            :class="{ disabled: !selectedRow }"
+            @click="selectedRow && handleMenuCommand('auth-bind')"
           >
             授权绑定
           </div>
           <div 
             class="context-menu-item" 
-            :class="{ disabled: !selectedRowAuthorized }"
-            @click="selectedRowAuthorized && handleMenuCommand('auth-unbind')"
+            :class="{ disabled: !selectedRow }"
+            @click="selectedRow && handleMenuCommand('auth-unbind')"
           >
             授权取消
           </div>
@@ -1036,8 +1036,14 @@ function buildAuthBindingPayload(row, cardKey) {
 
 const openCardKeyDialog = (mode) => {
   const row = selectedRow.value
-  const actionLabel = mode === 'bind' ? '执行授权绑定' : '执行授权取消'
-  if (!ensureRowAuthorizedForAction(row, actionLabel)) return
+  if (!row) {
+    ElMessage.warning('请先选择一行企微')
+    return
+  }
+  if (!row.user_id || row.user_id === '-') {
+    ElMessage.warning('该行数据无效')
+    return
+  }
 
   cardKeyDialogMode.value = mode
   cardKeyDialogRow.value = row
@@ -1077,7 +1083,10 @@ const submitCardKeyDialog = async () => {
     const rowIndex = selectedRowIndex.value
     updateTableItem(rowIndex, { card_key: nextCardKey })
     await persistRowCardKey(wxid, row, nextCardKey)
-    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: nextCardKey })
+    // 解绑后必然无有效授权，刷新列表时不再弹出「未查到有效授权」提示
+    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: nextCardKey }, {
+      quiet: mode === 'unbind'
+    })
   } catch (error) {
     console.error(`[${actionLabel}] 失败:`, error)
     ElMessage.error(error.message || `${actionLabel}失败`)
@@ -1146,11 +1155,11 @@ const handleAuthConvert = async () => {
       ElMessage.success(result.msg || '授权迁移成功')
     }
 
-    // 原 wxid 授权已过期，列表中清空卡密
+    // 原 wxid 授权已过期，列表中清空卡密；刷新时预期为未授权，静默更新
     const rowIndex = selectedRowIndex.value
     updateTableItem(rowIndex, { card_key: '' })
     await persistRowCardKey(wxid, row, '')
-    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: '' })
+    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: '' }, { quiet: true })
   } catch (error) {
     console.error('[授权迁移] 失败:', error)
     ElMessage.error(error.message || '授权迁移失败')
@@ -1160,7 +1169,9 @@ const handleAuthConvert = async () => {
 }
 
 // 刷新授权（内部方法）
-const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
+// options.quiet：解绑/迁移等预期变为未授权的场景，只更新列表不弹「未授权」提示
+const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
+  const quiet = options.quiet === true
   try {
     if (!window.electronAPI) {
       ElMessage.error('Electron API不可用')
@@ -1188,7 +1199,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
       ''
 
     if (result.success && result.data?.data) {
-      if (!isAuthorizedAuthState(expire, authActive)) {
+      if (!quiet && !isAuthorizedAuthState(expire, authActive)) {
         if (authActive === false) {
           ElMessage.warning(`账号 ${userId} 授权已停用`)
         } else if (expire === '未授权') {
@@ -1197,7 +1208,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo) => {
           ElMessage.warning(`账号 ${userId} 授权未生效，请确认后台状态后刷新`)
         }
       }
-    } else {
+    } else if (!quiet) {
       ElMessage.error(result.msg || '获取授权信息失败，请检查网络或代理设置后重试')
     }
     
