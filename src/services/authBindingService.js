@@ -88,24 +88,28 @@ export async function convertAuthorizationByWxid(payload) {
   return window.electronAPI.convertCardByWxid({ wxid })
 }
 
+/**
+ * 从迁移响应中提取 card_key。
+ * 适配：`{ card: { card_key } }`、`{ data: { card: { card_key } } }`、
+ * `{ success, code, data: { card: { card_key } } }` 等嵌套。
+ */
 function pickCardKeyFromConvertResult(data) {
   if (!data || typeof data !== 'object') return ''
 
   const readKey = (value) =>
     typeof value === 'string' && value.trim() ? value.trim() : ''
 
-  const fromCard = readKey(data.card?.card_key)
-  if (fromCard) return fromCard
-
-  const fromTop = readKey(data.card_key)
-  if (fromTop) return fromTop
-
-  const inner = data.data
-  if (inner && typeof inner === 'object') {
-    const fromInnerCard = readKey(inner.card?.card_key)
-    if (fromInnerCard) return fromInnerCard
-    const fromInner = readKey(inner.card_key)
-    if (fromInner) return fromInner
+  let cur = data
+  for (let i = 0; i < 4 && cur && typeof cur === 'object'; i++) {
+    const fromCard = readKey(cur.card?.card_key)
+    if (fromCard) return fromCard
+    const fromTop = readKey(cur.card_key)
+    if (fromTop) return fromTop
+    if (cur.data && typeof cur.data === 'object') {
+      cur = cur.data
+      continue
+    }
+    break
   }
 
   return ''

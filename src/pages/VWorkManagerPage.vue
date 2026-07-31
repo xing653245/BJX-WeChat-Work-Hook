@@ -1097,11 +1097,11 @@ const submitCardKeyDialog = async () => {
 }
 
 /** 将卡密写入配置 login_info，便于重启后仍显示 */
-async function persistRowCardKey(wxid, row, cardKey) {
+async function persistRowCardKey(wxid, row, cardKey, extra = {}) {
   const loginInfoList = configStore.getLoginInfo()
   const index = loginInfoList.findIndex((item) => item.user_id === wxid)
   const base = index >= 0 ? loginInfoList[index] : { ...row, user_id: wxid }
-  const updated = { ...base, card_key: cardKey || '' }
+  const updated = { ...base, ...extra, card_key: cardKey || '' }
   if (index >= 0) {
     loginInfoList[index] = updated
   } else {
@@ -1139,27 +1139,41 @@ const handleAuthConvert = async () => {
   authBindingLoading[wxid] = true
   try {
     const result = await convertAuthorizationByWxid({ wxid })
-    if (!result.success) {
-      ElMessage.warning(result.msg || '授权迁移失败')
+    const cardKey =
+      pickCardKeyFromConvertResult(result?.data) ||
+      pickCardKeyFromConvertResult(result)
+
+    if (!result?.success || !cardKey) {
+      ElMessage.error(result?.msg || '授权迁移失败')
       return
     }
 
-    const cardKey = pickCardKeyFromConvertResult(result.data)
-    if (cardKey) {
-      ElMessage.success({
-        message: `授权迁移成功，新卡密：${cardKey}`,
-        duration: 8000,
-        showClose: true
-      })
-    } else {
-      ElMessage.success(result.msg || '授权迁移成功')
+    // 迁移成功后，用响应卡密自动解绑当前 wxid，使新卡密可再次绑定
+    const unbindResult = await unbindAuthorization(buildAuthBindingPayload(row, cardKey))
+    if (!unbindResult?.success) {
+      ElMessage.warning(unbindResult?.msg || '迁移成功，但自动解绑失败，请手动授权取消')
     }
 
-    // 原 wxid 授权已过期，列表中清空卡密；刷新时预期为未授权，静默更新
+    try {
+      await navigator.clipboard.writeText(cardKey)
+    } catch {
+      // 剪贴板不可用时仍展示卡密
+    }
+    await ElMessageBox.alert(
+      `新卡密：\n${cardKey}\n\n已尝试复制到剪贴板。请立即妥善保存，关闭后将无法再次查看。`,
+      '授权迁移成功',
+      {
+        type: 'success',
+        confirmButtonText: '我已保存'
+      }
+    )
+
+    // 原 wxid 授权已解绑，列表先置为未授权；再静默刷新与服务器对齐
     const rowIndex = selectedRowIndex.value
-    updateTableItem(rowIndex, { card_key: '' })
-    await persistRowCardKey(wxid, row, '')
-    await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: '' }, { quiet: true })
+    const cleared = { expire: '未授权', auth_active: false, card_key: '' }
+    updateTableItem(rowIndex, cleared)
+    await persistRowCardKey(wxid, row, '', cleared)
+    await refreshAuthForRow(rowIndex, wxid, { ...row, ...cleared }, { quiet: true })
   } catch (error) {
     console.error('[授权迁移] 失败:', error)
     ElMessage.error(error.message || '授权迁移失败')

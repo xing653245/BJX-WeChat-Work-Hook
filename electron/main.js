@@ -1542,9 +1542,6 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
   try {
     const response = await axios.get(authUrl, { timeout: 10000 });
     const result = { success: true, data: response.data }
-
-    console.log("result授权返回", JSON.stringify(result));
-    
     
     // 读取配置，检查是否开启日志
     const config = readConfig()
@@ -1554,17 +1551,15 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
     // 如果开启了日志，写入运行日志
     if (openLog && saveLog) {
       let expire = '未授权'
-      let activeNote = ''
       if (result.data && result.data.data) {
         const authData = result.data.data
         const auth_active = authData.active === true
         const rawExpire = authData.expire || '未授权'
         expire = isAuthorizedAuthState(rawExpire, auth_active) ? rawExpire : '未授权'
-        activeNote = `, 激活状态: ${auth_active ? '开' : '关'}`
       }
       
       const logData = {
-        content: `刷新授权: ${wxid}, 到期时间: ${expire}${activeNote}`,
+        content: `刷新授权: ${wxid}, 到期时间: ${expire}`,
         sys: true,
         time_stamp: Math.floor(Date.now() / 1000)
       }

@@ -17,6 +17,30 @@ function pickBackendMessage(data) {
   return ''
 }
 
+function unwrapPolarBusinessData(data) {
+  let cur = data
+  // 兼容 { success, code, data: { ...业务... } } 多包一层
+  for (let i = 0; i < 3; i++) {
+    if (!cur || typeof cur !== 'object' || Array.isArray(cur)) break
+    const nested = cur.data
+    if (
+      nested &&
+      typeof nested === 'object' &&
+      !Array.isArray(nested) &&
+      (cur.success === true || cur.code === 0 || cur.code === 200)
+    ) {
+      cur = nested
+      continue
+    }
+    break
+  }
+  return cur
+}
+
+function isPolarSuccessCode(code) {
+  return code === 0 || code === 200 || code === '0' || code === '200'
+}
+
 function normalizePolarBearResponse(responseData, fallbackSuccessMsg, fallbackFailMsg) {
   const backendMsg = pickBackendMessage(responseData)
   if (responseData && typeof responseData === 'object') {
@@ -27,21 +51,27 @@ function normalizePolarBearResponse(responseData, fallbackSuccessMsg, fallbackFa
         data: responseData.data ?? null
       }
     }
-    if (
-      responseData.success === true ||
-      responseData.code === 0 ||
-      responseData.code === 200
-    ) {
+    const code = responseData.code
+    const hasCode = code !== undefined && code !== null && code !== ''
+    // 仅 success===true 或 code 为 0/200 视为成功；其余一律失败
+    if (responseData.success === true || isPolarSuccessCode(code)) {
       return {
         success: true,
         msg: backendMsg || fallbackSuccessMsg,
-        data: responseData.data ?? responseData
+        data: unwrapPolarBusinessData(responseData.data ?? responseData)
+      }
+    }
+    if (hasCode || backendMsg) {
+      return {
+        success: false,
+        msg: backendMsg || fallbackFailMsg,
+        data: responseData.data ?? null
       }
     }
   }
   return {
-    success: true,
-    msg: backendMsg || fallbackSuccessMsg,
+    success: false,
+    msg: backendMsg || fallbackFailMsg,
     data: responseData ?? null
   }
 }
@@ -99,7 +129,27 @@ async function convertCardByWxid(payload) {
 
   try {
     const data = await postPolarBear('/polarBear/card/convertByWxid', { wxid })
-    return normalizePolarBearResponse(data, '授权迁移成功', '授权迁移失败')
+    const result = normalizePolarBearResponse(data, '授权迁移成功', '授权迁移失败')
+    // 迁移成功必须能拿到新卡密，否则按失败处理，避免把「无授权」文案当成成功
+    if (result.success) {
+      const business = result.data
+      const cardKey =
+        (business &&
+          typeof business === 'object' &&
+          (business.card?.card_key || business.card_key)) ||
+        ''
+      const key = typeof cardKey === 'string' ? cardKey.trim() : ''
+      if (!key) {
+        return {
+          success: false,
+          msg: result.msg && result.msg !== '授权迁移成功'
+            ? result.msg
+            : '授权迁移未返回新卡密',
+          data: result.data
+        }
+      }
+    }
+    return result
   } catch (error) {
     return { success: false, msg: formatAuthFetchError(error) }
   }
