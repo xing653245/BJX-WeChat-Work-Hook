@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "2.0.14",
+  "version": "2.0.15",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
