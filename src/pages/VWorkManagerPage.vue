@@ -157,8 +157,8 @@
           </div>
           <div 
             class="context-menu-item" 
-            :class="{ disabled: !selectedRow }"
-            @click="selectedRow && handleMenuCommand('auth-unbind')"
+            :class="{ disabled: !selectedRowHasCardKey }"
+            @click="selectedRowHasCardKey && handleMenuCommand('auth-unbind')"
           >
             授权取消
           </div>
@@ -1034,6 +1034,19 @@ function buildAuthBindingPayload(row, cardKey) {
   }
 }
 
+function pickBoundCardKey(row) {
+  const fromRow = typeof row?.card_key === 'string' ? row.card_key.trim() : ''
+  if (fromRow) return fromRow
+  const wxid = row?.user_id
+  if (!wxid || wxid === '-') return ''
+  const fromConfig = configStore.getLoginInfo().find((item) => item.user_id === wxid)?.card_key
+  return typeof fromConfig === 'string' ? fromConfig.trim() : ''
+}
+
+const selectedRowHasCardKey = computed(() =>
+  selectedRow.value ? Boolean(pickBoundCardKey(selectedRow.value)) : false
+)
+
 const openCardKeyDialog = (mode) => {
   const row = selectedRow.value
   if (!row) {
@@ -1051,35 +1064,35 @@ const openCardKeyDialog = (mode) => {
   showCardKeyDialog.value = true
 }
 
-const submitCardKeyDialog = async () => {
-  const row = cardKeyDialogRow.value
-  const mode = cardKeyDialogMode.value
-  const cardKey = cardKeyValue.value.trim()
-
-  if (!row) return
-  if (!cardKey) {
+/** 绑定 / 取消授权（mode: bind | unbind） */
+const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
+  const key = String(cardKey || '').trim()
+  if (!row || !key) {
     ElMessage.warning('请输入卡密')
-    return
+    return false
   }
 
   const wxid = row.user_id
-  if (authBindingLoading[wxid] || cardKeySubmitting.value) return
+  if (authBindingLoading[wxid] || cardKeySubmitting.value) return false
 
   const actionLabel = mode === 'bind' ? '授权绑定' : '授权取消'
+  const closeDialog = options.closeDialog !== false
   cardKeySubmitting.value = true
   authBindingLoading[wxid] = true
   try {
-    const payload = buildAuthBindingPayload(row, cardKey)
+    const payload = buildAuthBindingPayload(row, key)
     const result =
       mode === 'bind' ? await bindAuthorization(payload) : await unbindAuthorization(payload)
     if (!result.success) {
       ElMessage.warning(result.msg || `${actionLabel}失败`)
-      return
+      return false
     }
-    showCardKeyDialog.value = false
+    if (closeDialog) {
+      showCardKeyDialog.value = false
+    }
     ElMessage.success(result.msg || `${actionLabel}成功`)
 
-    const nextCardKey = mode === 'bind' ? cardKey : ''
+    const nextCardKey = mode === 'bind' ? key : ''
     const rowIndex = selectedRowIndex.value
     updateTableItem(rowIndex, { card_key: nextCardKey })
     await persistRowCardKey(wxid, row, nextCardKey)
@@ -1087,13 +1100,22 @@ const submitCardKeyDialog = async () => {
     await refreshAuthForRow(rowIndex, wxid, { ...row, card_key: nextCardKey }, {
       quiet: mode === 'unbind'
     })
+    return true
   } catch (error) {
     console.error(`[${actionLabel}] 失败:`, error)
     ElMessage.error(error.message || `${actionLabel}失败`)
+    return false
   } finally {
     cardKeySubmitting.value = false
     delete authBindingLoading[wxid]
   }
+}
+
+const submitCardKeyDialog = async () => {
+  const row = cardKeyDialogRow.value
+  const mode = cardKeyDialogMode.value
+  if (!row) return
+  await runAuthBindingAction(row, mode, cardKeyValue.value)
 }
 
 /** 将卡密写入配置 login_info，便于重启后仍显示 */
@@ -1114,8 +1136,25 @@ const handleAuthBind = () => {
   openCardKeyDialog('bind')
 }
 
-const handleAuthUnbind = () => {
-  openCardKeyDialog('unbind')
+const handleAuthUnbind = async () => {
+  const row = selectedRow.value
+  if (!row) {
+    ElMessage.warning('请先选择一行企微')
+    return
+  }
+  if (!row.user_id || row.user_id === '-') {
+    ElMessage.warning('该行数据无效')
+    return
+  }
+
+  const boundCardKey = pickBoundCardKey(row)
+  if (!boundCardKey) {
+    ElMessage.warning('当前账号未绑定卡密，无法授权取消')
+    return
+  }
+
+  // 已绑定卡密：直接取消，无需再输入
+  await runAuthBindingAction(row, 'unbind', boundCardKey, { closeDialog: false })
 }
 
 const handleAuthConvert = async () => {
