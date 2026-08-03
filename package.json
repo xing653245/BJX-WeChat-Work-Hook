@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "2.0.15",
+  "version": "2.1.1",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -105,8 +105,8 @@
       },
       {
         "provider": "github",
-        "owner": "curatorOVO",
-        "repo": "vwork_electron"
+        "owner": "xing653245",
+        "repo": "WeChat-Work-Hook"
       }
     ]
   }

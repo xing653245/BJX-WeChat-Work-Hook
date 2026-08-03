@@ -3,13 +3,13 @@
  *
  * Gitee：generic 源，URL 来自 package.json build.publish
  * GitHub：与 v1.1.4 一致，使用 electron-updater 的 github provider
- *         owner: curatorOVO, repo: vwork_electron
+ *         owner: xing653245, repo: WeChat-Work-Hook
  */
 const pkg = require('../../package.json')
 
 const DEFAULT_GITEE_URL = 'https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/'
-const DEFAULT_GITHUB_OWNER = 'curatorOVO'
-const DEFAULT_GITHUB_REPO = 'vwork_electron'
+const DEFAULT_GITHUB_OWNER = 'xing653245'
+const DEFAULT_GITHUB_REPO = 'WeChat-Work-Hook'
 
 function normalizeFeedUrl(url) {
   if (!url) return ''

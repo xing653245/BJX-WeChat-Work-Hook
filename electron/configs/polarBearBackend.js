@@ -4,8 +4,8 @@
  */
 
 /** 不含末尾斜杠，形如 http://host:port */
-// const POLAR_BEAR_BACKEND_ORIGIN = 'http://8.137.76.99:5516'
-const POLAR_BEAR_BACKEND_ORIGIN = 'http://192.168.1.18:5516'
+const POLAR_BEAR_BACKEND_ORIGIN = 'http://8.137.76.99:5516'
+// const POLAR_BEAR_BACKEND_ORIGIN = 'http://192.168.1.18:5516'
 
 function getPolarBearBaseUrl() {
   return POLAR_BEAR_BACKEND_ORIGIN.replace(/\/+$/, '')

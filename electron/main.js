@@ -1538,7 +1538,7 @@ const { getPolarBearBaseUrl } = require('./configs/polarBearBackend')
 const { bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
 
 ipcMain.handle('get-auth-info', async (event, wxid) => {
-  const authUrl = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo/?wxid=${encodeURIComponent(wxid)}`
+  const authUrl = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo?wxid=${encodeURIComponent(wxid)}`
   try {
     const response = await axios.get(authUrl, { timeout: 10000 });
     const result = { success: true, data: response.data }
