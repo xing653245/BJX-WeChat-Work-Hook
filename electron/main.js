@@ -761,9 +761,6 @@ function resolveAppIconPath() {
     }
   } else {
     iconPath = path.join(__dirname, '../public/bg.png')
-    if (!fs.existsSync(iconPath)) {
-      iconPath = path.join(__dirname, '../src/assets/bg.png')
-    }
   }
   return iconPath
 }

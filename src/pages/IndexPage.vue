@@ -3,7 +3,7 @@
     <main class="page-body page-body-center">
       <div class="hero-card">
         <div class="hero-brand">
-          <img src="../assets/bg.png" alt="LOGO" class="hero-logo" />
+          <img src="/bg.png" alt="LOGO" class="hero-logo" />
           <h2 class="hero-title">{{ frameName }}</h2>
           <p class="hero-tagline">企微自动化 · HTTP 接口 · 消息回调</p>
           <span v-if="version" class="version-badge">v{{ version }}</span>

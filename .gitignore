@@ -5,6 +5,11 @@ node_modules
 dist
 dist-electron
 conf/conf.ini
+build/icon.png
+
+# 本地临时/测试目录
+shared
+_spawn_cn_test
 
 # 日志文件
 *.log
