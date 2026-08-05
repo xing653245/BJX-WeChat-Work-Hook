@@ -50,47 +50,6 @@
                   <p class="field-hint">有效范围 (1024, 10000]，修改后需重启框架</p>
                 </div>
 
-                <label class="field-label" for="settings-wecom-version">企微版本</label>
-                <div class="field-control">
-                  <el-radio-group id="settings-wecom-version" v-model="formData.wecom_version" class="wecom-version-radio">
-                    <el-radio
-                      v-for="item in wecomVersionOptions"
-                      :key="item.id"
-                      :label="item.id"
-                      :disabled="!item.available"
-                    >
-                      {{ item.label }}
-                      <span v-if="!item.available" class="wecom-version-unavailable">（未安装）</span>
-                    </el-radio>
-                  </el-radio-group>
-                  <p class="field-hint">
-                    决定「添加企微」使用的注入工具；修改后仅影响新启动的企微实例
-                  </p>
-                </div>
-
-                <label class="field-label" for="settings-wecom-exe-v4">v4 客户端路径</label>
-                <div class="field-control">
-                  <el-input
-                    id="settings-wecom-exe-v4"
-                    v-model="formData.wecom_exe_path_v4"
-                    placeholder="如 D:\WeCom4\WXWork.exe"
-                    class="field-input field-input-wide"
-                  />
-                  <p class="field-hint">选择 v4 时启动的程序；留空则使用注册表（须为 4.x 客户端）</p>
-                </div>
-
-                <label class="field-label" for="settings-wecom-exe-v5">v5 客户端路径</label>
-                <div class="field-control">
-                  <el-input
-                    id="settings-wecom-exe-v5"
-                    v-model="formData.wecom_exe_path_v5"
-                    placeholder="如 D:\WeCom5\WXWork.exe"
-                    class="field-input field-input-wide"
-                  />
-                  <p v-if="wecomRegistryHint" class="field-hint wecom-registry-hint">{{ wecomRegistryHint }}</p>
-                  <p class="field-hint">选择 v5 时启动的程序；若 v4/v5 分目录安装，请务必填写 v5 路径</p>
-                </div>
-
                 <label class="field-label" for="settings-callback">回调地址</label>
                 <div class="field-control">
                   <el-input
@@ -108,6 +67,64 @@
                       <el-icon class="inline-help"><QuestionFilled /></el-icon>
                     </el-tooltip>
                   </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- WeCom Version -->
+        <section :id="sectionDomId('wecom')" class="settings-section">
+          <div class="section-card">
+            <div class="section-head">
+              <div class="section-head-left">
+                <span class="section-icon accent"><el-icon><ChatLineRound /></el-icon></span>
+                <div>
+                  <h2 class="section-title">企微版本</h2>
+                  <p class="section-desc">注入工具与客户端安装路径</p>
+                </div>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="field-grid">
+                <label class="field-label" for="settings-wecom-version">注入版本</label>
+                <div class="field-control">
+                  <el-radio-group id="settings-wecom-version" v-model="formData.wecom_version" class="wecom-version-radio">
+                    <el-radio
+                      v-for="item in wecomVersionOptions"
+                      :key="item.id"
+                      :label="item.id"
+                      :disabled="!item.available"
+                    >
+                      {{ item.label }}
+                      <span v-if="!item.available" class="wecom-version-unavailable">（未安装）</span>
+                    </el-radio>
+                  </el-radio-group>
+                  <p class="field-hint">
+                    选择「添加企微」时使用的企微版本；修改后仅影响新启动的企微实例
+                  </p>
+                </div>
+
+                <label class="field-label" for="settings-wecom-exe-v4">v4 客户端路径</label>
+                <div class="field-control">
+                  <el-input
+                    id="settings-wecom-exe-v4"
+                    v-model="formData.wecom_exe_path_v4"
+                    placeholder="如 D:\WeCom4\WXWork.exe"
+                    class="field-input field-input-wide"
+                  />
+                  <p class="field-hint">企微 v4 版本客户端安装路径（ D:\qwei\WXWork\WXWork.exe ）这种格式</p>
+                </div>
+
+                <label class="field-label" for="settings-wecom-exe-v5">v5 客户端路径</label>
+                <div class="field-control">
+                  <el-input
+                    id="settings-wecom-exe-v5"
+                    v-model="formData.wecom_exe_path_v5"
+                    placeholder="如 D:\WeCom5\WXWork.exe"
+                    class="field-input field-input-wide"
+                  />
+                  <p class="field-hint">企微 v5 版本客户端安装路径</p>
                 </div>
               </div>
             </div>
@@ -567,6 +584,7 @@ import {
   Check,
   WarningFilled,
   Connection,
+  ChatLineRound,
   Promotion,
   Monitor,
   ArrowDown,
@@ -619,6 +637,7 @@ async function loadWecomVersionOptions() {
 
 const navSections = [
   { id: 'http', label: 'HTTP', icon: Connection },
+  { id: 'wecom', label: '企微版本', icon: ChatLineRound },
   { id: 'api', label: '接口调试', icon: Promotion },
   { id: 'logs', label: '日志', icon: Document },
   { id: 'appearance', label: '外观', icon: Sunny },
