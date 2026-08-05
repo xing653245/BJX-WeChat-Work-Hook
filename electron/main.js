@@ -72,8 +72,10 @@ const {
   checkPortListenAvailable,
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService,
-  readInjectConfig
+  readInjectConfig,
+  getAppPathForResources
 } = require('./services/wecomInject')
+const { getWecomVersionOptions, needsWecomVersionSelection } = require('./configs/wecomVersion')
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
@@ -603,15 +605,17 @@ const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
 
   injectInProgressPorts.add(robotPort)
   try {
+    const { wecomVersion } = readInjectConfig()
     const result = await runInjectToolService({
       port: robotPort,
       serverPort,
-      key: injectKey
+      key: injectKey,
+      wecomVersion
     })
-    const ok = result.success || (result.output && result.output.includes('注入成功'))
+    const ok = result.success === true
     recordInjectAttempt(robotPort, ok)
     console.log(
-      `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
+      `[注入] 端口 ${robotPort} 已执行注入（${reason}，${wecomVersion}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
     )
     if (ok) {
       markPortStabilizing(robotPort)
@@ -881,34 +885,44 @@ function createWindow() {
     })
   }
 
-  // 开发环境加载本地服务器，生产环境加载构建后的文件
-  // 检查是否是开发模式（通过检查 dist 目录是否存在来判断）
+  // 未打包：优先 Vite 开发服；已打包：加载 dist 构建产物
   let distPath
   if (app.isPackaged) {
-    // 打包后：dist 目录内容在 app.asar 中，使用 app.getAppPath() 获取 asar 路径
-    // files 配置中的 dist/**/* 会保持目录结构，所以路径是 dist/index.html
     distPath = path.join(app.getAppPath(), 'dist', 'index.html')
   } else {
-    // 开发环境：dist 目录在项目根目录
     distPath = path.join(__dirname, '../dist/index.html')
   }
-  const isDev = !fs.existsSync(distPath) || process.env.NODE_ENV === 'development'
-  
-  console.log('Environment:', process.env.NODE_ENV)
-  console.log('isDev:', isDev)
-  console.log('distPath exists:', fs.existsSync(distPath))
-  
-  if (isDev) {
-    // 开发模式：等待 Vite 服务器启动
+
+  const loadPackagedFrontend = () => {
+    console.log('Loading production build from:', distPath)
+    if (fs.existsSync(distPath)) {
+      mainWindow.loadFile(distPath)
+    } else {
+      console.error('dist/index.html 不存在，请先执行 npm run build')
+      mainWindow.loadURL('http://localhost:5173')
+    }
+  }
+
+  const notifyWecomVersionRequiredIfNeeded = () => {
+    try {
+      if (needsWecomVersionSelection(readConfig())) {
+        mainWindow.webContents.send('wecom-version-required')
+      }
+    } catch (e) {
+      console.error('[企微版本] 检查是否需要选择版本失败:', e.message)
+    }
+  }
+
+  if (!app.isPackaged) {
+    // 未打包开发：始终优先 Vite，避免 dist 存在时误加载旧前端（导致新功能不生效）
     let retryCount = 0
-    const maxRetries = 30 // 最多等待30秒
-    
+    const maxRetries = 30
+
     const checkServer = () => {
       const http = require('http')
       console.log(`Checking Vite server... (attempt ${retryCount + 1}/${maxRetries})`)
-      
+
       const req = http.get('http://localhost:5173', (res) => {
-        console.log('Vite server responded with status:', res.statusCode)
         if (res.statusCode === 200) {
           console.log('Loading http://localhost:5173')
           mainWindow.loadURL('http://localhost:5173')
@@ -917,49 +931,44 @@ function createWindow() {
           if (retryCount < maxRetries) {
             setTimeout(checkServer, 1000)
           } else {
-            console.error('Vite server not available after 30 seconds')
-            mainWindow.loadURL('http://localhost:5173') // 仍然尝试加载
+            loadPackagedFrontend()
           }
         }
       })
-      
-      req.on('error', (err) => {
-        console.log('Vite server check error:', err.message)
+
+      req.on('error', () => {
         retryCount++
         if (retryCount < maxRetries) {
           setTimeout(checkServer, 1000)
         } else {
-          console.error('Vite server not available after 30 seconds')
-          mainWindow.loadURL('http://localhost:5173') // 仍然尝试加载
+          loadPackagedFrontend()
         }
       })
-      
+
       req.setTimeout(5000, () => {
         req.destroy()
         retryCount++
         if (retryCount < maxRetries) {
           setTimeout(checkServer, 1000)
         } else {
-          console.error('Vite server timeout after 30 seconds')
-          mainWindow.loadURL('http://localhost:5173') // 仍然尝试加载
+          loadPackagedFrontend()
         }
       })
     }
-    
-    // 立即尝试一次，如果失败则开始重试
+
     checkServer()
   } else {
-    console.log('Loading production build from:', distPath)
-    mainWindow.loadFile(distPath)
+    loadPackagedFrontend()
   }
-  
+
   // 监听页面加载错误
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
     console.error('Failed to load:', validatedURL, 'Error:', errorCode, errorDescription)
   })
-  
+
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('Page loaded successfully')
+    notifyWecomVersionRequiredIfNeeded()
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1502,6 +1511,16 @@ ipcMain.handle('check-port', async (event, port) => {
 // 查找可用端口（随机生成并检查是否被占用，范围 1025～10000）
 ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
   return findAvailablePortForInject(startPort, endPort)
+})
+
+ipcMain.handle('get-wecom-version-options', () => {
+  return {
+    options: getWecomVersionOptions(getAppPathForResources())
+  }
+})
+
+ipcMain.handle('needs-wecom-version-selection', () => {
+  return { needed: needsWecomVersionSelection(readConfig()) }
 })
 
 // 执行注入工具（统一走 runInjectForPort，含重复注入防护）

@@ -91,7 +91,7 @@ router.post('/start-wecom', async (req, res) => {
       }
     }
 
-    const { serverPort, key } = readInjectConfig()
+    const { serverPort, key, wecomVersion } = readInjectConfig()
 
     const safety = await canInjectPort(port)
     if (!safety.allowed) {
@@ -102,8 +102,8 @@ router.post('/start-wecom', async (req, res) => {
       })
     }
 
-    const result = await runInjectTool({ port, serverPort, key })
-    const ok = result.success || (result.output && result.output.includes('注入成功'))
+    const result = await runInjectTool({ port, serverPort, key, wecomVersion })
+    const ok = result.success === true
     recordInjectAttempt(port, ok)
     if (ok) {
       markPortStabilizing(port)

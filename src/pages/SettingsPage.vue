@@ -50,6 +50,24 @@
                   <p class="field-hint">有效范围 (1024, 10000]，修改后需重启框架</p>
                 </div>
 
+                <label class="field-label" for="settings-wecom-version">企微版本</label>
+                <div class="field-control">
+                  <el-radio-group id="settings-wecom-version" v-model="formData.wecom_version" class="wecom-version-radio">
+                    <el-radio
+                      v-for="item in wecomVersionOptions"
+                      :key="item.id"
+                      :label="item.id"
+                      :disabled="!item.available"
+                    >
+                      {{ item.label }}
+                      <span v-if="!item.available" class="wecom-version-unavailable">（未安装）</span>
+                    </el-radio>
+                  </el-radio-group>
+                  <p class="field-hint">
+                    决定「添加企微」使用的注入工具；修改后仅影响新启动的企微实例
+                  </p>
+                </div>
+
                 <label class="field-label" for="settings-callback">回调地址</label>
                 <div class="field-control">
                   <el-input
@@ -535,6 +553,7 @@ import { useConfigStore } from '../stores/config'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
 import { getStoredThemeMode } from '../utils/theme'
+import { DEFAULT_WECOM_VERSION, isWecomVersionConfigured } from '../utils/wecomVersion'
 
 const configStore = useConfigStore()
 const setThemeModeGlobal = inject('setThemeMode', null)
@@ -546,6 +565,19 @@ const mainScrollRef = ref(null)
 const sectionExpanded = reactive({ api: true })
 const themeMode = ref(getStoredThemeMode())
 const logDirectoryPath = ref('')
+const wecomVersionOptions = ref([])
+
+async function loadWecomVersionOptions() {
+  if (!window.electronAPI?.getWecomVersionOptions) {
+    wecomVersionOptions.value = [
+      { id: 'v4', label: '企微 v4', available: true },
+      { id: 'v5', label: '企微 v5', available: false }
+    ]
+    return
+  }
+  const res = await window.electronAPI.getWecomVersionOptions()
+  wecomVersionOptions.value = Array.isArray(res?.options) ? res.options : []
+}
 
 const navSections = [
   { id: 'http', label: 'HTTP', icon: Connection },
@@ -658,6 +690,7 @@ function formatWecomInstanceOptionLabel(row) {
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
+  wecom_version: DEFAULT_WECOM_VERSION,
   open_log: true,
   save_log: true,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
@@ -732,6 +765,9 @@ const loadConfig = () => {
   const config = configStore.config
   formData.server_port = config.sys?.server_port || DEFAULT_SERVER_PORT_STRING
   formData.callback = config.sys?.callback || ''
+  formData.wecom_version = isWecomVersionConfigured(config.sys?.wecom_version)
+    ? config.sys.wecom_version
+    : DEFAULT_WECOM_VERSION
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = !(
@@ -1059,6 +1095,8 @@ const handleSave = async () => {
       sys: {
         server_port: String(formData.server_port),
         callback: formData.callback || '',
+        wecom_version: formData.wecom_version || DEFAULT_WECOM_VERSION,
+        wecom_version_selected: 'true',
         open_log: String(formData.open_log),
         save_log: String(formData.save_log),
         auto_check_update: String(formData.auto_check_update),
@@ -1129,6 +1167,7 @@ onMounted(async () => {
     await configStore.loadConfig()
   }
   loadConfig()
+  loadWecomVersionOptions()
   loadAppVersion()
   setupUpdateListeners()
   themeMode.value = getStoredThemeMode()
@@ -1429,8 +1468,20 @@ onUnmounted(() => {
 .field-hint {
   margin: 6px 0 0;
   font-size: 12px;
-  color: var(--sp-muted);
   line-height: 1.5;
+  color: var(--sp-muted);
+}
+
+.wecom-version-radio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.wecom-version-unavailable {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--el-color-warning);
 }
 
 .switch-cards {

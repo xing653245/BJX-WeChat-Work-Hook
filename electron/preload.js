@@ -40,6 +40,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 注入工具
   runInjectTool: (options) => ipcRenderer.invoke('run-inject-tool', options),
+  getWecomVersionOptions: () => ipcRenderer.invoke('get-wecom-version-options'),
+  needsWecomVersionSelection: () => ipcRenderer.invoke('needs-wecom-version-selection'),
+  onWecomVersionRequired: (callback) => {
+    ipcRenderer.on('wecom-version-required', () => callback())
+  },
+  removeWecomVersionRequiredListener: () => {
+    ipcRenderer.removeAllListeners('wecom-version-required')
+  },
   markWecomPortStabilizing: (port) => ipcRenderer.invoke('mark-wecom-port-stabilizing', port),
   markWecomPortLoggedIn: (port) => ipcRenderer.invoke('mark-wecom-port-logged-in', port),
   markWecomPortAccountSwitch: (port) => ipcRenderer.invoke('mark-wecom-port-account-switch', port),

@@ -10,7 +10,8 @@ export const useConfigStore = defineStore('config', () => {
       open_log: 'true',
       save_log: 'true',
       auto_check_update: 'true',
-      window_close_action: 'ask'
+      window_close_action: 'ask',
+      wecom_version: ''
     },
     custom: {
       login_info: []

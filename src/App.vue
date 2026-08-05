@@ -17,6 +17,10 @@
       </el-tabs>
     </el-main>
     <CloseConfirmDialog v-model="closeConfirmVisible" />
+    <WecomVersionDialog
+      v-model="showWecomVersionDialog"
+      @confirmed="handleWecomVersionConfirmed"
+    />
   </el-container>
 </template>
 
@@ -28,6 +32,7 @@ import RunLogsPage from './pages/RunLogsPage.vue'
 import VWorkManagerPage from './pages/VWorkManagerPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import CloseConfirmDialog from './components/CloseConfirmDialog.vue'
+import WecomVersionDialog from './components/WecomVersionDialog.vue'
 import { getCloseConfirmAutoAction } from './utils/closeConfirmPrefs'
 import { useConfigStore } from './stores/config'
 import { VWorkApi } from './utils/api'
@@ -41,6 +46,7 @@ const TAB_STORAGE_KEY = 'vwork_active_tab'
 const activeTab = ref(localStorage.getItem(TAB_STORAGE_KEY) || 'index')
 const vworkManagerRef = ref(null)
 const closeConfirmVisible = ref(false)
+const showWecomVersionDialog = ref(false)
 const isDark = ref(false)
 
 provide('activeTab', activeTab)
@@ -52,6 +58,7 @@ provide('setThemeMode', (mode) => {
 
 /** 取消 fastapi-message 中退出登录逻辑订阅（与其它页面监听互不干扰） */
 let removeFastapiLogoutListener = null
+let removeWecomVersionRequiredListener = null
 
 /** 同一端口切换账号时，避免重复启动后台等待任务 */
 const accountSwitchWatchers = new Map()
@@ -62,6 +69,31 @@ provide('wecomApiInjectPorts', wecomApiInjectPorts)
 
 // 初始化配置
 const configStore = useConfigStore()
+
+async function ensureWecomVersionSelected() {
+  await configStore.loadConfig()
+  const res = await window.electronAPI?.needsWecomVersionSelection?.()
+  if (res?.needed) {
+    showWecomVersionDialog.value = true
+  }
+}
+
+async function handleWecomVersionConfirmed(version) {
+  const currentConfig = JSON.parse(JSON.stringify(configStore.config))
+  currentConfig.sys = {
+    ...(currentConfig.sys || {}),
+    wecom_version: version,
+    wecom_version_selected: 'true'
+  }
+  const result = await configStore.saveConfig(currentConfig)
+  if (result.success) {
+    ElMessage.success(`已选择 ${version === 'v5' ? '企微 v5' : '企微 v4'}，后续添加企微将使用该版本注入`)
+  } else {
+    ElMessage.error(result.msg || '保存企微版本失败')
+    showWecomVersionDialog.value = true
+  }
+}
+
 configStore.loadConfig()
 
 const refreshManagerList = async ({ light = false } = {}) => {
@@ -337,6 +369,13 @@ const handleLogoutMessage = async (data) => {
 
 // 监听消息推送
 onMounted(() => {
+  ensureWecomVersionSelected()
+
+  removeWecomVersionRequiredListener =
+    window.electronAPI?.onWecomVersionRequired?.(() => {
+      showWecomVersionDialog.value = true
+    }) || null
+
   initTheme((dark) => {
     isDark.value = dark
   })
@@ -388,6 +427,9 @@ watch(activeTab, (tab) => {
 onUnmounted(() => {
   removeFastapiLogoutListener?.()
   removeFastapiLogoutListener = null
+  removeWecomVersionRequiredListener?.()
+  removeWecomVersionRequiredListener = null
+  window.electronAPI?.removeWecomVersionRequiredListener?.()
   window.electronAPI?.removeCloseConfirmRequestListener?.()
   window.electronAPI?.removeCrashRecoverySuspendedListener?.()
   window.electronAPI?.removeServiceErrorListener?.()

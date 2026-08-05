@@ -6,7 +6,10 @@
     <div class="page-body">
       <div class="section-card">
         <div class="section-toolbar">
-          <span class="toolbar-hint">在表格空白处或行上<strong>右键</strong>：添加企微、授权管理、设置标签等</span>
+          <span class="toolbar-hint">
+            当前注入版本：<strong>{{ wecomVersionLabel }}</strong>；
+            在表格空白处或行上<strong>右键</strong>：添加企微、授权管理、设置标签等
+          </span>
         </div>
         <div class="table-wrap">
           <el-table
@@ -218,6 +221,7 @@ import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { confirmLoggedIn } from '../utils/loginStatusRetry'
 import { pickPersonalRecord } from '../utils/personalInfo'
+import { getWecomVersionLabel, isWecomVersionSelectionDone } from '../utils/wecomVersion'
 
 const configStore = useConfigStore()
 /** 来自 App.vue：HTTP /api/other/start-wecom 成功后的端口队列 */
@@ -315,6 +319,9 @@ const deleteTableRowByPort = (port) => {
 const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT_SERVER_PORT_STRING)
 // 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
 const injectKey = computed(() => configStore.config.sys?.inject_key || '')
+const wecomVersionLabel = computed(() =>
+  getWecomVersionLabel(configStore.config.sys?.wecom_version)
+)
 
 /** 已请求关闭自动更新的企微端口，避免 completePortLogin 重复触发时打两次 */
 const autoUpdateOffRequestedPorts = new Set()
@@ -678,6 +685,11 @@ const handleClickOutside = (event) => {
 
 // 执行添加企微的核心逻辑
 const executeAddWechat = async (portType, customPortValue) => {
+  if (!isWecomVersionSelectionDone(configStore.config.sys)) {
+    ElMessage.warning('请先在启动时选择企微版本（v4 或 v5），或在设置中配置')
+    return
+  }
+
   let port
   if (portType === 'random') {
     // 查找可用端口
@@ -714,13 +726,17 @@ const executeAddWechat = async (portType, customPortValue) => {
         key: injectKey.value
       })
 
-      if (result.success || (result.output && result.output.includes('注入成功'))) {
+      if (result.success) {
         ElMessage.success('企微启动成功，正在登录...')
         trackPendingPort(port)
         const rowIndex = addTableItem({ nick_name: '登录中', port: String(port) })
         checkLoginStatus(port, rowIndex)
       } else {
-        ElMessage.error(result.output || '启动失败')
+        ElMessage.error({
+          message: result.output || '启动失败',
+          duration: 8000,
+          showClose: true
+        })
       }
     } catch (error) {
       ElMessage.error('启动失败: ' + error.message)
