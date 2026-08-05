@@ -73,7 +73,8 @@ const {
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService,
   readInjectConfig,
-  getAppPathForResources
+  getAppPathForResources,
+  readWecomRegistryInfo
 } = require('./services/wecomInject')
 const { getWecomVersionOptions, needsWecomVersionSelection } = require('./configs/wecomVersion')
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
@@ -87,6 +88,9 @@ const {
   recordInjectAttempt,
   isPortSafeForCrashRecoveryInject
 } = require('./services/wecomStability')
+
+/** 开发模式：未打包运行（npm run electron:dev） */
+const isDev = !app.isPackaged
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -1522,6 +1526,8 @@ ipcMain.handle('get-wecom-version-options', () => {
 ipcMain.handle('needs-wecom-version-selection', () => {
   return { needed: needsWecomVersionSelection(readConfig()) }
 })
+
+ipcMain.handle('get-wecom-registry-info', () => readWecomRegistryInfo())
 
 // 执行注入工具（统一走 runInjectForPort，含重复注入防护）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {

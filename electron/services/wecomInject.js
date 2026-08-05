@@ -162,34 +162,78 @@ function ensureInjectDllReady(injectBinDir, version) {
   }
 }
 
-/** 从注册表或默认目录解析本机企微可执行文件路径 */
-function resolveWecomExePath(conf) {
-  const configured = String(conf?.sys?.wecom_exe_path || '').trim()
-  if (configured && fs.existsSync(configured)) {
-    return configured
+/** 从注册表或默认目录解析本机企微可执行文件路径（按 v4/v5 区分） */
+function readWecomRegistryInfo() {
+  if (process.platform !== 'win32') {
+    return { executable: '', version: '' }
+  }
+  try {
+    const out = execSync('reg query "HKCU\\Software\\Tencent\\WXWork"', {
+      encoding: 'utf8'
+    })
+    const execMatch = out.match(/Executable\s+REG_\w+\s+(.+)/i)
+    const verMatch = out.match(/Version\s+REG_\w+\s+(.+)/i)
+    return {
+      executable: execMatch?.[1]?.trim() || '',
+      version: verMatch?.[1]?.trim() || ''
+    }
+  } catch {
+    return { executable: '', version: '' }
+  }
+}
+
+function getWecomExePathConfigKey(wecomVersion) {
+  return normalizeWecomVersion(wecomVersion) === 'v5' ? 'wecom_exe_path_v5' : 'wecom_exe_path_v4'
+}
+
+/** 注册表/文件版本号是否与所选注入版本一致（4.x → v4，5.x → v5） */
+function isClientVersionMatching(wecomVersion, clientVersion) {
+  const major = parseInt(String(clientVersion || '').split('.')[0], 10)
+  if (Number.isNaN(major)) return false
+  if (wecomVersion === 'v5') return major >= 5
+  if (wecomVersion === 'v4') return major >= 4 && major < 5
+  return true
+}
+
+/**
+ * @returns {{ path: string, error?: string, source?: string }}
+ */
+function resolveWecomExePath(conf, wecomVersion) {
+  const version = normalizeWecomVersion(wecomVersion) || DEFAULT_WECOM_VERSION
+  const configKey = getWecomExePathConfigKey(version)
+  const configured = String(conf?.sys?.[configKey] || '').trim()
+  const legacyConfigured = String(conf?.sys?.wecom_exe_path || '').trim()
+
+  for (const candidate of [configured, legacyConfigured]) {
+    if (!candidate) continue
+    if (fs.existsSync(candidate)) {
+      return { path: candidate, source: configKey }
+    }
+    return { path: '', error: `配置的企微路径不存在: ${candidate}` }
   }
 
-  if (process.platform === 'win32') {
-    try {
-      const out = execSync('reg query "HKCU\\Software\\Tencent\\WXWork" /v Executable', {
-        encoding: 'utf8'
-      })
-      const match = out.match(/Executable\s+REG_\w+\s+(.+)/i)
-      const exePath = match?.[1]?.trim()
-      if (exePath && fs.existsSync(exePath)) {
-        return exePath
-      }
-    } catch {
-      /* ignore */
+  const reg = readWecomRegistryInfo()
+  if (reg.executable && fs.existsSync(reg.executable)) {
+    if (isClientVersionMatching(version, reg.version)) {
+      return { path: reg.executable, source: 'registry' }
     }
-
-    const localExe = path.join(process.env.LOCALAPPDATA || '', 'WXWork', 'WXWork.exe')
-    if (localExe && fs.existsSync(localExe)) {
-      return localExe
+    const verLabel = version === 'v5' ? 'v5' : 'v4'
+    return {
+      path: '',
+      error: `注册表当前指向 ${reg.version || '未知版本'} 客户端（${reg.executable}），与所选 ${verLabel} 不一致。请在「设置 → HTTP 设置」填写 ${verLabel} 客户端路径。`
     }
   }
 
-  return ''
+  const localExe = path.join(process.env.LOCALAPPDATA || '', 'WXWork', 'WXWork.exe')
+  if (localExe && fs.existsSync(localExe) && (!reg.version || isClientVersionMatching(version, reg.version))) {
+    return { path: localExe, source: 'localappdata' }
+  }
+
+  const verLabel = version === 'v5' ? 'v5' : 'v4'
+  return {
+    path: '',
+    error: `未找到 ${verLabel} 企微客户端路径，请在「设置 → HTTP 设置」填写 ${verLabel} 客户端路径。`
+  }
 }
 
 function buildInjectArgs({ port, serverPort, injectKey, wecomExePath }) {
@@ -279,7 +323,15 @@ function runInjectTool({ port, serverPort, key, wecomVersion }) {
   }
 
   const injectKey = key || conf.sys?.inject_key || DEFAULT_INJECT_KEY
-  const wecomExePath = resolveWecomExePath(conf)
+  const exeResolve = resolveWecomExePath(conf, version)
+  if (!exeResolve.path) {
+    return Promise.resolve({
+      success: false,
+      wecomVersion: version,
+      output: exeResolve.error || '未找到企微客户端路径'
+    })
+  }
+  const wecomExePath = exeResolve.path
   const spawnArgs = buildInjectArgs({ port, serverPort, injectKey, wecomExePath })
 
   return new Promise((resolve) => {
@@ -343,5 +395,6 @@ module.exports = {
   formatInjectErrorHint,
   ensureInjectDllReady,
   resolveWecomExePath,
+  readWecomRegistryInfo,
   buildInjectArgs
 }

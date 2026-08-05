@@ -68,6 +68,29 @@
                   </p>
                 </div>
 
+                <label class="field-label" for="settings-wecom-exe-v4">v4 客户端路径</label>
+                <div class="field-control">
+                  <el-input
+                    id="settings-wecom-exe-v4"
+                    v-model="formData.wecom_exe_path_v4"
+                    placeholder="如 D:\WeCom4\WXWork.exe"
+                    class="field-input field-input-wide"
+                  />
+                  <p class="field-hint">选择 v4 时启动的程序；留空则使用注册表（须为 4.x 客户端）</p>
+                </div>
+
+                <label class="field-label" for="settings-wecom-exe-v5">v5 客户端路径</label>
+                <div class="field-control">
+                  <el-input
+                    id="settings-wecom-exe-v5"
+                    v-model="formData.wecom_exe_path_v5"
+                    placeholder="如 D:\WeCom5\WXWork.exe"
+                    class="field-input field-input-wide"
+                  />
+                  <p v-if="wecomRegistryHint" class="field-hint wecom-registry-hint">{{ wecomRegistryHint }}</p>
+                  <p class="field-hint">选择 v5 时启动的程序；若 v4/v5 分目录安装，请务必填写 v5 路径</p>
+                </div>
+
                 <label class="field-label" for="settings-callback">回调地址</label>
                 <div class="field-control">
                   <el-input
@@ -566,6 +589,21 @@ const sectionExpanded = reactive({ api: true })
 const themeMode = ref(getStoredThemeMode())
 const logDirectoryPath = ref('')
 const wecomVersionOptions = ref([])
+const wecomRegistryHint = ref('')
+
+async function loadWecomRegistryHint() {
+  if (!window.electronAPI?.getWecomRegistryInfo) return
+  try {
+    const reg = await window.electronAPI.getWecomRegistryInfo()
+    if (reg?.executable) {
+      wecomRegistryHint.value = `注册表当前默认：${reg.version || '未知版本'} · ${reg.executable}`
+    } else {
+      wecomRegistryHint.value = ''
+    }
+  } catch {
+    wecomRegistryHint.value = ''
+  }
+}
 
 async function loadWecomVersionOptions() {
   if (!window.electronAPI?.getWecomVersionOptions) {
@@ -691,6 +729,8 @@ const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
   wecom_version: DEFAULT_WECOM_VERSION,
+  wecom_exe_path_v4: '',
+  wecom_exe_path_v5: '',
   open_log: true,
   save_log: true,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
@@ -768,6 +808,8 @@ const loadConfig = () => {
   formData.wecom_version = isWecomVersionConfigured(config.sys?.wecom_version)
     ? config.sys.wecom_version
     : DEFAULT_WECOM_VERSION
+  formData.wecom_exe_path_v4 = config.sys?.wecom_exe_path_v4 || ''
+  formData.wecom_exe_path_v5 = config.sys?.wecom_exe_path_v5 || ''
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = !(
@@ -1096,6 +1138,8 @@ const handleSave = async () => {
         server_port: String(formData.server_port),
         callback: formData.callback || '',
         wecom_version: formData.wecom_version || DEFAULT_WECOM_VERSION,
+        wecom_exe_path_v4: String(formData.wecom_exe_path_v4 || '').trim(),
+        wecom_exe_path_v5: String(formData.wecom_exe_path_v5 || '').trim(),
         wecom_version_selected: 'true',
         open_log: String(formData.open_log),
         save_log: String(formData.save_log),
@@ -1168,6 +1212,7 @@ onMounted(async () => {
   }
   loadConfig()
   loadWecomVersionOptions()
+  loadWecomRegistryHint()
   loadAppVersion()
   setupUpdateListeners()
   themeMode.value = getStoredThemeMode()
@@ -1482,6 +1527,10 @@ onUnmounted(() => {
   margin-left: 4px;
   font-size: 12px;
   color: var(--el-color-warning);
+}
+
+.wecom-registry-hint {
+  color: var(--el-text-color-secondary);
 }
 
 .switch-cards {
