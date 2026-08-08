@@ -16,7 +16,8 @@ export const MSG_TYPE_MAP = {
   13: '卡片链接消息',
   6: '位置消息',
   16: '语音消息',
-  4: '合并消息'
+  4: '合并消息',
+  2063: '撤回消息'
 }
 
 export const TEXT_MSG_TYPE = 2
