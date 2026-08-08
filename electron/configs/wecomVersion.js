@@ -10,12 +10,12 @@ const WECOM_VERSION_META = {
   v4: {
     id: 'v4',
     label: '企微 v4',
-    description: '适用于企微 4.x 客户端（bin/it.exe）'
+    description: '适用于企微客户端 4.1.36.6012，仅该版本可成功注入'
   },
   v5: {
     id: 'v5',
     label: '企微 v5',
-    description: '适用于企微 5.x 客户端（bin/v5/it.exe + device.dll）'
+    description: '适用于企微客户端 5.0.3.6005，仅该版本可成功注入'
   }
 }
 

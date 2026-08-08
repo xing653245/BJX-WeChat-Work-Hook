@@ -101,7 +101,7 @@
                     </el-radio>
                   </el-radio-group>
                   <p class="field-hint">
-                    选择「添加企微」时使用的企微版本；修改后仅影响新启动的企微实例
+                    选择「添加企微」时使用的企微版本；修改后需重启框架
                   </p>
                 </div>
 
@@ -113,7 +113,7 @@
                     placeholder="如 D:\WeCom4\WXWork.exe"
                     class="field-input field-input-wide"
                   />
-                  <p class="field-hint">企微 v4 版本客户端安装路径（ D:\qwei\WXWork\WXWork.exe ）这种格式</p>
+                  <p class="field-hint">仅支持企微 v4.1.36.6012 版本客户端</p>
                 </div>
 
                 <label class="field-label" for="settings-wecom-exe-v5">v5 客户端路径</label>
@@ -124,7 +124,7 @@
                     placeholder="如 D:\WeCom5\WXWork.exe"
                     class="field-input field-input-wide"
                   />
-                  <p class="field-hint">企微 v5 版本客户端安装路径</p>
+                  <p class="field-hint">仅支持企微 v5.0.3.6005 版本客户端</p>
                 </div>
               </div>
             </div>

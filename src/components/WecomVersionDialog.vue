@@ -13,7 +13,7 @@
     <template #header>
       <div class="wvd-header">
         <h3 class="wvd-title">选择企微版本</h3>
-        <p class="wvd-desc">请选择与本机安装的企微客户端匹配的版本，后续「添加企微」将使用该版本的注入工具。</p>
+        <p class="wvd-desc">请选择与本机企微客户端完全一致的版本，仅对应版本可成功注入；后续「添加企微」将使用该版本的注入工具。</p>
       </div>
     </template>
 
@@ -74,8 +74,18 @@ const canConfirm = computed(() => {
 async function loadOptions() {
   if (!window.electronAPI?.getWecomVersionOptions) {
     versionOptions.value = [
-      { id: 'v4', label: '企微 v4', description: 'bin/it.exe', available: true },
-      { id: 'v5', label: '企微 v5', description: 'bin/v5/it.exe', available: false }
+      {
+        id: 'v4',
+        label: '企微 v4',
+        description: '适用于企微客户端 4.1.36.6012，仅该版本可成功注入',
+        available: true
+      },
+      {
+        id: 'v5',
+        label: '企微 v5',
+        description: '适用于企微客户端 5.0.3.6005，仅该版本可成功注入',
+        available: false
+      }
     ]
     selectedVersion.value = 'v4'
     return
@@ -150,11 +160,21 @@ async function onConfirm() {
 .wvd-radio-item {
   display: flex;
   align-items: flex-start;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 78px;
   height: auto;
   margin-right: 0;
   padding: 12px 14px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
+}
+
+.wvd-radio-item :deep(.el-radio__label) {
+  flex: 1;
+  width: 100%;
+  white-space: normal;
+  line-height: 1.4;
 }
 
 .wvd-radio-item.is-checked {
@@ -167,6 +187,7 @@ async function onConfirm() {
   flex-direction: column;
   gap: 4px;
   margin-left: 4px;
+  min-height: 44px;
 }
 
 .wvd-radio-label {
@@ -177,6 +198,7 @@ async function onConfirm() {
 
 .wvd-radio-hint {
   font-size: 12px;
+  line-height: 1.45;
   color: var(--el-text-color-secondary);
 }
 
