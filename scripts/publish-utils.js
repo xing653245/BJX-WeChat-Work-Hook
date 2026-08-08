@@ -8,11 +8,63 @@ const { execSync } = require('child_process')
 
 const pkg = require('../package.json')
 const DIST_DIR = path.join(__dirname, '..', 'dist-electron')
+const CHANGELOG_PATH = path.join(__dirname, '..', 'CHANGELOG.md')
 
 /** 与 electron-updater / 旧版客户端兼容的 ASCII 安装包名 */
 function getStandardInstallerName(version) {
   const ver = String(version || pkg.version).replace(/^v/, '')
   return `vwork-electron-setup-${ver}.exe`
+}
+
+function normalizeVersion(version) {
+  return String(version || pkg.version).replace(/^v/, '').trim()
+}
+
+/**
+ * 从 CHANGELOG.md 提取指定版本章节正文（不含 ## 标题行）
+ */
+function getChangelogForVersion(version = pkg.version) {
+  const ver = normalizeVersion(version)
+  if (!fs.existsSync(CHANGELOG_PATH)) {
+    console.warn(`[publish] 未找到 ${CHANGELOG_PATH}，Release 将使用默认说明`)
+    return ''
+  }
+
+  const content = fs.readFileSync(CHANGELOG_PATH, 'utf-8')
+  const headerRe = new RegExp(`^##\\s+v?${ver.replace(/\./g, '\\.')}\\s*$`, 'm')
+  const match = content.match(headerRe)
+  if (!match || match.index == null) {
+    console.warn(`[publish] CHANGELOG.md 中未找到版本 ${ver} 章节，Release 将使用默认说明`)
+    return ''
+  }
+
+  const start = match.index + match[0].length
+  const rest = content.slice(start)
+  const nextIdx = rest.search(/^##\s+/m)
+  return (nextIdx === -1 ? rest : rest.slice(0, nextIdx)).trim()
+}
+
+/** GitHub / Gitee Release 描述，以及客户端更新说明 */
+function buildReleaseBody(version = pkg.version) {
+  const ver = normalizeVersion(version)
+  const notes = getChangelogForVersion(ver)
+  const header = `北极熊企微框架Pro v${ver}`
+  const footer = `自动发布于 ${new Date().toLocaleString('zh-CN')}`
+  if (notes) {
+    return `${header}\n\n${notes}\n\n---\n${footer}`
+  }
+  return `${header}\n\n${footer}`
+}
+
+/** 写入 latest.yml 的多行 releaseNotes（YAML literal block） */
+function formatYamlReleaseNotes(text) {
+  const body = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n')
+  return `releaseNotes: |\n${body}`
 }
 
 function parseLatestYml(content) {
@@ -32,8 +84,8 @@ function parseLatestYml(content) {
   }
 }
 
-function buildLatestYml({ version, installerName, sha512, size, releaseDate }) {
-  return [
+function buildLatestYml({ version, installerName, sha512, size, releaseDate, releaseNotes }) {
+  const lines = [
     `version: ${version}`,
     'files:',
     `  - url: ${installerName}`,
@@ -41,9 +93,14 @@ function buildLatestYml({ version, installerName, sha512, size, releaseDate }) {
     `    size: ${size}`,
     `path: ${installerName}`,
     `sha512: ${sha512}`,
-    `releaseDate: ${releaseDate}`,
-    ''
-  ].join('\n')
+    `releaseDate: ${releaseDate}`
+  ]
+  const notes = (releaseNotes || '').trim()
+  if (notes) {
+    lines.push(formatYamlReleaseNotes(notes))
+  }
+  lines.push('')
+  return lines.join('\n')
 }
 
 /**
@@ -67,19 +124,22 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
     throw new Error('latest.yml 中缺少 sha512 或 size')
   }
 
+  const releaseNotes = buildReleaseBody(parsed.version || version)
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-publish-'))
   const fixedYml = buildLatestYml({
     version: parsed.version || version,
     installerName,
     sha512: parsed.sha512,
     size: parsed.size,
-    releaseDate: parsed.releaseDate
+    releaseDate: parsed.releaseDate,
+    releaseNotes
   })
 
   const normalizedYmlPath = path.join(tempDir, 'latest.yml')
   const normalizedExePath = path.join(tempDir, installerName)
   fs.writeFileSync(normalizedYmlPath, fixedYml, 'utf-8')
   fs.copyFileSync(exePath, normalizedExePath)
+  console.log(`[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
 
   const uploadPlan = [
     { localPath: normalizedYmlPath, uploadName: 'latest.yml' },
@@ -170,7 +230,10 @@ function getDefaultBranch() {
 module.exports = {
   pkg,
   DIST_DIR,
+  CHANGELOG_PATH,
   getStandardInstallerName,
+  getChangelogForVersion,
+  buildReleaseBody,
   normalizeReleaseFilesForPublish,
   collectReleaseFiles,
   getEnvToken,

@@ -7,7 +7,8 @@ const {
   pkg,
   collectReleaseFiles,
   normalizeReleaseFilesForPublish,
-  getEnvToken
+  getEnvToken,
+  buildReleaseBody
 } = require('./publish-utils')
 
 function parseGithubPublishConfig() {
@@ -90,9 +91,17 @@ async function createRelease(owner, repo, tag, token) {
       tag_name: tag,
       target_commitish: targetBranch,
       name: tag,
-      body: `北极熊企微框架Pro v${pkg.version}\n\n自动发布于 ${new Date().toLocaleString('zh-CN')}`,
+      body: buildReleaseBody(pkg.version),
       draft: false,
       prerelease: false
+    }
+  })
+}
+
+async function updateReleaseBody(owner, repo, releaseId, token) {
+  return githubRequest('PATCH', `/repos/${owner}/${repo}/releases/${releaseId}`, token, {
+    data: {
+      body: buildReleaseBody(pkg.version)
     }
   })
 }
@@ -166,6 +175,9 @@ async function main() {
     if (!release) {
       console.log(`[publish-github] 创建 Release 标签: ${tag}`)
       release = await createRelease(owner, repo, tag, token)
+    } else {
+      console.log(`[publish-github] 更新已有 Release 说明: ${tag}`)
+      release = await updateReleaseBody(owner, repo, release.id, token)
     }
 
     await replaceReleaseAssets(owner, repo, release, uploadPlan, token)

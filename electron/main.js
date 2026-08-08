@@ -241,6 +241,22 @@ autoUpdater.on('checking-for-update', () => {
   }
 })
 
+function normalizeReleaseNotes(releaseNotes) {
+  if (!releaseNotes) return '暂无更新说明'
+  if (Array.isArray(releaseNotes)) {
+    return releaseNotes
+      .map((item) => {
+        if (!item) return ''
+        if (typeof item === 'string') return item
+        const ver = item.version ? `## ${item.version}\n` : ''
+        return `${ver}${item.note || item.body || ''}`.trim()
+      })
+      .filter(Boolean)
+      .join('\n\n')
+  }
+  return String(releaseNotes)
+}
+
 autoUpdater.on('update-available', (info) => {
   console.log('发现新版本:', info.version)
   showDesktopNotification({
@@ -252,7 +268,7 @@ autoUpdater.on('update-available', (info) => {
       status: 'available',
       message: `发现新版本: ${info.version}，是否立即下载？`,
       version: info.version,
-      releaseNotes: info.releaseNotes || '暂无更新说明'
+      releaseNotes: normalizeReleaseNotes(info.releaseNotes)
     })
   }
 })

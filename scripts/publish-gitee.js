@@ -12,7 +12,14 @@
 const fs = require('fs')
 const path = require('path')
 const axios = require('axios')
-const { pkg, collectReleaseFiles, getDefaultBranch, getEnvToken, normalizeReleaseFilesForPublish } = require('./publish-utils')
+const {
+  pkg,
+  collectReleaseFiles,
+  getDefaultBranch,
+  getEnvToken,
+  normalizeReleaseFilesForPublish,
+  buildReleaseBody
+} = require('./publish-utils')
 
 function parseGiteePublishConfig() {
   const pub = pkg.build?.publish?.[0]
@@ -88,10 +95,6 @@ async function createRelease(owner, repo, tag, token, { title, version } = {}) {
       prerelease: false
     }
   })
-}
-
-function buildReleaseBody(version) {
-  return `北极熊企微框架Pro v${version}\n\n自动发布于 ${new Date().toLocaleString('zh-CN')}`
 }
 
 async function updateRelease(owner, repo, releaseId, tag, token, { title, version } = {}) {
