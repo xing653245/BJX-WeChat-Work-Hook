@@ -49,7 +49,7 @@ function buildReleaseBody(version = pkg.version) {
   const ver = normalizeVersion(version)
   const notes = getChangelogForVersion(ver)
   const header = `北极熊企微框架Pro v${ver}`
-  const footer = `自动发布于 ${new Date().toLocaleString('zh-CN')}`
+  const footer = `发布于 ${new Date().toLocaleString('zh-CN')}`
   if (notes) {
     return `${header}\n\n${notes}\n\n---\n${footer}`
   }
