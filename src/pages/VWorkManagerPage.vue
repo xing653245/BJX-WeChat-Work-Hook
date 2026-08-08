@@ -471,6 +471,7 @@ const cleanupUnloggedOnMount = async () => {
 
   const pendingPorts = getPendingPortSet()
   const remainList = []
+  const removedItems = []
 
   for (const item of snapshotList) {
     if (!item.port) {
@@ -513,6 +514,7 @@ const cleanupUnloggedOnMount = async () => {
     }
 
     console.warn(`端口 ${port} 未登录且进程已退出，从配置中移除`)
+    removedItems.push(item)
   }
 
   // 清理过程中若有新登录写入配置，合并保留（避免与「添加企微」竞态导致误删）
@@ -534,6 +536,23 @@ const cleanupUnloggedOnMount = async () => {
   if (remainList.length !== snapshotList.length) {
     try {
       await configStore.updateLoginInfo(remainList)
+      // 配置已清理时同步表格，否则 UI 仍显示已移除的行
+      await loadLoginInfo()
+      if (removedItems.length > 0) {
+        const labels = removedItems.map((item) => {
+          const name = item.nick_name && item.nick_name !== '-' ? item.nick_name : '未知账号'
+          return `${name}（端口 ${item.port}）`
+        })
+        ElMessage({
+          type: 'info',
+          duration: 4500,
+          showClose: true,
+          message:
+            labels.length === 1
+              ? `检测到 ${labels[0]} 已退出，已从列表中移除`
+              : `检测到 ${labels.length} 个企微已退出，已从列表中移除：${labels.join('、')}`
+        })
+      }
     } catch (e) {
       console.error('更新配置以移除未登录进程失败:', e)
     }

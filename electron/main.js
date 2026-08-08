@@ -879,12 +879,7 @@ function createWindow() {
     title: '北极熊企微框架Pro'
   })
 
-  // 本地未打包运行时默认打开开发者工具（含：走 Vite、或本地已有 dist 仅 loadFile 调试）
-  if (!app.isPackaged) {
-    mainWindow.webContents.once('did-finish-load', () => {
-      mainWindow.webContents.openDevTools({ mode: 'bottom' })
-    })
-  }
+  // 开发环境不默认打开控制台；需要时用菜单「切换开发者工具」或 Ctrl+Shift+I
 
   // 未打包：优先 Vite 开发服；已打包：加载 dist 构建产物
   let distPath
