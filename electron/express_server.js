@@ -148,29 +148,35 @@ app.get('/', (req, res) => {
 app.use('/api', apiRoutes)
 
 /**
- * 运行Express服务器
- * @param {number} port - 端口号
- * @returns {Promise<http.Server>} HTTP服务器实例
+ * 在已有 Express app 上监听端口（不杀占用进程）
+ * @param {number} port
+ * @returns {Promise<http.Server>}
  */
-async function runServer(port) {
-  // 先杀死占用端口的进程
-  try {
-    await killProcessByPort(port)
-  } catch (error) {
-    // 忽略错误
-  }
-
+function listenAppOnPort(port) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, '127.0.0.1', () => {
+    const server = app.listen(Number(port), '127.0.0.1', () => {
       console.log(`Express服务器启动在端口 ${port}`)
       resolve(server)
     })
-    
     server.on('error', (error) => {
       console.error(`Express服务器启动失败: ${error.message}`)
       reject(error)
     })
   })
+}
+
+/**
+ * 运行Express服务器
+ * @param {number} port - 端口号
+ * @returns {Promise<http.Server>} HTTP服务器实例
+ */
+async function runServer(port) {
+  try {
+    await killProcessByPort(port)
+  } catch (error) {
+    // 忽略错误
+  }
+  return listenAppOnPort(port)
 }
 
 // 如果直接运行此文件
@@ -179,5 +185,5 @@ if (require.main === module) {
   runServer(port)
 }
 
-module.exports = { app, runServer }
+module.exports = { app, runServer, listenAppOnPort }
 

@@ -31,7 +31,7 @@
                 </div>
               </div>
               <el-tooltip
-                content="当你需要调用框架的接口时，就是用的这个端口&#10;调用框架的地址为：http://127.0.0.1:端口号/api&#10;如果修改了这个端口之后，必须要重启框架，设置才会生效"
+                content="当你需要调用框架的接口时，就是用的这个端口&#10;调用框架的地址为：http://127.0.0.1:端口号/api&#10;修改后保存即可切换接口地址；已登录企微无需重新添加"
                 placement="top"
               >
                 <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
@@ -47,7 +47,7 @@
                     placeholder="1024–10000"
                     class="field-input"
                   />
-                  <p class="field-hint">有效范围 (1024, 10000]，修改后需重启框架</p>
+                  <p class="field-hint">有效范围 (1024, 10000]。保存后立即切换接口地址，已登录企微可继续使用</p>
                 </div>
 
                 <label class="field-label" for="settings-callback">回调地址</label>
@@ -1182,11 +1182,9 @@ const handleSave = async () => {
         clearCloseConfirmPrefs()
         refreshCloseConfirmPrefsHint()
       }
-      // 如果端口改变了，需要重启FastAPI服务器
-      if (
-        String(oldPortBeforeSave) !== String(formData.server_port) &&
-        window.electronAPI
-      ) {
+      const listenPortChanged =
+        String(oldPortBeforeSave) !== String(formData.server_port)
+      if (listenPortChanged && window.electronAPI) {
         const restartRes = await window.electronAPI.restartFastAPIServer(
           parseInt(formData.server_port, 10)
         )
@@ -1194,10 +1192,16 @@ const handleSave = async () => {
           ElMessage.error(
             `HTTP 服务未在端口 ${formData.server_port} 启动：${restartRes?.message || '未知错误'}。请检查端口是否被占用，或完全退出框架后重新打开。`
           )
+          isDirty.value = false
+          return
         }
       }
       isDirty.value = false
-      ElMessage.success('修改部分设置后，需要重启框架')
+      if (listenPortChanged) {
+        ElMessage.success('监听端口已切换。外部请改用新端口调用接口；已登录企微无需重新添加')
+      } else {
+        ElMessage.success('保存成功')
+      }
     } else {
       ElMessage.error(result.msg || '保存失败')
       loadConfig() // 恢复原值

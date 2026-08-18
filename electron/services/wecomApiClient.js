@@ -201,7 +201,7 @@ async function postToVWorkApi(port, requestData, options = {}) {
     }
 
     const data = await enqueuePortTask(port, type, () =>
-      axios.post(url, hookPayload, { timeout }).then((res) => res.data)
+      axios.post(url, hookPayload, { timeout, proxy: false, family: 4 }).then((res) => res.data)
     )
 
     if (type === 4008) {
@@ -212,7 +212,7 @@ async function postToVWorkApi(port, requestData, options = {}) {
   }
 
   return enqueuePortTask(port, type, () =>
-    axios.post(url, requestData, { timeout }).then((res) => res.data)
+    axios.post(url, requestData, { timeout, proxy: false, family: 4 }).then((res) => res.data)
   )
 }
 

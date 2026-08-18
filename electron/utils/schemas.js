@@ -21,6 +21,7 @@ class LoginInfo {
     this.sex = data.sex || ''
     this.user_id = data.user_id || ''
     this.port = data.port || ''
+    this.my_port = data.my_port || ''
     this.pid = data.pid || ''
     this.expire = data.expire || '未授权'
     this.auth_active = data.auth_active === true
@@ -46,6 +47,7 @@ class LoginInfo {
       sex: this.sex,
       user_id: this.user_id,
       port: this.port,
+      my_port: this.my_port,
       pid: this.pid,
       expire: this.expire,
       auth_active: this.auth_active,

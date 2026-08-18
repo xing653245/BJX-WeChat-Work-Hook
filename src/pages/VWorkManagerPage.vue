@@ -574,6 +574,9 @@ const addTableItem = (item) => {
     nick_name: item.nick_name || '-',
     user_id: item.user_id || '-',
     port: String(item.port || '-'),
+    my_port: item.my_port != null && String(item.my_port).trim() !== ''
+      ? String(item.my_port)
+      : String(serverPort.value || ''),
     pid: String(item.pid || '-'),
     expire: item.expire || '未授权',
     auth_active: item.auth_active === true,
@@ -1314,7 +1317,19 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
     // 注意：这里会基于当前配置列表（已过滤掉已关闭进程）进行更新或添加
     const loginInfoList = configStore.getLoginInfo()
     const index = loginInfoList.findIndex(item => item.user_id === userId)
-    const updatedInfo = { ...loginInfo, expire, auth_active: authActive, card_key: cardKey }
+    const existing = index >= 0 ? loginInfoList[index] : {}
+    const myPort =
+      existing.my_port ||
+      loginInfo?.my_port ||
+      String(serverPort.value || '')
+    const updatedInfo = {
+      ...existing,
+      ...loginInfo,
+      expire,
+      auth_active: authActive,
+      card_key: cardKey,
+      my_port: myPort
+    }
     
     if (index >= 0) {
       // 如果已存在相同 user_id，更新数据（可能来自历史数据）

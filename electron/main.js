@@ -69,6 +69,10 @@ const { initDesktopNotifications, showDesktopNotification } = require('./service
 const { initCrashDiagnostics, attachWebContentsDiagnostics } = require('./services/crashDiagnostics')
 const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
 const {
+  collectHookCompatListenPorts,
+  applyListenPortChangeToConfig
+} = require('./commons/hookCompatPorts')
+const {
   checkPortListenAvailable,
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService,
@@ -407,10 +411,40 @@ const startMessageServer = () => {
 }
 
 // Express 服务器管理（Node.js版本，替代Python FastAPI）
-let expressServer = null
+let expressServers = []
+
+function closeHttpServer(server) {
+  return new Promise((resolve) => {
+    if (!server) {
+      resolve()
+      return
+    }
+    try {
+      server.close((err) => {
+        if (err) console.error('停止Express失败:', err)
+        resolve()
+      })
+      if (typeof server.closeAllConnections === 'function') {
+        server.closeAllConnections()
+      }
+    } catch (e) {
+      console.error('停止Express失败:', e)
+      resolve()
+    }
+  })
+}
+
+async function closeAllExpressServers() {
+  const oldServers = expressServers
+  expressServers = []
+  if (oldServers.length === 0) return
+  await Promise.all(oldServers.map((server) => closeHttpServer(server)))
+  console.log('Express服务器已关闭')
+}
 
 /**
  * 启动内置 HTTP（Express）。失败时返回 { success:false }，不抛异常，便于 IPC/设置页提示。
+ * 主端口为设置里的监听端口；额外端口用于已注入企微仍向旧 --my_port 推送 /msg。
  * @param {number|string} port
  * @returns {Promise<{ success: boolean, message?: string }>}
  */
@@ -422,41 +456,24 @@ const startExpressServer = async (port) => {
     return { success: false, message: msg }
   }
 
-  // 先关闭旧 HTTP 服务并等待端口释放，避免与 killProcessByPort 竞态
-  if (expressServer) {
-    const oldServer = expressServer
-    expressServer = null
-    await new Promise((resolve) => {
-      try {
-        oldServer.close((err) => {
-          if (err) console.error('停止旧Express失败:', err)
-          else console.log('Express服务器已关闭')
-          resolve()
-        })
-      } catch (e) {
-        console.error('停止旧服务器失败:', e)
-        resolve()
-      }
-    })
-  }
+  await closeAllExpressServers()
 
   // 仅清理「其他进程」占用；当前进程监听时不再 taskkill 自身（见 killProcessByPort）
   await killProcessByPort(p)
 
   process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
   ensureMessageServerToken()
-  const { runServer } = require('./express_server')
+  const { runServer, listenAppOnPort } = require('./express_server')
   console.log(`启动Express服务器，端口: ${p}`)
 
   try {
     const server = await runServer(p)
-    expressServer = server
+    expressServers.push(server)
     console.log(`Express服务器启动成功，监听端口 ${p}`)
-    return { success: true }
   } catch (error) {
     const msg = error.message || String(error)
     console.error('启动Express服务器失败:', msg)
-    expressServer = null
+    expressServers = []
     if (/EADDRINUSE|已被占用|address already in use/i.test(msg)) {
       notifyPortError({
         port: p,
@@ -466,6 +483,21 @@ const startExpressServer = async (port) => {
     }
     return { success: false, message: msg }
   }
+
+  const compatPorts = collectHookCompatListenPorts(readConfig(), p)
+  for (const extraPort of compatPorts) {
+    try {
+      const extraServer = await listenAppOnPort(extraPort)
+      expressServers.push(extraServer)
+      console.log(`Hook 兼容监听已启动: ${extraPort}（已注入企微仍向旧 --my_port 回包）`)
+    } catch (error) {
+      console.warn(
+        `Hook 兼容端口 ${extraPort} 无法监听: ${error.message}。已登录企微若仍指向该端口，接口可能超时。`
+      )
+    }
+  }
+
+  return { success: true }
 }
 
 // 根据端口查找PID
@@ -1060,9 +1092,9 @@ function createWindow() {
   mainWindow.on('closed', () => {
     destroyTray()
     mainWindow = null
-    if (expressServer) {
-      expressServer.close(() => {
-        console.log('Express服务器已关闭')
+    if (expressServers.length > 0) {
+      closeAllExpressServers().catch((e) => {
+        console.error('关闭Express失败:', e)
       })
     }
     if (messageServer) {
@@ -1246,7 +1278,12 @@ ipcMain.handle('read-config', () => {
 
 ipcMain.handle('save-config', (event, config) => {
   assertMainWindow(event, mainWindow)
-  return saveConfig(config)
+  const prev = readConfig()
+  const merged = {
+    sys: { ...(prev.sys || {}), ...((config && config.sys) || {}) },
+    custom: { ...(prev.custom || {}), ...((config && config.custom) || {}) }
+  }
+  return saveConfig(applyListenPortChangeToConfig(prev, merged))
 })
 
 ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
@@ -1267,8 +1304,19 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         (data && Number(data.type) === 3006) ||
         (typeof url === 'string' && url.includes('/api/message/applet'))
       const isUserTagsCall = typeof url === 'string' && url.includes('/api/tag/user-tags')
-      const frameworkTimeout = isAppletCall ? 180000 : (isUserTagsCall ? 120000 : 10000)
-      const response = await axios({ method, url, data, timeout: frameworkTimeout })
+      const isMessageCall = typeof url === 'string' && url.includes('/api/message/')
+      // 与 wecomApiClient 默认 30s Hook 超时对齐；外层过短会导致「消息已发出但设置页报 timeout」
+      const frameworkTimeout = isAppletCall
+        ? 180000
+        : (isUserTagsCall ? 120000 : (isMessageCall ? 35000 : 10000))
+      const response = await axios({
+        method,
+        url,
+        data,
+        timeout: frameworkTimeout,
+        proxy: false,
+        family: 4
+      })
       responseData = response.data
     }
 
