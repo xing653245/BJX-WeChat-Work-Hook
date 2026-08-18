@@ -7,6 +7,8 @@ export const useConfigStore = defineStore('config', () => {
     sys: {
       server_port: DEFAULT_SERVER_PORT_STRING,
       callback: '',
+      callback_encrypt: 'false',
+      callback_encrypt_key: '',
       open_log: 'true',
       save_log: 'true',
       auto_check_update: 'true',

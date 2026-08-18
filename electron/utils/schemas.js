@@ -63,6 +63,8 @@ class ReadConfig {
     this.callback = data.callback || ''
     this.open_log = data.open_log !== undefined ? data.open_log : true
     this.save_log = data.save_log !== undefined ? data.save_log : true
+    this.callback_encrypt = data.callback_encrypt === true
+    this.callback_encrypt_key = data.callback_encrypt_key || ''
     this.login_info = (data.login_info || []).map(item => 
       item instanceof LoginInfo ? item : new LoginInfo(item)
     )
@@ -74,6 +76,8 @@ class ReadConfig {
       callback: this.callback,
       open_log: this.open_log,
       save_log: this.save_log,
+      callback_encrypt: this.callback_encrypt,
+      callback_encrypt_key: this.callback_encrypt_key,
       login_info: this.login_info.map(item => item.toJSON())
     }
   }

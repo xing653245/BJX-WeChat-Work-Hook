@@ -27,7 +27,7 @@
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
                   <h2 class="section-title">HTTP 设置</h2>
-                  <p class="section-desc">框架监听端口与消息回调地址</p>
+                  <p class="section-desc">框架监听端口、消息回调与推送加密</p>
                 </div>
               </div>
               <el-tooltip
@@ -68,6 +68,46 @@
                     </el-tooltip>
                   </p>
                 </div>
+
+                <label class="field-label" for="settings-callback-encrypt">消息加密</label>
+                <div class="field-control">
+                  <el-switch id="settings-callback-encrypt" v-model="formData.callback_encrypt" />
+                  <p class="field-hint">
+                    开启后，推送到回调地址的正文使用 AES-256-GCM 加密；未开启则仍为明文 JSON。保存后需要重启框架
+                    <el-tooltip
+                      content="加密后请求头带 X-VWork-Encrypt: AES-256-GCM&#10;正文为 { encrypted, alg, iv, tag, ciphertext }&#10;用下方 64 位十六进制密钥解密即可得到原来的 JSON"
+                      placement="top"
+                    >
+                      <el-icon class="inline-help"><QuestionFilled /></el-icon>
+                    </el-tooltip>
+                  </p>
+                </div>
+
+                <template v-if="formData.callback_encrypt">
+                  <label class="field-label" for="settings-callback-encrypt-key">解密密钥</label>
+                  <div class="field-control">
+                    <div class="key-row">
+                      <el-input
+                        id="settings-callback-encrypt-key"
+                        v-model="formData.callback_encrypt_key"
+                        type="password"
+                        show-password
+                        placeholder="64 位十六进制（32 字节）"
+                        class="field-input-wide"
+                      />
+                      <el-button @click="copyEncryptKey">复制</el-button>
+                      <el-button @click="regenerateEncryptKey">重新生成</el-button>
+                    </div>
+                    <p class="field-hint">
+                      请妥善保存并配置到你的回调服务；重新生成后旧密钥无法解密之后的推送。
+                    </p>
+                    <pre class="decrypt-sample">{{ decryptSampleText }}</pre>
+                    <div class="key-row key-row-actions">
+                      <el-button size="small" plain @click="copyDecryptSnippet('node')">复制 Node 解密</el-button>
+                      <el-button size="small" plain @click="copyDecryptSnippet('python')">复制 Python 解密</el-button>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
           </div>
@@ -572,7 +612,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   QuestionFilled,
   Refresh,
@@ -747,6 +787,8 @@ function formatWecomInstanceOptionLabel(row) {
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
+  callback_encrypt: false,
+  callback_encrypt_key: '',
   wecom_version: DEFAULT_WECOM_VERSION,
   wecom_exe_path_v4: '',
   wecom_exe_path_v5: '',
@@ -824,6 +866,9 @@ const loadConfig = () => {
   const config = configStore.config
   formData.server_port = config.sys?.server_port || DEFAULT_SERVER_PORT_STRING
   formData.callback = config.sys?.callback || ''
+  formData.callback_encrypt =
+    config.sys?.callback_encrypt === 'true' || config.sys?.callback_encrypt === true
+  formData.callback_encrypt_key = String(config.sys?.callback_encrypt_key || '').trim()
   formData.wecom_version = isWecomVersionConfigured(config.sys?.wecom_version)
     ? config.sys.wecom_version
     : DEFAULT_WECOM_VERSION
@@ -871,6 +916,100 @@ watch(
     if (!open) formData.save_log = false
   }
 )
+
+watch(
+  () => formData.callback_encrypt,
+  (on) => {
+    if (skipDirtyWatch.value) return
+    if (on && !isValidCallbackEncryptKey(formData.callback_encrypt_key)) {
+      formData.callback_encrypt_key = generateCallbackEncryptKey()
+    }
+  }
+)
+
+function generateCallbackEncryptKey() {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32))
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function isValidCallbackEncryptKey(raw) {
+  return /^[0-9a-fA-F]{64}$/.test(String(raw || '').trim())
+}
+
+const decryptSampleText = `{
+  "encrypted": true,
+  "alg": "AES-256-GCM",
+  "iv": "<Base64>",
+  "tag": "<Base64>",
+  "ciphertext": "<Base64>"
+}`
+
+const NODE_DECRYPT_SNIPPET = `const crypto = require('crypto')
+
+function decryptCallback(body, keyHex) {
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    Buffer.from(keyHex, 'hex'),
+    Buffer.from(body.iv, 'base64')
+  )
+  decipher.setAuthTag(Buffer.from(body.tag, 'base64'))
+  const buf = Buffer.concat([
+    decipher.update(Buffer.from(body.ciphertext, 'base64')),
+    decipher.final()
+  ])
+  return JSON.parse(buf.toString('utf8'))
+}`
+
+const PYTHON_DECRYPT_SNIPPET = `import json, base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+def decrypt_callback(body: dict, key_hex: str) -> dict:
+    key = bytes.fromhex(key_hex)
+    iv = base64.b64decode(body["iv"])
+    tag = base64.b64decode(body["tag"])
+    ct = base64.b64decode(body["ciphertext"])
+    plain = AESGCM(key).decrypt(iv, ct + tag, None)
+    return json.loads(plain)`
+
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(okMsg)
+  } catch {
+    ElMessage.warning('复制失败，请手动复制')
+  }
+}
+
+async function copyEncryptKey() {
+  const key = String(formData.callback_encrypt_key || '').trim()
+  if (!isValidCallbackEncryptKey(key)) {
+    ElMessage.warning('请先生成有效密钥')
+    return
+  }
+  await copyText(key, '密钥已复制')
+}
+
+async function regenerateEncryptKey() {
+  try {
+    await ElMessageBox.confirm(
+      '重新生成后，旧密钥无法解密之后的推送。请同步更新你的回调服务，并点击「保存修改」。',
+      '重新生成解密密钥',
+      { type: 'warning', confirmButtonText: '重新生成', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  formData.callback_encrypt_key = generateCallbackEncryptKey()
+  ElMessage.success('已生成新密钥，保存后生效')
+}
+
+async function copyDecryptSnippet(kind) {
+  if (kind === 'python') {
+    await copyText(PYTHON_DECRYPT_SNIPPET, 'Python 解密示例已复制')
+    return
+  }
+  await copyText(NODE_DECRYPT_SNIPPET, 'Node 解密示例已复制')
+}
 
 async function handleTestMessageText() {
   if (!window.electronAPI?.callAPI) {
@@ -1147,6 +1286,11 @@ const handleSave = async () => {
     return
   }
 
+  if (formData.callback_encrypt && !isValidCallbackEncryptKey(formData.callback_encrypt_key)) {
+    ElMessage.warning('消息加密已开启，请填写有效的 64 位十六进制密钥，或点击「重新生成」')
+    return
+  }
+
   saving.value = true
   const prevCloseIni = normalizeIniCloseAction(configStore.config.sys?.window_close_action)
   const nextClose = formData.window_close_action || 'ask'
@@ -1156,6 +1300,8 @@ const handleSave = async () => {
       sys: {
         server_port: String(formData.server_port),
         callback: formData.callback || '',
+        callback_encrypt: String(formData.callback_encrypt),
+        callback_encrypt_key: String(formData.callback_encrypt_key || '').trim().toLowerCase(),
         wecom_version: formData.wecom_version || DEFAULT_WECOM_VERSION,
         wecom_exe_path_v4: String(formData.wecom_exe_path_v4 || '').trim(),
         wecom_exe_path_v5: String(formData.wecom_exe_path_v5 || '').trim(),
@@ -1538,6 +1684,35 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: var(--sp-muted);
+}
+
+.key-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-row .field-input-wide {
+  flex: 1;
+  min-width: 220px;
+}
+
+.key-row-actions {
+  margin-top: 8px;
+}
+
+.decrypt-sample {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  max-width: 480px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--sp-muted);
+  background: var(--sp-toolbar-bg);
+  border: 1px solid var(--sp-border);
+  border-radius: 8px;
 }
 
 .wecom-version-radio {

@@ -12,6 +12,10 @@ const { promisify } = require('util')
 const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
 const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
+const {
+  encryptCallbackPayload,
+  isValidCallbackEncryptKey
+} = require('./callbackCrypto')
 
 /**
  * 获取配置文件路径
@@ -251,6 +255,38 @@ async function saveLogToFile(data) {
   }
 }
 
+function parseIniFlag(value) {
+  return value === 'true' || value === true
+}
+
+/**
+ * 按设置决定是否加密回调正文。加密已开但密钥无效时不发送明文。
+ */
+function buildCallbackPostBody(data) {
+  const ini_config = readIni()
+  if (!ini_config.callback_encrypt) {
+    return { ok: true, body: data, headers: {} }
+  }
+  if (!isValidCallbackEncryptKey(ini_config.callback_encrypt_key)) {
+    return {
+      ok: false,
+      message: '回调加密已开启但密钥无效，请在设置中生成密钥并保存'
+    }
+  }
+  try {
+    return {
+      ok: true,
+      body: encryptCallbackPayload(data, ini_config.callback_encrypt_key),
+      headers: { 'X-VWork-Encrypt': 'AES-256-GCM' }
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: `回调加密失败: ${error.message}`
+    }
+  }
+}
+
 /**
  * 异步发送回调
  * @param {string} url - 回调地址
@@ -259,9 +295,20 @@ async function saveLogToFile(data) {
  */
 async function sendCallback(url, data) {
   const startTime = Date.now()
+  const packed = buildCallbackPostBody(data)
+  if (!packed.ok) {
+    console.error(`❌ ${packed.message}`)
+    return {
+      success: false,
+      message: packed.message,
+      data: null,
+      duration: Date.now() - startTime
+    }
+  }
   try {
-    const response = await axios.post(url, data, {
-      timeout: 10000
+    const response = await axios.post(url, packed.body, {
+      timeout: 10000,
+      headers: packed.headers
     })
     const duration = Date.now() - startTime
     console.log(`✅ 回调发送成功: ${url} (耗时: ${duration}ms)`)
@@ -432,12 +479,16 @@ function readIni(configPath = null) {
     let callback = ''
     let open_log = true
     let save_log = true
+    let callback_encrypt = false
+    let callback_encrypt_key = ''
 
     if (conf.sys) {
       server_port = conf.sys.server_port || server_port
       callback = conf.sys.callback || callback
-      open_log = conf.sys.open_log === 'true' || conf.sys.open_log === true
-      save_log = conf.sys.save_log === 'true' || conf.sys.save_log === true
+      open_log = parseIniFlag(conf.sys.open_log)
+      save_log = parseIniFlag(conf.sys.save_log)
+      callback_encrypt = parseIniFlag(conf.sys.callback_encrypt)
+      callback_encrypt_key = String(conf.sys.callback_encrypt_key || '').trim()
     }
 
     let login_info_list = '[]'
@@ -460,6 +511,8 @@ function readIni(configPath = null) {
       callback,
       open_log,
       save_log,
+      callback_encrypt,
+      callback_encrypt_key,
       login_info
     })
   } catch (error) {
@@ -469,6 +522,8 @@ function readIni(configPath = null) {
       callback: '',
       open_log: true,
       save_log: true,
+      callback_encrypt: false,
+      callback_encrypt_key: '',
       login_info: []
     })
   }
