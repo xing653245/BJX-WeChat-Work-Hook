@@ -102,6 +102,12 @@ function createAPIHandler(type, apiName, paramsValidator = null) {
         } else if (error.code === 'WECOM_HOOK_UNREACHABLE') {
           statusCode = 503
           errorMessage = error.message
+        } else if (error.code === 'WECOM_AGENT_UNAVAILABLE') {
+          statusCode = 503
+          errorMessage = error.message
+        } else if (error.code === 'WECOM_AGENT_UNSUPPORTED') {
+          statusCode = 501
+          errorMessage = error.message
         } else if (error.code === 'INVALID_FRIEND_NETWORK_PARAMS') {
           statusCode = 400
           errorMessage = error.message

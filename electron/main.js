@@ -74,15 +74,15 @@ const {
 } = require('./commons/hookCompatPorts')
 const {
   checkPortListenAvailable,
-  findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService,
   readInjectConfig,
   getAppPathForResources,
   readWecomRegistryInfo
 } = require('./services/wecomInject')
-const { getWecomVersionOptions, needsWecomVersionSelection } = require('./configs/wecomVersion')
+const { getWecomVersionOptions } = require('./configs/wecomVersion')
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
+const { AGENT_HTTP_PORT, AGENT_WS_PORT, getWecomAgentManager } = require('./services/wecomAgentManager')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
   canInjectPort,
@@ -452,6 +452,13 @@ const startExpressServer = async (port) => {
   const p = parseInt(port, 10)
   if (Number.isNaN(p) || p <= 1024 || p > 10000) {
     const msg = `监听端口无效: ${port}（有效范围 1025～10000）`
+    console.error(msg)
+    return { success: false, message: msg }
+  }
+
+  const reservedPorts = new Set([AGENT_HTTP_PORT, AGENT_WS_PORT, 9999])
+  if (reservedPorts.has(p)) {
+    const msg = `监听端口 ${p} 已由框架内部服务保留，请使用其他端口（推荐 ${DEFAULT_SERVER_PORT}）`
     console.error(msg)
     return { success: false, message: msg }
   }
@@ -950,13 +957,7 @@ function createWindow() {
   }
 
   const notifyWecomVersionRequiredIfNeeded = () => {
-    try {
-      if (needsWecomVersionSelection(readConfig())) {
-        mainWindow.webContents.send('wecom-version-required')
-      }
-    } catch (e) {
-      console.error('[企微版本] 检查是否需要选择版本失败:', e.message)
-    }
+    // 新框架统一由内置 Agent 管理企微版本，不再要求客户选择注入版本。
   }
 
   if (!app.isPackaged) {
@@ -1015,6 +1016,9 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('Page loaded successfully')
     notifyWecomVersionRequiredIfNeeded()
+    getWecomAgentManager().isHealthy().then((healthy) => {
+      if (healthy) notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
+    }).catch(() => {})
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1172,7 +1176,7 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
 
   initCrashDiagnostics({ getMainWindow: () => mainWindow })
@@ -1190,23 +1194,35 @@ app.whenReady().then(() => {
   startMessageServer()
 
   const config = readConfig()
-  startExpressServer(parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)).then((r) => {
-    if (!r.success) {
-      console.error('启动Express失败:', r.message)
-      const port = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
-      if (!/EADDRINUSE|已被占用|address already in use/i.test(r.message || '')) {
-        notifyPortError({
-          port,
-          service: 'HTTP 框架服务',
-          detail: r.message || 'Express 服务启动失败'
-        })
-      }
+  const frameworkPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
+  const expressResult = await startExpressServer(frameworkPort)
+  if (!expressResult.success) {
+    console.error('启动Express失败:', expressResult.message)
+    if (!/EADDRINUSE|已被占用|address already in use/i.test(expressResult.message || '')) {
+      notifyPortError({
+        port: frameworkPort,
+        service: 'HTTP 框架服务',
+        detail: expressResult.message || 'Express 服务启动失败'
+      })
     }
-  })
+  }
 
-  // 启动定时检查登录状态
-  startTimedLoginStatusCheck()
-  startWecomCrashDialogWatch()
+  const agentManager = getWecomAgentManager()
+  const agentResult = await agentManager.ensureStarted({
+    callbackUrl: expressResult.success
+      ? `http://127.0.0.1:${frameworkPort}/msg`
+      : undefined
+  })
+  if (agentResult.success) {
+    console.log(`[企微 Agent] 已托管，HTTP 端口 ${AGENT_HTTP_PORT}`)
+    notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
+  } else {
+    notifyPortError({
+      port: AGENT_HTTP_PORT,
+      service: '企微 Agent',
+      detail: agentResult.output || '企微 Agent 启动失败'
+    })
+  }
 
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
@@ -1247,6 +1263,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   destroyTray()
+  getWecomAgentManager().stop()
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
@@ -1274,7 +1291,12 @@ ipcMain.handle('read-config', () => {
   const config = readConfig()
   return {
     ...config,
-    sys: { ...(config.sys || {}), inject_key: DEFAULT_INJECT_KEY }
+    sys: {
+      ...(config.sys || {}),
+      inject_key: DEFAULT_INJECT_KEY,
+      wecom_version: 'v5',
+      wecom_version_selected: 'true'
+    }
   }
 })
 
@@ -1572,7 +1594,7 @@ ipcMain.handle('check-port', async (event, port) => {
 
 // 查找可用端口（随机生成并检查是否被占用，范围 1025～10000）
 ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
-  return findAvailablePortForInject(startPort, endPort)
+  return { port: AGENT_HTTP_PORT }
 })
 
 ipcMain.handle('get-wecom-version-options', () => {
@@ -1582,17 +1604,18 @@ ipcMain.handle('get-wecom-version-options', () => {
 })
 
 ipcMain.handle('needs-wecom-version-selection', () => {
-  return { needed: needsWecomVersionSelection(readConfig()) }
+  return { needed: false }
 })
 
 ipcMain.handle('get-wecom-registry-info', () => readWecomRegistryInfo())
 
 // 执行注入工具（统一走 runInjectForPort，含重复注入防护）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
-  resetCrashRecoveryProtection()
-  const injectKey = key || DEFAULT_INJECT_KEY
   const sp = parseInt(serverPort, 10) || readInjectConfig().serverPort
-  return runInjectForPort(Number(port), sp, injectKey, '手动')
+  const result = await getWecomAgentManager().ensureStarted({
+    callbackUrl: `http://127.0.0.1:${sp}/msg`
+  })
+  return { ...result, port: AGENT_HTTP_PORT }
 })
 
 ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {

@@ -7,10 +7,9 @@
 const express = require('express')
 const router = express.Router()
 const { createAPIHandler } = require('../middleware/apiHandler')
-const { isPortInUse } = require('../commons/common')
-const { findAvailablePort, runInjectTool, readInjectConfig } = require('../services/wecomInject')
+const { readIni } = require('../commons/common')
+const { AGENT_HTTP_PORT, getWecomAgentManager } = require('../services/wecomAgentManager')
 const { notifyWecomInjectStarted } = require('../services/wecomNotify')
-const { canInjectPort, markPortStabilizing, recordInjectAttempt } = require('../services/wecomStability')
 
 /**
  * 清空聊天记录
@@ -53,65 +52,21 @@ router.post('/chat-window', createAPIHandler(10005, '获取当前聊天窗口信
 /**
  * 启动企微（注入工具）
  * POST /api/other/start-wecom
- * 请求体: {
- *   "port": 8080   // 可选；不传则自动分配可用端口（与界面「随机端口」逻辑一致）
- * }
- * 说明：与「添加企微」一致，指定端口时范围为 (1024, 10000]，即 1025-10000
- * 占用：若指定端口已被系统占用则 HTTP 409，body 含 code: PORT_IN_USE
+ * 请求体可为空；内置 Agent 固定使用 8080，旧调用方传入的 port 会被忽略。
  */
 router.post('/start-wecom', async (req, res) => {
   try {
-    const raw = req.body.port
-    let port
-
-    if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
-      port = parseInt(raw, 10)
-      if (Number.isNaN(port) || port <= 1024 || port > 10000) {
-        return res.status(400).json({
-          success: false,
-          message: '端口可用范围(1024, 10000]，即 1025-10000'
-        })
-      }
-      const inUse = await isPortInUse(port)
-      if (inUse) {
-        return res.status(409).json({
-          success: false,
-          code: 'PORT_IN_USE',
-          message: `指定端口 ${port} 已被系统占用（无法绑定），请更换其他端口或未传 port 由系统自动分配`
-        })
-      }
-    } else {
-      const { port: found } = await findAvailablePort()
-      port = found
-      if (!port) {
-        return res.status(500).json({
-          success: false,
-          message: '未找到可用端口'
-        })
-      }
-    }
-
-    const { serverPort, key, wecomVersion } = readInjectConfig()
-
-    const safety = await canInjectPort(port)
-    if (!safety.allowed) {
-      return res.status(409).json({
-        success: false,
-        code: 'INJECT_UNSAFE',
-        message: safety.reason
-      })
-    }
-
-    const result = await runInjectTool({ port, serverPort, key, wecomVersion })
-    const ok = result.success === true
-    recordInjectAttempt(port, ok)
-    if (ok) {
-      markPortStabilizing(port)
-      notifyWecomInjectStarted(port)
+    const config = readIni()
+    const frameworkPort = parseInt(config.server_port, 10) || 8888
+    const result = await getWecomAgentManager().ensureStarted({
+      callbackUrl: `http://127.0.0.1:${frameworkPort}/msg`
+    })
+    if (result.success) {
+      notifyWecomInjectStarted(AGENT_HTTP_PORT, 'HTTP 接口启动')
       return res.json({
         success: true,
         data: {
-          port,
+          port: AGENT_HTTP_PORT,
           output: result.output || ''
         }
       })

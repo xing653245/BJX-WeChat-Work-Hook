@@ -80,6 +80,12 @@ router.post('/call', async (req, res) => {
       } else if (error.code === 'APPLET_QUEUE_FULL') {
         statusCode = 503
         errorMessage = error.message
+      } else if (error.code === 'WECOM_AGENT_UNAVAILABLE') {
+        statusCode = 503
+        errorMessage = error.message
+      } else if (error.code === 'WECOM_AGENT_UNSUPPORTED') {
+        statusCode = 501
+        errorMessage = error.message
       } else if (error.code === 'ECONNREFUSED') {
         errorMessage = `无法连接到企微服务 (端口 ${port})，请确认企微已启动`
       } else if (error.code === 'ETIMEDOUT') {

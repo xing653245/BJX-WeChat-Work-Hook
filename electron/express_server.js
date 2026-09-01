@@ -10,6 +10,7 @@ const { readIni, sendCallback, checkAuthByUserId, killProcessByPort, saveLogToFi
 const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
+const { normalizeAgentEvent } = require('./services/wecomAgentCompat')
 
 // 导入路由
 const apiRoutes = require('./routes/index')
@@ -34,15 +35,17 @@ const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL
  * 异步处理企微消息推送（日志、回调），不阻塞对注入层的 HTTP 响应
  */
 async function processIncomingWecomMessage(data) {
+  const ini_config = readIni()
+  const robotIds = Array.isArray(ini_config.login_info)
+    ? ini_config.login_info.map((item) => item?.user_id).filter(Boolean)
+    : []
   // 不按 msg_type 过滤；未知类型同样推送日志与回调，并补充 msg_type_text 便于排查
-  const payload = enrichWecomMessage(data)
+  const payload = enrichWecomMessage(normalizeAgentEvent(data, robotIds))
 
   let self_user_id = payload.self_user_id || ''
   if (self_user_id === '') {
     self_user_id = payload.user_id || ''
   }
-
-  const ini_config = readIni()
 
   const authResult = checkAuthByUserId(self_user_id, ini_config.login_info)
   const valid_auth = authResult.valid

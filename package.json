@@ -5,6 +5,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
+    "test": "node --test electron/tests/*.test.js",
     "build": "vite build",
     "preview": "vite preview",
     "convert-icon": "node scripts/convert-icon.js",

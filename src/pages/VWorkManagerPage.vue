@@ -749,6 +749,7 @@ const executeAddWechat = async (portType, customPortValue) => {
       })
 
       if (result.success) {
+        port = Number(result.port || port)
         ElMessage.success('企微启动成功，正在登录...')
         trackPendingPort(port)
         const rowIndex = addTableItem({ nick_name: '登录中', port: String(port) })

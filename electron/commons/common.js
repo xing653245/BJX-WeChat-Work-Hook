@@ -41,11 +41,17 @@ function getConfigPath() {
 
       // 默认配置文件（打包时通过 extraResources 拷贝到 resources\conf\conf.ini）
       const defaultConfigPath = path.join(process.resourcesPath || '', 'conf', 'conf.ini')
+      const defaultBackupConfigPath = `${defaultConfigPath}.bak`
 
       // 如果用户目录下还没有配置文件，但 resources 里有默认配置，则复制一份过去
       try {
-        if (!fs.existsSync(userConfigPath) && fs.existsSync(defaultConfigPath)) {
-          fs.copyFileSync(defaultConfigPath, userConfigPath)
+        if (!fs.existsSync(userConfigPath)) {
+          const sourceConfigPath = fs.existsSync(defaultConfigPath)
+            ? defaultConfigPath
+            : defaultBackupConfigPath
+          if (fs.existsSync(sourceConfigPath)) {
+            fs.copyFileSync(sourceConfigPath, userConfigPath)
+          }
         }
       } catch (e) {
         // 复制失败时不影响后续读取逻辑，后面 readIni 会有默认配置兜底
