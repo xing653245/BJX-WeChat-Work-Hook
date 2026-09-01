@@ -56,7 +56,7 @@ let removeFastapiLogoutListener = null
 /** 同一端口切换账号时，避免重复启动后台等待任务 */
 const accountSwitchWatchers = new Map()
 
-/** 通过 HTTP 启动企微时主进程推送端口，由企微管理页消费（与界面添加企微一致） */
+/** 主进程检测到企微启动时推送端口，由企微管理页自动显示。 */
 const wecomApiInjectPorts = ref([])
 provide('wecomApiInjectPorts', wecomApiInjectPorts)
 

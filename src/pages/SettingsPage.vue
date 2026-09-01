@@ -31,7 +31,7 @@
                 </div>
               </div>
               <el-tooltip
-                content="当你需要调用框架的接口时，就是用的这个端口&#10;调用框架的地址为：http://127.0.0.1:端口号/api&#10;修改后保存即可切换接口地址；已登录企微无需重新添加"
+                content="当你需要调用框架的接口时，就是用的这个端口&#10;调用框架的地址为：http://127.0.0.1:端口号/api&#10;修改后保存即可切换接口地址；已登录企微无需额外操作"
                 placement="top"
               >
                 <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
@@ -1280,7 +1280,7 @@ const handleSave = async () => {
       }
       isDirty.value = false
       if (listenPortChanged) {
-        ElMessage.success('监听端口已切换。外部请改用新端口调用接口；已登录企微无需重新添加')
+        ElMessage.success('监听端口已切换。外部请改用新端口调用接口；已登录企微无需额外操作')
       } else {
         ElMessage.success('保存成功')
       }

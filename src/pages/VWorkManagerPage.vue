@@ -1,15 +1,14 @@
 <template>
-  <div
-    class="page-shell vwork-manager-page"
-    @contextmenu="handleTableBlankContextMenu"
-  >
+  <div class="page-shell vwork-manager-page">
     <div class="page-body">
       <div class="section-card">
-        <div class="section-toolbar">
-          <span class="toolbar-hint">
-            企微服务：<strong>自动运行（HTTP 8080）</strong>；
-            企微登录后自动显示，也可在表格空白处或行上<strong>右键</strong>进行管理
-          </span>
+        <div class="login-notice" role="status">
+          <div class="login-notice-icon" aria-hidden="true">✓</div>
+          <div class="login-notice-copy">
+            <strong>无需添加企微，请直接登录</strong>
+            <span>登录成功后，此处会自动显示已登录企微；右键账号可进行授权、标签和退出管理。</span>
+          </div>
+          <span class="service-status">企微服务自动运行 · HTTP 8080</span>
         </div>
         <div class="table-wrap">
           <el-table
@@ -21,6 +20,12 @@
             class="data-table"
             @row-contextmenu="handleContextMenu"
           >
+            <template #empty>
+              <div class="login-empty">
+                <strong>等待企微登录</strong>
+                <span>请直接打开企微并完成登录，账号会自动显示在这里。</span>
+              </div>
+            </template>
             <el-table-column prop="nick_name" label="昵称" width="150" align="center" />
             <el-table-column prop="user_id" label="ID" width="200" align="center" show-overflow-tooltip />
             <el-table-column prop="port" label="HTTP端口" width="120" align="center" />
@@ -38,22 +43,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 添加企微对话框 -->
-    <el-dialog
-      v-model="showAddDialog"
-      title="添加企微（指定端口）"
-      width="400px"
-    >
-      <el-input
-        v-model="customPort"
-        placeholder="请输入端口号(1024-10000)"
-      />
-      <template #footer>
-        <el-button @click="showAddDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleAddWechat">确定</el-button>
-      </template>
-    </el-dialog>
 
     <!-- 设置标签对话框 -->
     <el-dialog
@@ -108,31 +97,6 @@
         top: contextMenuPosition.y + 'px'
       }"
     >
-      <div 
-        class="context-menu-item context-menu-parent"
-        @click.stop="toggleSubMenu('add')"
-      >
-        添加企微
-        <span class="submenu-arrow">▶</span>
-        <div 
-          v-if="activeSubMenu === 'add'"
-          class="context-submenu"
-          @click.stop
-        >
-          <div 
-            class="context-menu-item" 
-            @click="handleMenuCommand('add-random')"
-          >
-            随机端口
-          </div>
-          <div 
-            class="context-menu-item" 
-            @click="handleMenuCommand('add-custom')"
-          >
-            指定端口
-          </div>
-        </div>
-      </div>
       <div 
         class="context-menu-item context-menu-parent"
         @click.stop="toggleSubMenu('auth')"
@@ -227,8 +191,6 @@ const configStore = useConfigStore()
 const wecomApiInjectPorts = inject('wecomApiInjectPorts', ref([]))
 const tableData = ref([])
 const selectedRow = ref(null)
-const showAddDialog = ref(false)
-const customPort = ref('')
 const showTagDialog = ref(false)
 const tagValue = ref('')
 const showCardKeyDialog = ref(false)
@@ -239,7 +201,7 @@ const cardKeySubmitting = ref(false)
 const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
-/** 右键子菜单：'add' | 'auth' | null */
+/** 右键子菜单：'auth' | null */
 const activeSubMenu = ref(null)
 /** 授权绑定 / 取消请求中（按 wxid） */
 const authBindingLoading = reactive({})
@@ -255,9 +217,9 @@ const selectedRowAuthorized = computed(() =>
 
 /** 避免同一端口重复启动登录轮询 */
 const loginPollingPorts = new Set()
-/** 用户主动添加、尚未写入配置的端口（用于恢复表格） */
+/** 自动接入后尚未写入配置的端口（用于恢复表格） */
 const PENDING_PORTS_KEY = 'vwork_pending_wecom_ports'
-/** 每次应用会话仅做一次启动清理，避免 HMR/重复挂载误删刚添加的企微 */
+/** 每次应用会话仅做一次启动清理，避免 HMR/重复挂载误删正在登录的企微 */
 const STARTUP_CLEANUP_DONE_KEY = 'vwork_startup_cleanup_done'
 
 const getPendingPortSet = () => {
@@ -316,8 +278,6 @@ const deleteTableRowByPort = (port) => {
 }
 
 const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT_SERVER_PORT_STRING)
-// 注入 key 由主进程在 read-config 中从 defaults 注入，见 electron/configs/defaults.js
-const injectKey = computed(() => configStore.config.sys?.inject_key || '')
 
 /** 已请求关闭自动更新的企微端口，避免 completePortLogin 重复触发时打两次 */
 const autoUpdateOffRequestedPorts = new Set()
@@ -513,7 +473,7 @@ const cleanupUnloggedOnMount = async () => {
     removedItems.push(item)
   }
 
-  // 清理过程中若有新登录写入配置，合并保留（避免与「添加企微」竞态导致误删）
+  // 清理过程中若有新登录写入配置，合并保留，避免自动登录时被误删。
   const currentList = configStore.getLoginInfo()
   const remainPorts = new Set(
     remainList.map((item) => String(item.port)).filter((p) => p && p !== 'undefined')
@@ -555,13 +515,6 @@ const cleanupUnloggedOnMount = async () => {
   }
 
   sessionStorage.setItem(STARTUP_CLEANUP_DONE_KEY, '1')
-}
-
-// 检查端口是否在使用
-const checkPort = async (port) => {
-  if (!window.electronAPI) return false
-  const result = await window.electronAPI.checkPort(parseInt(port))
-  return result.inUse
 }
 
 // 添加表格项
@@ -614,34 +567,6 @@ const handleContextMenu = (row, column, event) => {
   activeSubMenu.value = null
 }
 
-// 右键菜单处理（表格空白区域）
-const handleTableBlankContextMenu = (event) => {
-  // 检查是否点击在表格行上
-  const target = event.target
-  const trElement = target.closest('tbody tr')
-  
-  // 如果点击在表格行上（tbody内的tr），不处理（由 row-contextmenu 处理）
-  // row-contextmenu 事件会先触发并阻止事件冒泡
-  if (trElement && trElement.closest('.el-table__body')) {
-    return
-  }
-  
-  // 点击在空白区域（表格外部区域或表头等）
-  event.preventDefault()
-  event.stopPropagation()
-  
-  // 清空选中行
-  selectedRow.value = null
-  selectedRowIndex.value = -1
-  
-  // 保存鼠标位置
-  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
-  
-  // 显示菜单（只显示"添加企微"选项，其他项会被禁用），重置子菜单状态
-  contextMenuVisible.value = true
-  activeSubMenu.value = null
-}
-
 // 切换子菜单显示状态（同一时刻只展开一个）
 const toggleSubMenu = (key) => {
   activeSubMenu.value = activeSubMenu.value === key ? null : key
@@ -653,15 +578,6 @@ const handleMenuCommand = async (command) => {
   activeSubMenu.value = null
   
   switch (command) {
-    case 'add-random':
-      // 随机端口直接执行，不打开弹窗
-      await executeAddWechat('random', null)
-      break
-    case 'add-custom':
-      // 指定端口打开弹窗
-      customPort.value = ''
-      showAddDialog.value = true
-      break
     case 'refresh-auth':
       await handleRefreshAuth()
       break
@@ -699,69 +615,6 @@ const handleClickOutside = (event) => {
       activeSubMenu.value = null
     }
   }
-}
-
-// 执行添加企微的核心逻辑
-const executeAddWechat = async (portType, customPortValue) => {
-  let port
-  if (portType === 'random') {
-    // 查找可用端口
-    if (window.electronAPI) {
-      const result = await window.electronAPI.findAvailablePort()
-      port = result.port
-      if (!port) {
-        ElMessage.error('未找到可用端口')
-        return
-      }
-    } else {
-      ElMessage.error('Electron API不可用')
-      return
-    }
-  } else {
-    port = parseInt(customPortValue)
-    if (isNaN(port) || port <= 1024 || port > 10000) {
-      ElMessage.warning('端口可用范围(1024, 10000]')
-      return
-    }
-    const inUse = await checkPort(port)
-    if (inUse) {
-      ElMessage.warning(`端口 ${port} 已被系统占用，请更换其他端口`)
-      return
-    }
-  }
-
-  // 运行注入工具
-  if (window.electronAPI) {
-    try {
-      const result = await window.electronAPI.runInjectTool({
-        port,
-        serverPort: serverPort.value,
-        key: injectKey.value
-      })
-
-      if (result.success) {
-        port = Number(result.port || port)
-        ElMessage.success('企微启动成功，正在登录...')
-        trackPendingPort(port)
-        const rowIndex = addTableItem({ nick_name: '登录中', port: String(port) })
-        checkLoginStatus(port, rowIndex)
-      } else {
-        ElMessage.error({
-          message: result.output || '启动失败',
-          duration: 8000,
-          showClose: true
-        })
-      }
-    } catch (error) {
-      ElMessage.error('启动失败: ' + error.message)
-    }
-  }
-}
-
-// 添加企微（从弹窗调用）
-const handleAddWechat = async () => {
-  await executeAddWechat('custom', customPort.value)
-  showAddDialog.value = false
 }
 
 // 登录完成后写入表格与配置（按端口定位行，避免 reload 后 rowIndex 失效）
@@ -925,7 +778,7 @@ const checkLoginStatus = async (port, rowIndex) => {
   }, 2000)
 }
 
-// 由 HTTP 接口或主进程自动注入成功时，与「添加企微」相同：加行并开始轮询登录
+// 由 HTTP 接口或主进程检测到企微启动后，加行并开始轮询登录。
 const handleApiInjectPort = (port) => {
   const p = Number(port)
   if (Number.isNaN(p) || p <= 0) return
@@ -1506,7 +1359,7 @@ onMounted(async () => {
 
   await loadLoginInfo()
 
-  // 先恢复「登录中」/pending 端口，再启动清理，避免与「添加企微」竞态
+  // 先恢复「登录中」/pending 端口，再启动清理，避免与自动登录竞态。
   if (wecomApiInjectPorts.value.length) {
     const batch = [...wecomApiInjectPorts.value]
     wecomApiInjectPorts.value.splice(0, wecomApiInjectPorts.value.length)
@@ -1661,37 +1514,57 @@ defineExpose({
   overflow: hidden;
 }
 
-.section-toolbar {
+.login-notice {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--sp-border);
-  background: var(--sp-toolbar-bg);
+  gap: 14px;
+  margin: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(64, 158, 255, 0.24);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--sp-accent-soft), var(--sp-surface));
 }
 
-.toolbar-hint {
-  font-size: 12px;
+.login-notice-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--sp-accent);
+  font-size: 20px;
+  font-weight: 700;
+  box-shadow: 0 6px 16px rgba(64, 158, 255, 0.2);
+}
+
+.login-notice-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
   color: var(--sp-muted);
+  font-size: 13px;
   line-height: 1.5;
 }
 
-.toolbar-hint strong {
+.login-notice-copy strong {
   color: var(--sp-text);
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
 }
 
-.toolbar-badge {
+.service-status {
   flex-shrink: 0;
-  padding: 3px 10px;
+  padding: 5px 10px;
   font-size: 12px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
   color: var(--sp-accent);
-  background: var(--sp-accent-soft);
-  border: 1px solid rgba(64, 158, 255, 0.2);
+  background: var(--sp-surface);
+  border: 1px solid rgba(64, 158, 255, 0.24);
   border-radius: 999px;
 }
 
@@ -1699,6 +1572,21 @@ defineExpose({
   flex: 1;
   min-height: 0;
   padding: 0 8px 8px;
+}
+
+.login-empty {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--sp-muted);
+}
+
+.login-empty strong {
+  color: var(--sp-text);
+  font-size: 15px;
 }
 
 .data-table :deep(.el-table__header th) {
@@ -1805,6 +1693,16 @@ defineExpose({
 @media (max-width: 640px) {
   .page-body {
     padding: 12px;
+  }
+
+  .login-notice {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin: 12px;
+  }
+
+  .service-status {
+    margin-left: 50px;
   }
 }
 </style>
