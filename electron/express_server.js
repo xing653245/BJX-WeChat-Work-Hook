@@ -25,8 +25,8 @@ app.use(cors({
   allowedHeaders: ['*']
 }))
 
-// 解析JSON请求体
-app.use(express.json())
+// 支持远程合同文件以 Base64 传入；仍保留明确上限，避免意外占用过多内存。
+app.use(express.json({ limit: '35mb' }))
 
 // 消息推送地址（由环境变量设置）
 const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL

@@ -7,6 +7,38 @@
 const express = require('express')
 const router = express.Router()
 const { createAPIHandler } = require('../middleware/apiHandler')
+const { stageRemoteFile, scheduleRemoteFileCleanup } = require('../services/remoteFileStaging')
+
+async function stageRemoteFileBody(req, res, next) {
+  try {
+    if (!req.body?.port) {
+      return res.status(400).json({ success: false, message: '缺少参数: port (企微的HTTP端口)' })
+    }
+    if (!req.body?.user_id) {
+      return res.status(400).json({ success: false, message: '缺少参数: user_id (用户ID)' })
+    }
+    if (!req.body?.file_name) {
+      return res.status(400).json({ success: false, message: '缺少参数: file_name (文件名)' })
+    }
+    if (!req.body?.content_base64) {
+      return res.status(400).json({ success: false, message: '缺少参数: content_base64 (Base64 文件内容)' })
+    }
+    const filePath = await stageRemoteFile({
+      fileName: req.body.file_name,
+      contentBase64: req.body.content_base64
+    })
+    scheduleRemoteFileCleanup(filePath)
+    req.body = {
+      port: req.body.port,
+      user_id: req.body.user_id,
+      path: filePath
+    }
+    next()
+  } catch (error) {
+    const oversized = String(error.message || '').includes('过大')
+    res.status(oversized ? 413 : 400).json({ success: false, message: error.message })
+  }
+}
 
 /**
  * 发送文本消息
@@ -118,6 +150,18 @@ router.post('/file', createAPIHandler(3003, '发送文件消息', (params) => {
   }
   if (!params.path) {
     return { valid: false, message: '缺少参数: path (文件路径)' }
+  }
+  return { valid: true, params: { user_id: params.user_id, path: params.path } }
+}))
+
+/**
+ * 接收远程服务上传的 Base64 文件，并暂存到本机后发送。
+ * POST /api/message/file-data
+ * 请求体: { "port": 8080, "user_id": "群ID", "file_name": "合同.docx", "content_base64": "..." }
+ */
+router.post('/file-data', stageRemoteFileBody, createAPIHandler(3003, '发送远程文件消息', (params) => {
+  if (!params.user_id) {
+    return { valid: false, message: '缺少参数: user_id (用户ID)' }
   }
   return { valid: true, params: { user_id: params.user_id, path: params.path } }
 }))
