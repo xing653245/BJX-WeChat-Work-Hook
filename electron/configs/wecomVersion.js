@@ -1,17 +1,11 @@
 /**
- * 企微客户端版本与注入工具路径配置
- * v4: bin/it.exe + bin/vworkApi.dll（默认，兼容现有安装）
- * v5: bin/v5/it.exe + bin/v5/device.dll（部分发行包仍命名为 vworkApi.dll，启动时会自动兼容）
+ * 当前企微客户端的旧注入工具路径配置。
+ * 正常启动统一使用内置 WeComHttpAgentStable；这里仅保留现有内部兼容调用。
  */
 const path = require('path')
 const fs = require('fs')
 
 const WECOM_VERSION_META = {
-  v4: {
-    id: 'v4',
-    label: '企微 v4',
-    description: '适用于企微客户端 4.1.36.6012，仅该版本可成功注入'
-  },
   v5: {
     id: 'v5',
     label: '企微 v5',
@@ -20,15 +14,11 @@ const WECOM_VERSION_META = {
 }
 
 const INJECT_DLL_BY_VERSION = {
-  v4: 'vworkApi.dll',
   v5: 'device.dll'
 }
 
-/** v5 旧包可能仍附带 vworkApi.dll 文件名 */
-const V5_INJECT_DLL_ALIASES = ['vworkApi.dll']
-
-const VALID_WECOM_VERSIONS = Object.freeze(['v4', 'v5'])
-const DEFAULT_WECOM_VERSION = 'v4'
+const VALID_WECOM_VERSIONS = Object.freeze(['v5'])
+const DEFAULT_WECOM_VERSION = 'v5'
 
 function normalizeWecomVersion(value) {
   const v = String(value ?? '').trim().toLowerCase()
@@ -37,9 +27,8 @@ function normalizeWecomVersion(value) {
 
 /** @returns {string[]} it.exe 相对应用资源根目录的路径片段 */
 function getInjectExeSegments(versionId) {
-  const v = normalizeWecomVersion(versionId) || DEFAULT_WECOM_VERSION
-  if (v === 'v5') return ['bin', 'v5', 'it.exe']
-  return ['bin', 'it.exe']
+  normalizeWecomVersion(versionId)
+  return ['bin', 'v5', 'it.exe']
 }
 
 function resolveInjectToolPath(appRoot, versionId) {
@@ -50,7 +39,7 @@ function resolveInjectToolPath(appRoot, versionId) {
 
 function getInjectDllFileName(versionId) {
   const version = normalizeWecomVersion(versionId) || DEFAULT_WECOM_VERSION
-  return INJECT_DLL_BY_VERSION[version] || INJECT_DLL_BY_VERSION.v4
+  return INJECT_DLL_BY_VERSION[version]
 }
 
 function resolveInjectDllPath(injectBinDir, versionId) {
@@ -60,14 +49,6 @@ function resolveInjectDllPath(injectBinDir, versionId) {
   if (fs.existsSync(dllPath)) {
     return { version, dllName, dllPath, source: dllName }
   }
-  if (version === 'v5') {
-    for (const alias of V5_INJECT_DLL_ALIASES) {
-      const aliasPath = path.join(injectBinDir, alias)
-      if (fs.existsSync(aliasPath)) {
-        return { version, dllName, dllPath, source: alias, aliasPath }
-      }
-    }
-  }
   return { version, dllName, dllPath, source: '' }
 }
 
@@ -76,32 +57,6 @@ function isInjectToolAvailable(appRoot, versionId) {
   if (!fs.existsSync(injectToolPath)) return false
   const injectBinDir = path.dirname(injectToolPath)
   return Boolean(resolveInjectDllPath(injectBinDir, versionId).source)
-}
-
-function getWecomVersionOptions(appRoot) {
-  return VALID_WECOM_VERSIONS.map((id) => {
-    const meta = WECOM_VERSION_META[id]
-    const { injectToolPath } = resolveInjectToolPath(appRoot, id)
-    return {
-      id,
-      label: meta.label,
-      description: meta.description,
-      injectToolPath,
-      available: isInjectToolAvailable(appRoot, id)
-    }
-  })
-}
-
-/** 用户是否已完成企微版本选择（写入 conf.ini 后不再弹窗） */
-function isWecomVersionSelectionDone(conf) {
-  const sys = conf?.sys || {}
-  const selected = sys.wecom_version_selected
-  if (selected === 'true' || selected === true) return true
-  return normalizeWecomVersion(sys.wecom_version) != null
-}
-
-function needsWecomVersionSelection(conf) {
-  return !isWecomVersionSelectionDone(conf)
 }
 
 module.exports = {
@@ -114,8 +69,5 @@ module.exports = {
   getInjectDllFileName,
   resolveInjectToolPath,
   resolveInjectDllPath,
-  isInjectToolAvailable,
-  getWecomVersionOptions,
-  isWecomVersionSelectionDone,
-  needsWecomVersionSelection
+  isInjectToolAvailable
 }

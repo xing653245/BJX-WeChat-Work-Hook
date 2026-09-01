@@ -162,7 +162,7 @@ function ensureInjectDllReady(injectBinDir, version) {
   }
 }
 
-/** 从注册表或默认目录解析本机企微可执行文件路径（按 v4/v5 区分） */
+/** 从注册表或默认目录解析本机企微可执行文件路径 */
 function readWecomRegistryInfo() {
   if (process.platform !== 'win32') {
     return { executable: '', version: '' }
@@ -182,17 +182,15 @@ function readWecomRegistryInfo() {
   }
 }
 
-function getWecomExePathConfigKey(wecomVersion) {
-  return normalizeWecomVersion(wecomVersion) === 'v5' ? 'wecom_exe_path_v5' : 'wecom_exe_path_v4'
+function getWecomExePathConfigKey() {
+  return 'wecom_exe_path_v5'
 }
 
-/** 注册表/文件版本号是否与所选注入版本一致（4.x → v4，5.x → v5） */
-function isClientVersionMatching(wecomVersion, clientVersion) {
+/** 注册表/文件版本号是否为当前支持的企微客户端 */
+function isClientVersionMatching(_wecomVersion, clientVersion) {
   const major = parseInt(String(clientVersion || '').split('.')[0], 10)
   if (Number.isNaN(major)) return false
-  if (wecomVersion === 'v5') return major >= 5
-  if (wecomVersion === 'v4') return major >= 4 && major < 5
-  return true
+  return major >= 5
 }
 
 /**
@@ -217,10 +215,9 @@ function resolveWecomExePath(conf, wecomVersion) {
     if (isClientVersionMatching(version, reg.version)) {
       return { path: reg.executable, source: 'registry' }
     }
-    const verLabel = version === 'v5' ? 'v5' : 'v4'
     return {
       path: '',
-      error: `注册表当前指向 ${reg.version || '未知版本'} 客户端（${reg.executable}），与所选 ${verLabel} 不一致。请在「设置 → HTTP 设置」填写 ${verLabel} 客户端路径。`
+      error: `注册表当前指向 ${reg.version || '未知版本'} 客户端（${reg.executable}），与当前企微接口不一致。`
     }
   }
 
@@ -229,10 +226,9 @@ function resolveWecomExePath(conf, wecomVersion) {
     return { path: localExe, source: 'localappdata' }
   }
 
-  const verLabel = version === 'v5' ? 'v5' : 'v4'
   return {
     path: '',
-    error: `未找到 ${verLabel} 企微客户端路径，请在「设置 → HTTP 设置」填写 ${verLabel} 客户端路径。`
+    error: '未找到当前企微客户端路径。'
   }
 }
 
@@ -253,12 +249,7 @@ function buildInjectArgs({ port, serverPort, injectKey, wecomExePath }) {
 function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
   const text = String(output || '').trim()
   if (/文件不存在|找不到/.test(text)) {
-    const verLabel = wecomVersion === 'v5' ? '企微 v5' : '企微 v4'
-    const dllName = wecomVersion === 'v5' ? 'device.dll' : 'vworkApi.dll'
-    let hint = `${text}。请确认本机已安装 ${verLabel} 客户端，且注入工具版本与客户端一致；v4/v5 不能混用。`
-    if (wecomVersion === 'v5') {
-      hint += ` v5 注入目录需包含 ${dllName}（若仅有 vworkApi.dll 会自动复制）。`
-    }
+    let hint = `${text}。请确认本机已安装当前企微客户端。`
     if (wecomExePath) {
       hint += ` 当前企微路径: ${wecomExePath}`
     }
@@ -276,7 +267,7 @@ function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
  * @param {number|string} options.port - 企微 HTTP 端口
  * @param {number|string} options.serverPort - 框架监听端口
  * @param {string} [options.key] - 注入 key
- * @param {string} [options.wecomVersion] - v4 | v5，未传则从 conf.ini 读取
+ * @param {string} [options.wecomVersion] - 内部兼容参数，正常启动不再由客户选择
  * @returns {Promise<{ success: boolean, output: string, wecomVersion?: string }>}
  */
 function runInjectTool({ port, serverPort, key, wecomVersion }) {

@@ -75,11 +75,8 @@ const {
 const {
   checkPortListenAvailable,
   runInjectTool: runInjectToolService,
-  readInjectConfig,
-  getAppPathForResources,
-  readWecomRegistryInfo
+  readInjectConfig
 } = require('./services/wecomInject')
-const { getWecomVersionOptions } = require('./configs/wecomVersion')
 const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { AGENT_HTTP_PORT, AGENT_WS_PORT, getWecomAgentManager } = require('./services/wecomAgentManager')
@@ -956,10 +953,6 @@ function createWindow() {
     }
   }
 
-  const notifyWecomVersionRequiredIfNeeded = () => {
-    // 新框架统一由内置 Agent 管理企微版本，不再要求客户选择注入版本。
-  }
-
   if (!app.isPackaged) {
     // 未打包开发：始终优先 Vite，避免 dist 存在时误加载旧前端（导致新功能不生效）
     let retryCount = 0
@@ -1015,7 +1008,6 @@ function createWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('Page loaded successfully')
-    notifyWecomVersionRequiredIfNeeded()
     getWecomAgentManager().isHealthy().then((healthy) => {
       if (healthy) notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
     }).catch(() => {})
@@ -1293,9 +1285,7 @@ ipcMain.handle('read-config', () => {
     ...config,
     sys: {
       ...(config.sys || {}),
-      inject_key: DEFAULT_INJECT_KEY,
-      wecom_version: 'v5',
-      wecom_version_selected: 'true'
+      inject_key: DEFAULT_INJECT_KEY
     }
   }
 })
@@ -1596,18 +1586,6 @@ ipcMain.handle('check-port', async (event, port) => {
 ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
   return { port: AGENT_HTTP_PORT }
 })
-
-ipcMain.handle('get-wecom-version-options', () => {
-  return {
-    options: getWecomVersionOptions(getAppPathForResources())
-  }
-})
-
-ipcMain.handle('needs-wecom-version-selection', () => {
-  return { needed: false }
-})
-
-ipcMain.handle('get-wecom-registry-info', () => readWecomRegistryInfo())
 
 // 执行注入工具（统一走 runInjectForPort，含重复注入防护）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
