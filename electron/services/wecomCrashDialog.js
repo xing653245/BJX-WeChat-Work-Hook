@@ -40,4 +40,12 @@ function tryCloseWecomCrashDialogs() {
   })
 }
 
-module.exports = { tryCloseWecomCrashDialogs }
+async function pollCrashDialogOnce({ closeDialogs = tryCloseWecomCrashDialogs, onCrash } = {}) {
+  const closed = await closeDialogs()
+  if (closed > 0 && typeof onCrash === 'function') {
+    await onCrash(closed)
+  }
+  return closed
+}
+
+module.exports = { tryCloseWecomCrashDialogs, pollCrashDialogOnce }

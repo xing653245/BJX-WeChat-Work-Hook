@@ -77,7 +77,8 @@ const {
   runInjectTool: runInjectToolService,
   readInjectConfig
 } = require('./services/wecomInject')
-const { tryCloseWecomCrashDialogs } = require('./services/wecomCrashDialog')
+const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
+const { createWecomRecovery } = require('./services/wecomRecovery')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { AGENT_HTTP_PORT, AGENT_WS_PORT, getWecomAgentManager } = require('./services/wecomAgentManager')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
@@ -745,6 +746,20 @@ const startTimedLoginStatusCheck = () => {
   console.log(`定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
 }
 
+const recoverWecomAfterCrash = async () => {
+  const config = readConfig()
+  const frameworkPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
+  const recovery = createWecomRecovery({ readConfig })
+  const result = await recovery.recover({
+    callbackUrl: `http://127.0.0.1:${frameworkPort}/msg`
+  })
+  if (!result.success) {
+    throw new Error(result.message || '企业微信恢复失败')
+  }
+  console.log(`[企微崩溃] ${result.message}`)
+  return result
+}
+
 /** 崩溃后按退避策略延迟触发注入恢复 */
 const scheduleCrashRecovery = () => {
   if (crashRecoveryTimer) {
@@ -764,10 +779,10 @@ const scheduleCrashRecovery = () => {
   )
   crashRecoveryTimer = setTimeout(() => {
     crashRecoveryTimer = null
-    console.log('[企微崩溃] 退避结束，开始登录探测与注入恢复')
-    timedGetLoginStatus({ fromCrashRecovery: true })
+    console.log('[企微崩溃] 退避结束，开始重启企微并重连 Agent')
+    recoverWecomAfterCrash()
       .catch((e) => {
-        console.error('[企微崩溃] 注入恢复检查失败:', e.message)
+        console.error('[企微崩溃] 自动恢复失败:', e.message)
       })
       .finally(async () => {
         await recordCrashRecoveryCycleResult()
@@ -792,11 +807,14 @@ const startWecomCrashDialogWatch = () => {
   }
   const intervalMs = 8000
   wecomCrashDialogInterval = setInterval(() => {
-    tryCloseWecomCrashDialogs()
-      .then((closed) => {
-        if (closed <= 0) return
+    pollCrashDialogOnce({
+      onCrash: (closed) => {
         console.log(`[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
         scheduleCrashRecovery()
+      }
+    })
+      .then((closed) => {
+        if (closed <= 0) return
       })
       .catch((e) => {
         console.warn('[企微崩溃] 监视脚本异常:', e.message)
@@ -1216,6 +1234,8 @@ app.whenReady().then(async () => {
     })
   }
 
+  startWecomCrashDialogWatch()
+
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
     const updateConfig = readConfig()
@@ -1259,6 +1279,14 @@ app.on('before-quit', () => {
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
+  }
+  if (wecomCrashDialogInterval) {
+    clearInterval(wecomCrashDialogInterval)
+    wecomCrashDialogInterval = null
+  }
+  if (crashRecoveryTimer) {
+    clearTimeout(crashRecoveryTimer)
+    crashRecoveryTimer = null
   }
 })
 
