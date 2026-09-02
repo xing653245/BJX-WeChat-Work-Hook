@@ -17,6 +17,9 @@ const {
   isValidCallbackEncryptKey
 } = require('./callbackCrypto')
 
+const LEGACY_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8001/msg'
+const DEFAULT_BUSINESS_CALLBACK_URL = 'http://127.0.0.1:8002/msg'
+
 /**
  * 获取配置文件路径
  * 打包后：放到用户可写的 userData 目录中（避免 Program Files 权限问题），并在首次运行时从内置 conf 复制一份
@@ -491,6 +494,14 @@ function readIni(configPath = null) {
     if (conf.sys) {
       server_port = conf.sys.server_port || server_port
       callback = conf.sys.callback || callback
+      if (callback === LEGACY_LOCAL_CALLBACK_URL) {
+        callback = DEFAULT_BUSINESS_CALLBACK_URL
+        conf.sys.callback = callback
+        const migration = writeConfigAtomic(configPath, ini.stringify(conf))
+        if (!migration.success) {
+          console.error(`迁移旧回调地址失败: ${migration.msg}`)
+        }
+      }
       open_log = parseIniFlag(conf.sys.open_log)
       save_log = parseIniFlag(conf.sys.save_log)
       callback_encrypt = parseIniFlag(conf.sys.callback_encrypt)

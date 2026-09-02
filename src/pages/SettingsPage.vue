@@ -55,7 +55,7 @@
                   <el-input
                     id="settings-callback"
                     v-model="formData.callback"
-                    placeholder="如 http://127.0.0.1:8001/msg"
+                    placeholder="如 http://127.0.0.1:8002/msg"
                     class="field-input field-input-wide"
                   />
                   <p class="field-hint">
