@@ -115,36 +115,30 @@
           </div>
         </section>
 
-        <!-- WeCom Agent -->
+        <!-- WeCom Version -->
         <section :id="sectionDomId('wecom')" class="settings-section">
           <div class="section-card">
             <div class="section-head">
               <div class="section-head-left">
                 <span class="section-icon accent"><el-icon><ChatLineRound /></el-icon></span>
                 <div>
-                  <h2 class="section-title">企微接入</h2>
-                  <p class="section-desc">通过注入工具启动企微，每个账号使用独立 HTTP 端口</p>
+                  <h2 class="section-title">企微版本</h2>
+                  <p class="section-desc">注入工具与客户端安装路径</p>
                 </div>
               </div>
             </div>
             <div class="section-body">
               <div class="field-grid">
-                <span class="field-label">接入组件</span>
-                <div class="field-control">
-                  <el-tag type="success" effect="light">it.exe 注入</el-tag>
-                  <p class="field-hint">在「企微管理」右键「添加企微」，由 bin/v5/it.exe 注入并启动。</p>
-                </div>
 
-                <span class="field-label">接口端口</span>
+                <label class="field-label" for="settings-wecom-exe-v5">v5 客户端路径</label>
                 <div class="field-control">
-                  <strong>每个企微一个端口</strong>
-                  <p class="field-hint">随机分配或手动指定 1025–10000，框架按该端口访问这个企微。</p>
-                </div>
-
-                <span class="field-label">使用方式</span>
-                <div class="field-control">
-                  <strong>添加后再登录</strong>
-                  <p class="field-hint">注入成功后表格出现「登录中」，登录完成会写入账号。</p>
+                  <el-input
+                    id="settings-wecom-exe-v5"
+                    v-model="formData.wecom_exe_path_v5"
+                    placeholder="如 D:\WeCom5\WXWork.exe"
+                    class="field-input field-input-wide"
+                  />
+                  <p class="field-hint">仅支持企微 v5.0.3.6005 版本客户端</p>
                 </div>
               </div>
             </div>
@@ -625,9 +619,10 @@ const mainScrollRef = ref(null)
 const sectionExpanded = reactive({ api: true })
 const themeMode = ref(getStoredThemeMode())
 const logDirectoryPath = ref('')
+const wecomVersionOptions = ref([{ id: 'v5', label: '企微 v5', available: true }])
 const navSections = [
   { id: 'http', label: 'HTTP', icon: Connection },
-  { id: 'wecom', label: '企微接入', icon: ChatLineRound },
+  { id: 'wecom', label: '企微版本', icon: ChatLineRound },
   { id: 'api', label: '接口调试', icon: Promotion },
   { id: 'logs', label: '日志', icon: Document },
   { id: 'appearance', label: '外观', icon: Sunny },
@@ -734,12 +729,23 @@ function formatWecomInstanceOptionLabel(row) {
   return `端口 ${row.port} · ${nn}（${uid}）`
 }
 
+const DEFAULT_WECOM_VERSION = 'v5'
+
+async function loadWecomVersionOptions() {
+  if (!window.electronAPI?.getWecomVersionOptions) return
+  const res = await window.electronAPI.getWecomVersionOptions()
+  const options = Array.isArray(res?.options) ? res.options.filter((item) => item.id === 'v5') : []
+  if (options.length) wecomVersionOptions.value = options
+}
+
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
   callback_encrypt: false,
   callback_encrypt_key: '',
   callback_encrypt_private_key: '',
+  wecom_version: DEFAULT_WECOM_VERSION,
+  wecom_exe_path_v5: '',
   open_log: true,
   save_log: true,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
@@ -818,6 +824,8 @@ const loadConfig = () => {
     config.sys?.callback_encrypt === 'true' || config.sys?.callback_encrypt === true
   formData.callback_encrypt_key = String(config.sys?.callback_encrypt_key || '').trim()
   formData.callback_encrypt_private_key = String(config.sys?.callback_encrypt_private_key || '').trim()
+  formData.wecom_version = 'v5'
+  formData.wecom_exe_path_v5 = config.sys?.wecom_exe_path_v5 || ''
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = !(
@@ -1278,6 +1286,9 @@ const handleSave = async () => {
         callback_encrypt: String(formData.callback_encrypt),
         callback_encrypt_key: String(formData.callback_encrypt_key || '').trim(),
         callback_encrypt_private_key: String(formData.callback_encrypt_private_key || '').trim(),
+        wecom_version: 'v5',
+        wecom_exe_path_v5: String(formData.wecom_exe_path_v5 || '').trim(),
+        wecom_version_selected: 'true',
         open_log: String(formData.open_log),
         save_log: String(formData.save_log),
         auto_check_update: String(formData.auto_check_update),
@@ -1352,6 +1363,7 @@ onMounted(async () => {
     await configStore.loadConfig()
   }
   loadConfig()
+  loadWecomVersionOptions()
   loadAppVersion()
   setupUpdateListeners()
   themeMode.value = getStoredThemeMode()
@@ -1470,6 +1482,18 @@ onUnmounted(() => {
 
 .settings-section-last {
   margin-bottom: 8px;
+}
+
+.wecom-version-radio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.wecom-version-unavailable {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--el-color-warning);
 }
 
 .section-card {

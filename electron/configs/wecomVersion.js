@@ -59,6 +59,20 @@ function isInjectToolAvailable(appRoot, versionId) {
   return Boolean(resolveInjectDllPath(injectBinDir, versionId).source)
 }
 
+function getWecomVersionOptions(appRoot) {
+  return VALID_WECOM_VERSIONS.map((id) => {
+    const meta = WECOM_VERSION_META[id]
+    const { injectToolPath } = resolveInjectToolPath(appRoot, id)
+    return {
+      id,
+      label: meta.label,
+      description: meta.description,
+      injectToolPath,
+      available: isInjectToolAvailable(appRoot, id)
+    }
+  })
+}
+
 module.exports = {
   WECOM_VERSION_META,
   VALID_WECOM_VERSIONS,
@@ -69,5 +83,6 @@ module.exports = {
   getInjectDllFileName,
   resolveInjectToolPath,
   resolveInjectDllPath,
-  isInjectToolAvailable
+  isInjectToolAvailable,
+  getWecomVersionOptions
 }

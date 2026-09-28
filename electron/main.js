@@ -81,8 +81,11 @@ const {
   checkPortListenAvailable,
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService,
-  readInjectConfig
+  readInjectConfig,
+  getAppPathForResources,
+  readWecomRegistryInfo
 } = require('./services/wecomInject')
+const { getWecomVersionOptions } = require('./configs/wecomVersion')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
@@ -1612,6 +1615,14 @@ ipcMain.handle('check-port', async (event, port) => {
 ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
   return findAvailablePortForInject(startPort, endPort)
 })
+
+ipcMain.handle('get-wecom-version-options', () => {
+  return {
+    options: getWecomVersionOptions(getAppPathForResources())
+  }
+})
+
+ipcMain.handle('get-wecom-registry-info', () => readWecomRegistryInfo())
 
 // 执行注入工具（统一走 runInjectForPort，含重复注入防护）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
