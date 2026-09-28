@@ -3,5 +3,7 @@
   "logs": "C:\\Users\\zeng\\AppData\\Local\\VworkReconstruction\\logs",
   "port": "8989",
   "automatic_startup": "0",
-  "startup_mode": "start_and_load"
+  "startup_mode": "start_and_load",
+  "encrypt": false,
+  "public_key": ""
 }

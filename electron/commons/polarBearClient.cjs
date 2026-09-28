@@ -3,7 +3,7 @@
  */
 const axios = require('axios')
 const { formatAuthFetchError } = require('./authFetchError')
-const { getPolarBearBaseUrl } = require('../configs/polarBearBackend')
+const { getPolarBearBaseUrl, buildPolarBearAuthHeaders } = require('../configs/polarBearBackend')
 
 function pickBackendMessage(data) {
   if (!data) return ''
@@ -76,11 +76,23 @@ function normalizePolarBearResponse(responseData, fallbackSuccessMsg, fallbackFa
   }
 }
 
+async function getAuthInfo(wxid) {
+  const url = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo?wxid=${encodeURIComponent(wxid)}`
+  const response = await axios.get(url, {
+    timeout: 10000,
+    headers: buildPolarBearAuthHeaders()
+  })
+  return response.data
+}
+
 async function postPolarBear(path, body) {
   const url = `${getPolarBearBaseUrl()}${path}`
   const response = await axios.post(url, body, {
     timeout: 10000,
-    headers: { 'Content-Type': 'application/json' }
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildPolarBearAuthHeaders()
+    }
   })
   return response.data
 }
@@ -156,6 +168,7 @@ async function convertCardByWxid(payload) {
 }
 
 module.exports = {
+  getAuthInfo,
   bindCard,
   unbindCard,
   convertCardByWxid

@@ -63,11 +63,6 @@ try {
 }
 const axios = require('axios')
 const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
-const {
-  generateCallbackEncryptKeyPair,
-  encodePemForIni,
-  decodePemFromIni
-} = require('./commons/callbackCrypto')
 const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
@@ -562,9 +557,6 @@ const readConfig = () => {
       sys: {
         server_port: DEFAULT_SERVER_PORT_STRING,
         callback: '',
-        callback_encrypt: 'false',
-        callback_encrypt_key: '',
-        callback_encrypt_private_key: '',
         open_log: 'true',
         save_log: 'true',
         auto_check_update: 'true',
@@ -1293,12 +1285,6 @@ ipcMain.handle('read-inject-settings', (event) => {
 ipcMain.handle('read-config', () => {
   const config = readConfig()
   const sys = { ...(config.sys || {}) }
-  if (sys.callback_encrypt_key) {
-    sys.callback_encrypt_key = decodePemFromIni(sys.callback_encrypt_key)
-  }
-  if (sys.callback_encrypt_private_key) {
-    sys.callback_encrypt_private_key = decodePemFromIni(sys.callback_encrypt_private_key)
-  }
   return {
     ...config,
     sys: {
@@ -1312,16 +1298,9 @@ ipcMain.handle('save-config', (event, config) => {
   assertMainWindow(event, mainWindow)
   const prev = readConfig()
   const mergedSys = { ...(prev.sys || {}), ...((config && config.sys) || {}) }
-  if (mergedSys.callback_encrypt_key) {
-    mergedSys.callback_encrypt_key = encodePemForIni(
-      decodePemFromIni(mergedSys.callback_encrypt_key)
-    )
-  }
-  if (mergedSys.callback_encrypt_private_key) {
-    mergedSys.callback_encrypt_private_key = encodePemForIni(
-      decodePemFromIni(mergedSys.callback_encrypt_private_key)
-    )
-  }
+  delete mergedSys.callback_encrypt
+  delete mergedSys.callback_encrypt_key
+  delete mergedSys.callback_encrypt_private_key
   const merged = {
     sys: mergedSys,
     custom: { ...(prev.custom || {}), ...((config && config.custom) || {}) }
@@ -1335,15 +1314,6 @@ ipcMain.handle('save-config', (event, config) => {
   } catch (error) {
     if (rollback) rollback()
     return { success: false, msg: error.message }
-  }
-})
-
-ipcMain.handle('generate-callback-rsa-keypair', (event) => {
-  assertMainWindow(event, mainWindow)
-  try {
-    return { success: true, ...generateCallbackEncryptKeyPair() }
-  } catch (error) {
-    return { success: false, message: error.message }
   }
 })
 
@@ -1672,14 +1642,12 @@ ipcMain.handle('reset-crash-recovery-protection', () => {
 
 // 获取授权信息
 const { formatAuthFetchError } = require('./commons/authFetchError')
-const { getPolarBearBaseUrl } = require('./configs/polarBearBackend')
-const { bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
+const { getAuthInfo, bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
 
 ipcMain.handle('get-auth-info', async (event, wxid) => {
-  const authUrl = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo?wxid=${encodeURIComponent(wxid)}`
   try {
-    const response = await axios.get(authUrl, { timeout: 10000 });
-    const result = { success: true, data: response.data }
+    const data = await getAuthInfo(wxid)
+    const result = { success: true, data }
     
     // 读取配置，检查是否开启日志
     const config = readConfig()

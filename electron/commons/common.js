@@ -12,12 +12,6 @@ const { promisify } = require('util')
 const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
 const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
-const {
-  ALG_NAME: CALLBACK_ENCRYPT_ALG,
-  encryptCallbackPayload,
-  isValidCallbackEncryptKey,
-  decodePemFromIni
-} = require('./callbackCrypto')
 
 const LEGACY_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8001/msg'
 const DEFAULT_BUSINESS_CALLBACK_URL = 'http://127.0.0.1:8002/msg'
@@ -271,34 +265,6 @@ function parseIniFlag(value) {
 }
 
 /**
- * 按设置决定是否加密回调正文。加密已开但密钥无效时不发送明文。
- */
-function buildCallbackPostBody(data) {
-  const ini_config = readIni()
-  if (!ini_config.callback_encrypt) {
-    return { ok: true, body: data, headers: {} }
-  }
-  if (!isValidCallbackEncryptKey(ini_config.callback_encrypt_key)) {
-    return {
-      ok: false,
-      message: '回调加密已开启但 RSA 公钥无效，请在设置中重新生成密钥对并保存'
-    }
-  }
-  try {
-    return {
-      ok: true,
-      body: encryptCallbackPayload(data, decodePemFromIni(ini_config.callback_encrypt_key)),
-      headers: { 'X-VWork-Encrypt': CALLBACK_ENCRYPT_ALG }
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      message: `回调加密失败: ${error.message}`
-    }
-  }
-}
-
-/**
  * 异步发送回调
  * @param {string} url - 回调地址
  * @param {object} data - 回调数据
@@ -306,20 +272,9 @@ function buildCallbackPostBody(data) {
  */
 async function sendCallback(url, data) {
   const startTime = Date.now()
-  const packed = buildCallbackPostBody(data)
-  if (!packed.ok) {
-    console.error(`❌ ${packed.message}`)
-    return {
-      success: false,
-      message: packed.message,
-      data: null,
-      duration: Date.now() - startTime
-    }
-  }
   try {
-    const response = await axios.post(url, packed.body, {
-      timeout: 10000,
-      headers: packed.headers
+    const response = await axios.post(url, data, {
+      timeout: 10000
     })
     const duration = Date.now() - startTime
     console.log(`✅ 回调发送成功: ${url} (耗时: ${duration}ms)`)
@@ -490,9 +445,6 @@ function readIni(configPath = null) {
     let callback = ''
     let open_log = true
     let save_log = true
-    let callback_encrypt = false
-    let callback_encrypt_key = ''
-    let callback_encrypt_private_key = ''
 
     if (conf.sys) {
       server_port = conf.sys.server_port || server_port
@@ -507,9 +459,6 @@ function readIni(configPath = null) {
       }
       open_log = parseIniFlag(conf.sys.open_log)
       save_log = parseIniFlag(conf.sys.save_log)
-      callback_encrypt = parseIniFlag(conf.sys.callback_encrypt)
-      callback_encrypt_key = decodePemFromIni(conf.sys.callback_encrypt_key || '')
-      callback_encrypt_private_key = decodePemFromIni(conf.sys.callback_encrypt_private_key || '')
     }
 
     let login_info_list = '[]'
@@ -532,9 +481,6 @@ function readIni(configPath = null) {
       callback,
       open_log,
       save_log,
-      callback_encrypt,
-      callback_encrypt_key,
-      callback_encrypt_private_key,
       login_info
     })
   } catch (error) {
@@ -544,9 +490,6 @@ function readIni(configPath = null) {
       callback: '',
       open_log: true,
       save_log: true,
-      callback_encrypt: false,
-      callback_encrypt_key: '',
-      callback_encrypt_private_key: '',
       login_info: []
     })
   }

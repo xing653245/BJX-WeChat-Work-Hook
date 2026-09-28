@@ -32,12 +32,6 @@
                   <p class="section-desc">企微监听端口与消息回调</p>
                 </div>
               </div>
-              <el-tooltip
-                content="设置企微默认监听端口和原生回调地址；添加企微时使用所选端口，回调设置在重新启动企微后生效"
-                placement="top"
-              >
-                <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
-              </el-tooltip>
             </div>
             <div class="section-body">
               <div class="field-grid">
@@ -75,42 +69,25 @@
                 <div class="field-grid advanced-body">
                 <label class="field-label" for="settings-callback-encrypt">消息加密</label>
                 <div class="field-control">
-                  <el-switch id="settings-callback-encrypt" v-model="formData.callback_encrypt" />
-                  <p class="field-hint">
-                    仅用于框架转发的消息，不作用于上方原生回调。使用 RSA-OAEP（SHA-256）加密，保存后需要重启框架
-                    <el-tooltip
-                      content="加密后请求头带 X-VWork-Encrypt: RSA-OAEP-SHA256&#10;正文为 { encrypted, alg, chunks }&#10;用下方 RSA 私钥按块解密并拼接即可得到原来的 JSON"
-                      placement="top"
-                    >
-                      <el-icon class="inline-help"><QuestionFilled /></el-icon>
-                    </el-tooltip>
-                  </p>
+                  <el-switch id="settings-callback-encrypt" v-model="formData.encrypt" />
                 </div>
 
-                <template v-if="formData.callback_encrypt">
-                  <label class="field-label" for="settings-callback-encrypt-private-key">解密私钥</label>
+                <template v-if="formData.encrypt">
+                  <label class="field-label" for="settings-callback-encrypt-public-key">加密公钥</label>
                   <div class="field-control">
                     <div class="key-row">
                       <el-input
-                        id="settings-callback-encrypt-private-key"
-                        v-model="formData.callback_encrypt_private_key"
+                        id="settings-callback-encrypt-public-key"
+                        v-model="formData.public_key"
                         type="textarea"
                         :rows="4"
-                        placeholder="RSA PKCS#8 私钥 PEM（请配置到回调服务）"
+                        placeholder="RSA 公钥 PEM"
                         class="field-input-wide"
                       />
                     </div>
                     <div class="key-row key-row-actions">
-                      <el-button @click="copyEncryptPrivateKey">复制私钥</el-button>
+                      <el-button @click="copyEncryptPublicKey">复制公钥</el-button>
                       <el-button @click="regenerateEncryptKey">重新生成密钥对</el-button>
-                    </div>
-                    <p class="field-hint">
-                      框架用公钥加密推送，你的回调服务用私钥解密。请妥善保存私钥；重新生成后旧私钥无法解密之后的推送。
-                    </p>
-                    <pre class="decrypt-sample">{{ decryptSampleText }}</pre>
-                    <div class="key-row key-row-actions">
-                      <el-button size="small" plain @click="copyDecryptSnippet('node')">复制 Node 解密</el-button>
-                      <el-button size="small" plain @click="copyDecryptSnippet('python')">复制 Python 解密</el-button>
                     </div>
                   </div>
                 </template>
@@ -276,55 +253,6 @@
           </div>
         </section>
 
-        <!-- Logs -->
-        <section :id="sectionDomId('logs')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
-              <div class="section-head-left">
-                <span class="section-icon"><el-icon><Document /></el-icon></span>
-                <div>
-                  <h2 class="section-title">日志设置</h2>
-                  <p class="section-desc">运行日志输出与持久化</p>
-                </div>
-              </div>
-            </div>
-            <div class="section-body">
-              <div class="switch-cards">
-                <div class="switch-card" :class="{ active: formData.open_log }">
-                  <div class="switch-card-text">
-                    <span class="switch-card-title">开启日志</span>
-                    <span class="switch-card-desc">在界面与控制台输出运行信息</span>
-                  </div>
-                  <el-switch v-model="formData.open_log" />
-                </div>
-                <div
-                  class="switch-card"
-                  :class="{ active: formData.save_log, disabled: !formData.open_log }"
-                >
-                  <div class="switch-card-text">
-                    <span class="switch-card-title">保存日志</span>
-                    <span class="switch-card-desc">写入 logs/runLog，需先开启日志</span>
-                  </div>
-                  <el-switch v-model="formData.save_log" :disabled="!formData.open_log" />
-                </div>
-              </div>
-              <p class="section-footnote">
-                修改后需重启框架生效。运行日志页可「合并今日文件日志」与打开日志目录。
-                <el-tooltip
-                  content="开启之后，会把运行日志保存到logs/runLog下&#10;如果需要开启的话，需要先打开[开启日志]才能生效"
-                  placement="top"
-                >
-                  <el-icon class="inline-help"><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </p>
-              <div class="log-dir-actions">
-                <el-button size="small" plain @click="openLogDirectory">打开日志目录</el-button>
-                <code v-if="logDirectoryPath" class="log-dir-path">{{ logDirectoryPath }}</code>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <!-- Appearance -->
         <section :id="sectionDomId('appearance')" class="settings-section">
           <div class="section-card">
@@ -391,12 +319,6 @@
                   <p class="section-desc">点击右上角关闭按钮时的行为</p>
                 </div>
               </div>
-              <el-tooltip
-                content="保存后立即生效，无需重启。选择「直接退出」将跳过确认框。"
-                placement="top"
-              >
-                <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
-              </el-tooltip>
             </div>
             <div class="section-body">
               <div class="option-cards">
@@ -624,13 +546,11 @@ const activeSection = ref('http')
 const mainScrollRef = ref(null)
 const sectionExpanded = reactive({ api: true })
 const themeMode = ref(getStoredThemeMode())
-const logDirectoryPath = ref('')
 const wecomVersionOptions = ref([{ id: 'v5', label: '企微 v5', available: true }])
 const navSections = [
   { id: 'http', label: '连接与回调', icon: Connection },
   { id: 'wecom', label: '企微版本', icon: ChatLineRound },
   { id: 'api', label: '接口调试', icon: Promotion },
-  { id: 'logs', label: '日志', icon: Document },
   { id: 'appearance', label: '外观', icon: Sunny },
   { id: 'window', label: '窗口', icon: Monitor },
   { id: 'update', label: '更新', icon: Refresh }
@@ -664,18 +584,6 @@ watch(
     }
   }
 )
-
-async function openLogDirectory() {
-  if (!window.electronAPI?.openLogDirectory) {
-    ElMessage.warning('当前环境无法打开日志目录')
-    return
-  }
-  const res = await window.electronAPI.openLogDirectory()
-  if (res?.path) logDirectoryPath.value = res.path
-  if (!res?.success && res?.error) {
-    ElMessage.warning(res.error)
-  }
-}
 
 function setupSectionObserver() {
   sectionObserver?.disconnect()
@@ -747,9 +655,6 @@ async function loadWecomVersionOptions() {
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
-  callback_encrypt: false,
-  callback_encrypt_key: '',
-  callback_encrypt_private_key: '',
   wecom_version: DEFAULT_WECOM_VERSION,
   wecom_exe_path_v5: '',
   wecom_port: '8989',
@@ -757,8 +662,8 @@ const formData = reactive({
   push_enabled: false,
   push_timeout_ms: 2000,
   push_retries: 2,
-  open_log: true,
-  save_log: true,
+  encrypt: false,
+  public_key: '',
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
   auto_check_update: true,
   /** ask | tray | quit，写入 ini sys.window_close_action */
@@ -835,6 +740,8 @@ const applyInjectSettings = (data) => {
   formData.push_enabled = data.enabled === true
   formData.push_timeout_ms = data.timeout_ms
   formData.push_retries = data.retries
+  formData.encrypt = data.encrypt === true
+  formData.public_key = String(data.public_key || '')
 }
 const loadInjectSettings = async () => {
   const result = await window.electronAPI?.readInjectSettings()
@@ -854,15 +761,9 @@ const loadConfig = () => {
   const config = configStore.config
   formData.server_port = config.sys?.server_port || DEFAULT_SERVER_PORT_STRING
   formData.callback = config.sys?.callback || ''
-  formData.callback_encrypt =
-    config.sys?.callback_encrypt === 'true' || config.sys?.callback_encrypt === true
-  formData.callback_encrypt_key = String(config.sys?.callback_encrypt_key || '').trim()
-  formData.callback_encrypt_private_key = String(config.sys?.callback_encrypt_private_key || '').trim()
   formData.wecom_version = 'v5'
   formData.wecom_exe_path_v5 = config.sys?.wecom_exe_path_v5 || ''
   if (savedInjectSettings.value) applyInjectSettings(savedInjectSettings.value)
-  formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
-  formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = !(
     config.sys?.auto_check_update === 'false' ||
     config.sys?.auto_check_update === false
@@ -896,37 +797,6 @@ watch(
   },
   { deep: true }
 )
-
-watch(
-  () => formData.open_log,
-  (open) => {
-    if (!open) formData.save_log = false
-  }
-)
-
-watch(
-  () => formData.callback_encrypt,
-  (on) => {
-    if (skipDirtyWatch.value) return
-    if (
-      on &&
-      (!isValidCallbackEncryptPublicKey(formData.callback_encrypt_key) ||
-        !isValidCallbackEncryptPrivateKey(formData.callback_encrypt_private_key))
-    ) {
-      ensureCallbackRsaKeypair()
-    }
-  }
-)
-
-function isValidCallbackEncryptPublicKey(raw) {
-  const pem = String(raw || '').trim()
-  return pem.includes('BEGIN PUBLIC KEY') && pem.includes('END PUBLIC KEY')
-}
-
-function isValidCallbackEncryptPrivateKey(raw) {
-  const pem = String(raw || '').trim()
-  return /BEGIN (?:RSA )?PRIVATE KEY/.test(pem) && /END (?:RSA )?PRIVATE KEY/.test(pem)
-}
 
 const decryptSampleText = `{
   "encrypted": true,
@@ -978,43 +848,26 @@ async function copyText(text, okMsg) {
   }
 }
 
-async function ensureCallbackRsaKeypair() {
-  if (!window.electronAPI?.generateCallbackRsaKeypair) {
-    ElMessage.warning('当前环境无法生成 RSA 密钥对')
-    return false
-  }
-  const result = await window.electronAPI.generateCallbackRsaKeypair()
-  if (!result?.success) {
-    ElMessage.error(result?.message || '生成 RSA 密钥对失败')
-    return false
-  }
-  formData.callback_encrypt_key = result.publicKey
-  formData.callback_encrypt_private_key = result.privateKey
-  return true
-}
-
-async function copyEncryptPrivateKey() {
-  const key = String(formData.callback_encrypt_private_key || '').trim()
-  if (!isValidCallbackEncryptPrivateKey(key)) {
-    ElMessage.warning('请先生成有效的 RSA 私钥')
+async function copyEncryptPublicKey() {
+  const key = String(formData.public_key || '').trim()
+  if (!key) {
+    ElMessage.warning('请先填写公钥')
     return
   }
-  await copyText(key, '私钥已复制')
+  await copyText(key, '公钥已复制')
 }
 
 async function regenerateEncryptKey() {
   try {
     await ElMessageBox.confirm(
-      '重新生成后，旧私钥无法解密之后的推送。请同步更新你的回调服务，并点击「保存修改」。',
+      '重新生成后，旧公钥无法用于之后的推送加密。请同步更新配置，并点击「保存修改」。',
       '重新生成 RSA 密钥对',
       { type: 'warning', confirmButtonText: '重新生成', cancelButtonText: '取消' }
     )
   } catch {
     return
   }
-  if (await ensureCallbackRsaKeypair()) {
-    ElMessage.success('已生成新密钥对，保存后生效')
-  }
+  formData.public_key = `-----BEGIN PUBLIC KEY-----\n（界面展示）\n-----END PUBLIC KEY-----`
 }
 
 async function copyDecryptSnippet(kind) {
@@ -1304,15 +1157,6 @@ const handleSave = async () => {
     return
   }
 
-  if (
-    formData.callback_encrypt &&
-    (!isValidCallbackEncryptPublicKey(formData.callback_encrypt_key) ||
-      !isValidCallbackEncryptPrivateKey(formData.callback_encrypt_private_key))
-  ) {
-    ElMessage.warning('消息加密已开启，请重新生成 RSA 密钥对后再保存')
-    return
-  }
-
   saving.value = true
   const prevCloseIni = normalizeIniCloseAction(configStore.config.sys?.window_close_action)
   const nextClose = formData.window_close_action || 'ask'
@@ -1323,20 +1167,17 @@ const handleSave = async () => {
       url: formData.push_url,
       enabled: formData.push_enabled,
       timeout_ms: formData.push_timeout_ms,
-      retries: formData.push_retries
+      retries: formData.push_retries,
+      encrypt: formData.encrypt === true,
+      public_key: String(formData.public_key || '').trim()
     }
     const newConfig = {
       injectTool,
       sys: {
         ...configStore.config.sys,
-        callback_encrypt: String(formData.callback_encrypt),
-        callback_encrypt_key: String(formData.callback_encrypt_key || '').trim(),
-        callback_encrypt_private_key: String(formData.callback_encrypt_private_key || '').trim(),
         wecom_version: 'v5',
         wecom_exe_path_v5: String(formData.wecom_exe_path_v5 || '').trim(),
         wecom_version_selected: 'true',
-        open_log: String(formData.open_log),
-        save_log: String(formData.save_log),
         auto_check_update: String(formData.auto_check_update),
         window_close_action: formData.window_close_action || 'ask'
       },
@@ -1398,9 +1239,6 @@ onMounted(async () => {
   loadAppVersion()
   setupUpdateListeners()
   themeMode.value = getStoredThemeMode()
-  window.electronAPI?.getLogDirectory?.().then((res) => {
-    if (res?.success) logDirectoryPath.value = res.path
-  })
   await nextTick()
   setupSectionObserver()
 })
@@ -1741,72 +1579,6 @@ onUnmounted(() => {
   background: var(--sp-toolbar-bg);
   border: 1px solid var(--sp-border);
   border-radius: 8px;
-}
-
-.switch-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.switch-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--sp-border);
-  border-radius: 10px;
-  background: var(--sp-toolbar-bg);
-  transition: border-color 0.2s, background 0.2s, transform 0.15s ease;
-}
-
-.switch-card.active {
-  border-color: rgba(64, 158, 255, 0.35);
-  background: var(--sp-accent-soft);
-}
-
-.switch-card.disabled {
-  opacity: 0.55;
-}
-
-.switch-card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.switch-card-title {
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.switch-card-desc {
-  font-size: 12px;
-  color: var(--sp-muted);
-}
-
-.section-footnote {
-  margin: 14px 0 0;
-  font-size: 12px;
-  color: var(--sp-muted);
-}
-
-.log-dir-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.log-dir-path {
-  font-size: 11px;
-  padding: 4px 8px;
-  background: var(--sp-accent-soft);
-  border-radius: 6px;
-  word-break: break-all;
 }
 
 .theme-cards {
@@ -2353,7 +2125,7 @@ onUnmounted(() => {
 .settings-page :deep(.el-input__wrapper), .settings-page :deep(.el-select__wrapper) { min-height: 36px; border-radius: 7px; }
 .settings-page :deep(.el-textarea__inner) { border-radius: 7px; }
 .settings-page button:focus-visible, .advanced-settings summary:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
-.section-desc, .field-hint, .option-card-desc, .switch-card-desc { line-height: 1.65; overflow-wrap: anywhere; }
+.section-desc, .field-hint, .option-card-desc { line-height: 1.65; overflow-wrap: anywhere; }
 .footer-status { display: flex; align-items: center; gap: 8px; }
 .footer-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--el-color-success); flex-shrink: 0; }
 .is-dirty .footer-status::before { background: var(--el-color-warning); }

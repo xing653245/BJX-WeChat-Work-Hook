@@ -8,11 +8,23 @@ function readDocument(dir, name) {
   return { text, value }
 }
 
+function parseEncryptFlag(value) {
+  return value === true || value === 'true' || value === '1' || value === 1
+}
+
 function readInjectSettings(dir) {
   const settings = readDocument(dir, 'settings.json').value
   const push = readDocument(dir, 'push.json').value
-  return { host: settings.host, port: settings.port, url: push.url,
-    enabled: push.enabled, timeout_ms: push.timeout_ms, retries: push.retries }
+  return {
+    host: settings.host,
+    port: settings.port,
+    url: push.url,
+    enabled: push.enabled,
+    timeout_ms: push.timeout_ms,
+    retries: push.retries,
+    encrypt: parseEncryptFlag(settings.encrypt),
+    public_key: String(settings.public_key || '')
+  }
 }
 
 function saveInjectSettings(dir, input) {
@@ -33,10 +45,18 @@ function saveInjectSettings(dir, input) {
     try { parsed = new URL(url) } catch { throw new Error('回调地址必须为有效的 HTTP/HTTPS 地址') }
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('回调地址必须使用 HTTP/HTTPS')
   }
+  const encrypt = parseEncryptFlag(input.encrypt)
+  const public_key = String(input.public_key || '')
   const settings = readDocument(dir, 'settings.json')
   const push = readDocument(dir, 'push.json')
   const documents = [
-    ['settings.json', settings, { ...settings.value, host, port: typeof settings.value.port === 'number' ? port : String(port) }],
+    ['settings.json', settings, {
+      ...settings.value,
+      host,
+      port: typeof settings.value.port === 'number' ? port : String(port),
+      encrypt,
+      public_key
+    }],
     ['push.json', push, { ...push.value, url, enabled: input.enabled, timeout_ms: timeout, retries }]
   ]
   const written = []
