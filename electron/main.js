@@ -1281,6 +1281,15 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
   return { ok: true }
 })
 
+const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
+const injectSettingsDir = () => path.join(getAppPathForResources(), 'bin', 'v5')
+
+ipcMain.handle('read-inject-settings', (event) => {
+  assertMainWindow(event, mainWindow)
+  try { return { success: true, data: readInjectSettings(injectSettingsDir()) } }
+  catch (error) { return { success: false, msg: error.message } }
+})
+
 ipcMain.handle('read-config', () => {
   const config = readConfig()
   const sys = { ...(config.sys || {}) }
@@ -1317,7 +1326,16 @@ ipcMain.handle('save-config', (event, config) => {
     sys: mergedSys,
     custom: { ...(prev.custom || {}), ...((config && config.custom) || {}) }
   }
-  return saveConfig(applyListenPortChangeToConfig(prev, merged))
+  let rollback
+  try {
+    if (config.injectTool) rollback = saveInjectSettings(injectSettingsDir(), config.injectTool)
+    const result = saveConfig(applyListenPortChangeToConfig(prev, merged))
+    if (!result.success && rollback) rollback()
+    return result
+  } catch (error) {
+    if (rollback) rollback()
+    return { success: false, msg: error.message }
+  }
 })
 
 ipcMain.handle('generate-callback-rsa-keypair', (event) => {

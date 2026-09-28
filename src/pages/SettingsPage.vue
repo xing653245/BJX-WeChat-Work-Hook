@@ -27,11 +27,11 @@
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
                   <h2 class="section-title">HTTP 设置</h2>
-                  <p class="section-desc">框架监听端口、消息回调与推送加密</p>
+                  <p class="section-desc">企微监听端口与消息回调</p>
                 </div>
               </div>
               <el-tooltip
-                content="当你需要调用框架的接口时，就是用的这个端口&#10;调用框架的地址为：http://127.0.0.1:端口号/api&#10;修改后保存即可切换接口地址；已登录企微无需额外操作"
+                content="设置企微默认监听端口和原生回调地址；添加企微时使用所选端口，回调设置在重新启动企微后生效"
                 placement="top"
               >
                 <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
@@ -39,41 +39,23 @@
             </div>
             <div class="section-body">
               <div class="field-grid">
-                <label class="field-label" for="settings-server-port">监听端口</label>
+                <label class="field-label" for="settings-wecom-port">企微监听端口</label>
                 <div class="field-control">
-                  <el-input
-                    id="settings-server-port"
-                    v-model="formData.server_port"
-                    placeholder="1024–10000"
-                    class="field-input"
-                  />
-                  <p class="field-hint">有效范围 (1024, 10000]。保存后立即切换接口地址，已登录企微可继续使用</p>
+                  <el-input id="settings-wecom-port" v-model="formData.wecom_port" placeholder="1025–10000" class="field-input" />
+                  <p class="field-hint">默认端口，范围 1025–10000。添加企微时，随机或自定义端口会覆盖本次启动值</p>
                 </div>
 
-                <label class="field-label" for="settings-callback">回调地址</label>
+                <label class="field-label" for="settings-push-url">原生回调地址</label>
                 <div class="field-control">
-                  <el-input
-                    id="settings-callback"
-                    v-model="formData.callback"
-                    placeholder="如 http://127.0.0.1:8002/msg"
-                    class="field-input field-input-wide"
-                  />
-                  <p class="field-hint">
-                    框架向此 POST 地址推送企微消息（JSON）；修改后无需重启
-                    <el-tooltip
-                      content="这个回调地址，是框架向你推送企微消息的地址&#10;接口需要是POST，且我传给你的是JSON&#10;你需要搭建这个回调服务，并把地址填入"
-                      placement="top"
-                    >
-                      <el-icon class="inline-help"><QuestionFilled /></el-icon>
-                    </el-tooltip>
-                  </p>
+                  <el-input id="settings-push-url" v-model="formData.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
+                  <p class="field-hint">企微直接推送到此地址，不经过框架消息加密。保存后重新启动企微生效</p>
                 </div>
 
                 <label class="field-label" for="settings-callback-encrypt">消息加密</label>
                 <div class="field-control">
                   <el-switch id="settings-callback-encrypt" v-model="formData.callback_encrypt" />
                   <p class="field-hint">
-                    开启后，推送到回调地址的正文使用 RSA-OAEP（SHA-256）加密；未开启则仍为明文 JSON。保存后需要重启框架
+                    仅用于框架转发的消息，不作用于上方原生回调。使用 RSA-OAEP（SHA-256）加密，保存后需要重启框架
                     <el-tooltip
                       content="加密后请求头带 X-VWork-Encrypt: RSA-OAEP-SHA256&#10;正文为 { encrypted, alg, chunks }&#10;用下方 RSA 私钥按块解密并拼接即可得到原来的 JSON"
                       placement="top"
@@ -138,8 +120,15 @@
                     placeholder="如 D:\WeCom5\WXWork.exe"
                     class="field-input field-input-wide"
                   />
-                  <p class="field-hint">仅支持企微 v5.0.3.6005 版本客户端</p>
+                  <p class="field-hint">仅支持企微 v5.0.3.6005 版本客户端；保存后下次启动生效</p>
                 </div>
+
+                <label class="field-label">开启原生回调</label>
+                <div class="field-control"><el-switch v-model="formData.push_enabled" /></div>
+                <label class="field-label">回调超时（毫秒）</label>
+                <div class="field-control"><el-input-number v-model="formData.push_timeout_ms" :min="1" :max="2147483647" :precision="0" /></div>
+                <label class="field-label">失败重试次数</label>
+                <div class="field-control"><el-input-number v-model="formData.push_retries" :min="0" :max="2147483647" :precision="0" /></div>
               </div>
             </div>
           </div>
@@ -746,6 +735,11 @@ const formData = reactive({
   callback_encrypt_private_key: '',
   wecom_version: DEFAULT_WECOM_VERSION,
   wecom_exe_path_v5: '',
+  wecom_port: '8989',
+  push_url: '',
+  push_enabled: false,
+  push_timeout_ms: 2000,
+  push_retries: 2,
   open_log: true,
   save_log: true,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
@@ -815,6 +809,29 @@ function clearStoredCloseConfirm() {
 }
 
 // 加载配置
+const injectSettingsLoaded = ref(false)
+const savedInjectSettings = ref(null)
+const applyInjectSettings = (data) => {
+  formData.wecom_exe_path_v5 = data.host || ''
+  formData.wecom_port = String(data.port ?? '')
+  formData.push_url = data.url || ''
+  formData.push_enabled = data.enabled === true
+  formData.push_timeout_ms = data.timeout_ms
+  formData.push_retries = data.retries
+}
+const loadInjectSettings = async () => {
+  const result = await window.electronAPI?.readInjectSettings()
+  if (!result?.success) {
+    ElMessage.error(result?.msg || '读取注入配置失败，请重启框架后重试')
+    return
+  }
+  savedInjectSettings.value = result.data
+  applyInjectSettings(result.data)
+  injectSettingsLoaded.value = true
+  await nextTick()
+  isDirty.value = false
+}
+
 const loadConfig = () => {
   skipDirtyWatch.value = true
   const config = configStore.config
@@ -826,6 +843,7 @@ const loadConfig = () => {
   formData.callback_encrypt_private_key = String(config.sys?.callback_encrypt_private_key || '').trim()
   formData.wecom_version = 'v5'
   formData.wecom_exe_path_v5 = config.sys?.wecom_exe_path_v5 || ''
+  if (savedInjectSettings.value) applyInjectSettings(savedInjectSettings.value)
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = !(
@@ -1257,10 +1275,14 @@ const setupUpdateListeners = () => {
 
 // 保存配置
 const handleSave = async () => {
+  if (!injectSettingsLoaded.value) {
+    ElMessage.error('注入配置尚未读取成功，请重新打开设置页')
+    return
+  }
   // 验证端口
-  const port = parseInt(formData.server_port)
-  if (isNaN(port) || port <= 1024 || port > 10000) {
-    ElMessage.warning('端口号的范围(1024, 10000]')
+  const port = Number(formData.wecom_port)
+  if (!Number.isInteger(port) || port <= 1024 || port > 10000) {
+    ElMessage.warning('企微监听端口必须为 1025–10000 的整数')
     loadConfig() // 恢复原值
     return
   }
@@ -1277,12 +1299,19 @@ const handleSave = async () => {
   saving.value = true
   const prevCloseIni = normalizeIniCloseAction(configStore.config.sys?.window_close_action)
   const nextClose = formData.window_close_action || 'ask'
-  const oldPortBeforeSave = configStore.config.sys?.server_port
   try {
+    const injectTool = {
+      host: formData.wecom_exe_path_v5,
+      port: formData.wecom_port,
+      url: formData.push_url,
+      enabled: formData.push_enabled,
+      timeout_ms: formData.push_timeout_ms,
+      retries: formData.push_retries
+    }
     const newConfig = {
+      injectTool,
       sys: {
-        server_port: String(formData.server_port),
-        callback: formData.callback || '',
+        ...configStore.config.sys,
         callback_encrypt: String(formData.callback_encrypt),
         callback_encrypt_key: String(formData.callback_encrypt_key || '').trim(),
         callback_encrypt_private_key: String(formData.callback_encrypt_private_key || '').trim(),
@@ -1302,6 +1331,8 @@ const handleSave = async () => {
     const result = await configStore.saveConfig(newConfig)
     
     if (result.success) {
+      savedInjectSettings.value = { ...injectTool }
+      applyInjectSettings(injectTool)
       // 直接退出：与本地「一直最小化」记忆冲突，保存后顺带清除记忆
       if (nextClose === 'quit') {
         clearCloseConfirmPrefs()
@@ -1311,26 +1342,8 @@ const handleSave = async () => {
         clearCloseConfirmPrefs()
         refreshCloseConfirmPrefsHint()
       }
-      const listenPortChanged =
-        String(oldPortBeforeSave) !== String(formData.server_port)
-      if (listenPortChanged && window.electronAPI) {
-        const restartRes = await window.electronAPI.restartFastAPIServer(
-          parseInt(formData.server_port, 10)
-        )
-        if (!restartRes?.success) {
-          ElMessage.error(
-            `HTTP 服务未在端口 ${formData.server_port} 启动：${restartRes?.message || '未知错误'}。请检查端口是否被占用，或完全退出框架后重新打开。`
-          )
-          isDirty.value = false
-          return
-        }
-      }
       isDirty.value = false
-      if (listenPortChanged) {
-        ElMessage.success('监听端口已切换。外部请改用新端口调用接口；已登录企微无需额外操作')
-      } else {
-        ElMessage.success('保存成功')
-      }
+      ElMessage.success('保存成功')
     } else {
       ElMessage.error(result.msg || '保存失败')
       loadConfig() // 恢复原值
@@ -1363,6 +1376,7 @@ onMounted(async () => {
     await configStore.loadConfig()
   }
   loadConfig()
+  await loadInjectSettings()
   loadWecomVersionOptions()
   loadAppVersion()
   setupUpdateListeners()

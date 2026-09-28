@@ -1,5 +1,5 @@
 /**
- * 当前企微客户端的旧注入工具路径配置。
+ * 当前企微客户端的注入工具路径配置。
  * 正常启动使用 bin/v5/it.exe 注入；这里保留注入工具路径解析。
  */
 const path = require('path')
@@ -14,7 +14,7 @@ const WECOM_VERSION_META = {
 }
 
 const INJECT_DLL_BY_VERSION = {
-  v5: 'device.dll'
+  v5: 'HookBridge.dll'
 }
 
 const VALID_WECOM_VERSIONS = Object.freeze(['v5'])

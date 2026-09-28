@@ -1,19 +1,18 @@
 /**
- * 企微注入工具：查找可用端口、执行 it.exe start（供主进程 IPC 与 Express API 共用）
+ * 企微注入工具：查找可用端口、执行 it.exe --port <端口>（供主进程 IPC 与 Express API 共用）
  */
 const path = require('path')
 const fs = require('fs')
 const { spawn, execSync } = require('child_process')
 const net = require('net')
 const ini = require('ini')
-const iconv = require('iconv-lite')
+const { StringDecoder } = require('string_decoder')
 const { getConfigPath } = require('../commons/common')
 const { DEFAULT_SERVER_PORT, DEFAULT_INJECT_KEY } = require('../configs/defaults')
 const {
   DEFAULT_WECOM_VERSION,
   normalizeWecomVersion,
-  resolveInjectToolPath,
-  resolveInjectDllPath
+  resolveInjectToolPath
 } = require('../configs/wecomVersion')
 
 /**
@@ -94,24 +93,14 @@ async function findAvailablePort(startPort = WECOM_HTTP_PORT_MIN, endPort = WECO
   return { port: null }
 }
 
-/**
- * 子进程控制台在中文 Windows 下多为 GBK，默认 toString() 按 UTF-8 会乱码
- */
-function decodeInjectStdoutChunk(chunk) {
-  if (!Buffer.isBuffer(chunk)) {
-    chunk = Buffer.from(chunk)
-  }
-  if (process.platform === 'win32') {
-    return iconv.decode(chunk, 'gbk')
-  }
-  return chunk.toString('utf8')
-}
-
 const INJECT_FAIL_OUTPUT_PATTERNS = [
   /文件不存在/,
   /参数错误/,
   /注入失败/,
+  /无法启动企业微信/,
+  /宿主文件校验失败|设置目标环境失败|加载日志 DLL 失败/,
   /找不到/,
+  /未能找到路径/,
   /not found/i
 ]
 
@@ -123,42 +112,14 @@ function evaluateInjectResult(code, output) {
     return { success: false, output: text || '注入失败' }
   }
 
-  if (text.includes('注入成功')) {
-    return { success: true, output: text }
-  }
-
-  if (code === 0 && !text) {
-    return { success: false, output: '注入工具无输出，可能未启动企微' }
+  // 新工具的命令行模式可能静默退出，不再依赖旧版“注入成功”文案。
+  if (code === 0) {
+    return { success: true, output: text || '注入工具执行完成' }
   }
 
   return {
     success: false,
     output: text || `注入进程退出码 ${code}`
-  }
-}
-
-/** v5 注入工具加载 device.dll；旧包可能只有 vworkApi.dll */
-function ensureInjectDllReady(injectBinDir, version) {
-  const dllInfo = resolveInjectDllPath(injectBinDir, version)
-  if (!dllInfo.source) {
-    const expected = dllInfo.dllName
-    return {
-      ok: false,
-      output: `注入库不存在: ${path.join(injectBinDir, expected)}（当前企微版本: ${version}）`
-    }
-  }
-  if (dllInfo.source === dllInfo.dllName) {
-    return { ok: true, dllPath: dllInfo.dllPath }
-  }
-  try {
-    fs.copyFileSync(dllInfo.aliasPath, dllInfo.dllPath)
-    console.log(`[注入工具] 已将 ${dllInfo.source} 复制为 ${dllInfo.dllName}`)
-    return { ok: true, dllPath: dllInfo.dllPath, copiedFrom: dllInfo.source }
-  } catch (err) {
-    return {
-      ok: false,
-      output: `无法准备 ${dllInfo.dllName}: ${err.message}`
-    }
   }
 }
 
@@ -232,22 +193,16 @@ function resolveWecomExePath(conf, wecomVersion) {
   }
 }
 
-function buildInjectArgs({ port, serverPort, injectKey, wecomExePath }) {
-  const args = [
-    'start',
-    String(port),
-    `--my_port=${serverPort}`,
-    `--key=${injectKey}`
-  ]
-  if (wecomExePath) {
-    args.push(`--exe_path=${wecomExePath}`)
-  }
-  return args
+function buildInjectArgs({ port }) {
+  return ['--port', String(port)]
 }
 
 /** 将 it.exe 原始输出转为更易懂的提示 */
 function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
   const text = String(output || '').trim()
+  if (/未能找到路径/.test(text)) {
+    return `${text}。请检查注入工具目录下 settings.json 的 host 是否指向本机实际存在的 WXWork.exe。`
+  }
   if (/文件不存在|找不到/.test(text)) {
     let hint = `${text}。请确认本机已安装当前企微客户端。`
     if (wecomExePath) {
@@ -256,7 +211,7 @@ function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
     return hint
   }
   if (/参数错误/.test(text)) {
-    return `${text}。请检查框架监听端口与注入 key 配置。`
+    return `${text}。请检查 --port 指定的企微端口。`
   }
   return text || '注入失败'
 }
@@ -265,12 +220,10 @@ function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
  * 执行注入工具启动企微
  * @param {object} options
  * @param {number|string} options.port - 企微 HTTP 端口
- * @param {number|string} options.serverPort - 框架监听端口
- * @param {string} [options.key] - 注入 key
  * @param {string} [options.wecomVersion] - 内部兼容参数，正常启动不再由客户选择
  * @returns {Promise<{ success: boolean, output: string, wecomVersion?: string }>}
  */
-function runInjectTool({ port, serverPort, key, wecomVersion }) {
+function runInjectTool({ port, wecomVersion }) {
   const appRoot = getAppPathForResources()
   let version = normalizeWecomVersion(wecomVersion)
 
@@ -296,34 +249,8 @@ function runInjectTool({ port, serverPort, key, wecomVersion }) {
   }
 
   const injectBinDir = path.dirname(injectToolPath)
-  const dllReady = ensureInjectDllReady(injectBinDir, version)
-  if (!dllReady.ok) {
-    return Promise.resolve({
-      success: false,
-      wecomVersion: version,
-      output: dllReady.output
-    })
-  }
-
-  let conf = {}
-  try {
-    const content = fs.readFileSync(getConfigPath(), 'utf-8')
-    conf = ini.parse(content)
-  } catch {
-    /* ignore */
-  }
-
-  const injectKey = key || conf.sys?.inject_key || DEFAULT_INJECT_KEY
-  const exeResolve = resolveWecomExePath(conf, version)
-  if (!exeResolve.path) {
-    return Promise.resolve({
-      success: false,
-      wecomVersion: version,
-      output: exeResolve.error || '未找到企微客户端路径'
-    })
-  }
-  const wecomExePath = exeResolve.path
-  const spawnArgs = buildInjectArgs({ port, serverPort, injectKey, wecomExePath })
+  // 配套配置由注入工具自行读取，框架只传入端口。
+  const spawnArgs = buildInjectArgs({ port })
 
   return new Promise((resolve) => {
     let finished = false
@@ -333,27 +260,33 @@ function runInjectTool({ port, serverPort, key, wecomVersion }) {
       resolve({ ...payload, wecomVersion: version, injectToolPath })
     }
 
-    console.log(`[注入工具] version=${version} exe=${injectToolPath} cwd=${injectBinDir} port=${port} serverPort=${serverPort}${wecomExePath ? ` wecomExe=${wecomExePath}` : ''}`)
+    console.log(`[注入工具] version=${version} exe=${injectToolPath} cwd=${injectBinDir} port=${port}`)
 
     const child = spawn(injectToolPath, spawnArgs, {
-      cwd: injectBinDir
+      cwd: injectBinDir,
+      windowsHide: true,
+      shell: false
     })
 
     let output = ''
+    // 新工具重定向输出为 UTF-8；两个流分别保留跨数据块的多字节字符。
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
     child.stdout.on('data', (data) => {
-      output += decodeInjectStdoutChunk(data)
+      output += stdoutDecoder.write(data)
     })
     child.stderr.on('data', (data) => {
-      output += decodeInjectStdoutChunk(data)
+      output += stderrDecoder.write(data)
     })
 
     child.on('error', (err) => {
       finish({ success: false, output: err.message })
     })
     child.on('close', (code) => {
+      output += stdoutDecoder.end() + stderrDecoder.end()
       const evaluated = evaluateInjectResult(code, output)
       if (!evaluated.success) {
-        evaluated.output = formatInjectErrorHint(evaluated.output, version, wecomExePath)
+        evaluated.output = formatInjectErrorHint(evaluated.output, version)
       }
       finish(evaluated)
     })
@@ -384,7 +317,6 @@ module.exports = {
   readInjectConfig,
   evaluateInjectResult,
   formatInjectErrorHint,
-  ensureInjectDllReady,
   resolveWecomExePath,
   readWecomRegistryInfo,
   buildInjectArgs

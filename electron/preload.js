@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   findPidByPort: (port) => ipcRenderer.invoke('find-pid-by-port', port),
   killProcessByPort: (port) => ipcRenderer.invoke('kill-process-by-port', port),
   
+  readInjectSettings: () => ipcRenderer.invoke('read-inject-settings'),
+
   // 注入工具
   runInjectTool: (options) => ipcRenderer.invoke('run-inject-tool', options),
   getWecomVersionOptions: () => ipcRenderer.invoke('get-wecom-version-options'),

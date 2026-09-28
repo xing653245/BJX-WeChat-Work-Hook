@@ -119,6 +119,7 @@ export const useConfigStore = defineStore('config', () => {
     if (!currentConfig.custom) {
       currentConfig.custom = {}
     }
+    delete currentConfig.injectTool
     currentConfig.custom.login_info = loginInfo
     return await saveConfig(currentConfig)
   }

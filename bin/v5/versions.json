@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "architecture": "x86",
+  "profile_set_sha256": "558095e8d1e83e749d9c5d854ca1f6034c2c7602427381e8c2f6e1abe7074176",
+  "profiles": [
+    {
+      "id": "wxwork-5.0.3.6005-x86",
+      "version": "5.0.3.6005",
+      "architecture": "x86",
+      "adapter": "wxwork_msvc_x86_v1",
+      "sha256": "3824da5b7038bd71e7a161a954db30c9808a2e3f7cb596fc5620c739e31d127a",
+      "machine": 332,
+      "image_size": 186503168,
+      "timestamp": 1766769117,
+      "validation": {
+        "offline": true,
+        "live_business": false
+      }
+    }
+  ],
+  "files": {
+    "VworkLogger.dll": "692fdb144fd5dee49aea4fe605afea6cff083d99e500d6149923cb3233955876",
+    "HookBridge.dll": "e2d2098a0d022e9ef2d291c961aa0b774deca46c72dda42bc2a7ee874e0d89b9"
+  }
+}
