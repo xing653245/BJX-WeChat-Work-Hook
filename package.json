@@ -78,16 +78,9 @@
     ],
     "extraResources": [
       {
-        "from": "bin/v5",
-        "to": "bin/v5",
+        "from": "bin",
+        "to": "bin",
         "filter": ["**/*"]
-      },
-      {
-        "from": "bin/agent",
-        "to": "bin/agent",
-        "filter": [
-          "**/*"
-        ]
       },
       {
         "from": "conf",

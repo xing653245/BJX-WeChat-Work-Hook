@@ -1,6 +1,6 @@
 /**
  * 当前企微客户端的注入工具路径配置。
- * 正常启动使用 bin/v5/it.exe 注入；这里保留注入工具路径解析。
+ * 正常启动使用 bin/it.exe 注入；这里保留注入工具路径解析。
  */
 const path = require('path')
 const fs = require('fs')
@@ -28,7 +28,7 @@ function normalizeWecomVersion(value) {
 /** @returns {string[]} it.exe 相对应用资源根目录的路径片段 */
 function getInjectExeSegments(versionId) {
   normalizeWecomVersion(versionId)
-  return ['bin', 'v5', 'it.exe']
+  return ['bin', 'it.exe']
 }
 
 function resolveInjectToolPath(appRoot, versionId) {

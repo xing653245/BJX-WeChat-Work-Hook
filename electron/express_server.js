@@ -10,7 +10,6 @@ const { readIni, sendCallback, checkAuthByUserId, killProcessByPort, saveLogToFi
 const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
-const { normalizeAgentEvent } = require('./services/wecomAgentCompat')
 const { notifyWecomSessionEnded } = require('./services/wecomNotify')
 
 function resolveLogoutPort(payload, loginInfo) {
@@ -57,11 +56,8 @@ const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL
  */
 async function processIncomingWecomMessage(data) {
   const ini_config = readIni()
-  const robotIds = Array.isArray(ini_config.login_info)
-    ? ini_config.login_info.map((item) => item?.user_id).filter(Boolean)
-    : []
   // 不按 msg_type 过滤；未知类型同样推送日志与回调，并补充 msg_type_text 便于排查
-  const payload = enrichWecomMessage(normalizeAgentEvent(data, robotIds))
+  const payload = enrichWecomMessage(data)
   const incomingType = Number(payload?.type)
   if (incomingType === 900 || incomingType === 1003) {
     const port = resolveLogoutPort(payload, ini_config.login_info)

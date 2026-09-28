@@ -1,4 +1,4 @@
-2026-09-28 16:43:08
+2026-09-28 16:49:02
 System.Exception: 日志 DLL 版本不匹配或未加载；Win32=0
    在 StartHook.Remote.Configure(Int32 pid, Int32 port, String log, Boolean logging)
    在 StartHook.HeadlessLaunch.StartIsolated(AppSettings settings, Int32 port)

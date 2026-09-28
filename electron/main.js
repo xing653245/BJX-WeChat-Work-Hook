@@ -1282,7 +1282,7 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 })
 
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
-const injectSettingsDir = () => path.join(getAppPathForResources(), 'bin', 'v5')
+const injectSettingsDir = () => path.join(getAppPathForResources(), 'bin')
 
 ipcMain.handle('read-inject-settings', (event) => {
   assertMainWindow(event, mainWindow)

@@ -53,7 +53,7 @@ test('新工具仅接收所选端口，在工具目录运行，无需旧 DLL 或
     })
     assert.equal(result.success, true)
     const [exe, args, options] = calls.at(-1)
-    assert.equal(exe, path.resolve(__dirname, '../../bin/v5/it.exe'))
+    assert.equal(exe, path.resolve(__dirname, '../../bin/it.exe'))
     assert.deepEqual(Array.from(args), ['--port', String(port)])
     assert.equal(options.cwd, path.dirname(exe))
     assert.equal(options.shell, false)
