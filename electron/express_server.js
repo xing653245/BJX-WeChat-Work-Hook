@@ -11,6 +11,27 @@ const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
 const { normalizeAgentEvent } = require('./services/wecomAgentCompat')
+const { notifyWecomSessionEnded } = require('./services/wecomNotify')
+
+function resolveLogoutPort(payload, loginInfo) {
+  const data = payload && typeof payload === 'object' ? payload : {}
+  for (const key of ['port', 'robot_port', 'http_port', 'client_port']) {
+    const port = parseInt(data[key], 10)
+    if (port > 1024 && port <= 10000) return port
+  }
+  const userId = data.user_id || data.self_user_id
+  const list = Array.isArray(loginInfo) ? loginInfo : []
+  if (userId) {
+    const item = list.find((entry) => entry?.user_id === userId)
+    const port = parseInt(item?.port, 10)
+    if (port > 1024 && port <= 10000) return port
+  }
+  if (list.length === 1) {
+    const port = parseInt(list[0]?.port, 10)
+    if (port > 1024 && port <= 10000) return port
+  }
+  return NaN
+}
 
 // 导入路由
 const apiRoutes = require('./routes/index')
@@ -41,6 +62,27 @@ async function processIncomingWecomMessage(data) {
     : []
   // 不按 msg_type 过滤；未知类型同样推送日志与回调，并补充 msg_type_text 便于排查
   const payload = enrichWecomMessage(normalizeAgentEvent(data, robotIds))
+  const incomingType = Number(payload?.type)
+  if (incomingType === 900 || incomingType === 1003) {
+    const port = resolveLogoutPort(payload, ini_config.login_info)
+    if (!Number.isNaN(port)) {
+      try {
+        await killProcessByPort(port)
+      } catch (error) {
+        console.warn(`[企微退出] 结束端口 ${port} 进程失败: ${error.message}`)
+      }
+      notifyWecomSessionEnded(port, '企微退出')
+    }
+    try {
+      await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', {
+        ...payload,
+        port: Number.isNaN(port) ? payload.port : port
+      }, messageServerAxiosConfig())
+    } catch (error) {
+      console.error(`推送退出登录消息失败: ${error.message}`)
+    }
+    return
+  }
 
   let self_user_id = payload.self_user_id || ''
   if (self_user_id === '') {

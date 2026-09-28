@@ -87,6 +87,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeWecomInjectStartedListener: () => {
     ipcRenderer.removeAllListeners('wecom-inject-started')
   },
+  onWecomSessionEnded: (callback) => {
+    ipcRenderer.on('wecom-session-ended', (_event, data) => callback(data))
+  },
+  removeWecomSessionEndedListener: () => {
+    ipcRenderer.removeAllListeners('wecom-session-ended')
+  },
   
   // 更新相关
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

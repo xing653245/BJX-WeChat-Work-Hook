@@ -79,13 +79,12 @@ const {
 } = require('./commons/hookCompatPorts')
 const {
   checkPortListenAvailable,
+  findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService,
   readInjectConfig
 } = require('./services/wecomInject')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
-const { createWecomRecovery } = require('./services/wecomRecovery')
 const { postToVWorkApi } = require('./services/wecomApiClient')
-const { AGENT_HTTP_PORT, AGENT_WS_PORT, getWecomAgentManager } = require('./services/wecomAgentManager')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
   canInjectPort,
@@ -459,7 +458,7 @@ const startExpressServer = async (port) => {
     return { success: false, message: msg }
   }
 
-  const reservedPorts = new Set([AGENT_HTTP_PORT, AGENT_WS_PORT, 9999])
+  const reservedPorts = new Set([9999])
   if (reservedPorts.has(p)) {
     const msg = `监听端口 ${p} 已由框架内部服务保留，请使用其他端口（推荐 ${DEFAULT_SERVER_PORT}）`
     console.error(msg)
@@ -752,20 +751,6 @@ const startTimedLoginStatusCheck = () => {
   console.log(`定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
 }
 
-const recoverWecomAfterCrash = async () => {
-  const config = readConfig()
-  const frameworkPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
-  const recovery = createWecomRecovery({ readConfig })
-  const result = await recovery.recover({
-    callbackUrl: `http://127.0.0.1:${frameworkPort}/msg`
-  })
-  if (!result.success) {
-    throw new Error(result.message || '企业微信恢复失败')
-  }
-  console.log(`[企微崩溃] ${result.message}`)
-  return result
-}
-
 /** 崩溃后按退避策略延迟触发注入恢复 */
 const scheduleCrashRecovery = () => {
   if (crashRecoveryTimer) {
@@ -785,10 +770,10 @@ const scheduleCrashRecovery = () => {
   )
   crashRecoveryTimer = setTimeout(() => {
     crashRecoveryTimer = null
-    console.log('[企微崩溃] 退避结束，开始重启企微并重连 Agent')
-    recoverWecomAfterCrash()
+    console.log('[企微崩溃] 退避结束，开始登录探测与注入恢复')
+    timedGetLoginStatus({ fromCrashRecovery: true })
       .catch((e) => {
-        console.error('[企微崩溃] 自动恢复失败:', e.message)
+        console.error('[企微崩溃] 注入恢复检查失败:', e.message)
       })
       .finally(async () => {
         await recordCrashRecoveryCycleResult()
@@ -1032,9 +1017,6 @@ function createWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('Page loaded successfully')
-    getWecomAgentManager().isHealthy().then((healthy) => {
-      if (healthy) notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
-    }).catch(() => {})
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1223,23 +1205,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  const agentManager = getWecomAgentManager()
-  const agentResult = await agentManager.ensureStarted({
-    callbackUrl: expressResult.success
-      ? `http://127.0.0.1:${frameworkPort}/msg`
-      : undefined
-  })
-  if (agentResult.success) {
-    console.log(`[企微 Agent] 已托管，HTTP 端口 ${AGENT_HTTP_PORT}`)
-    notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
-  } else {
-    notifyPortError({
-      port: AGENT_HTTP_PORT,
-      service: '企微 Agent',
-      detail: agentResult.output || '企微 Agent 启动失败'
-    })
-  }
-
+  startTimedLoginStatusCheck()
   startWecomCrashDialogWatch()
 
   // 如果是生产环境且开启了自动更新，则启动时检查更新
@@ -1281,7 +1247,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   destroyTray()
-  getWecomAgentManager().stop()
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
@@ -1645,16 +1610,15 @@ ipcMain.handle('check-port', async (event, port) => {
 
 // 查找可用端口（随机生成并检查是否被占用，范围 1025～10000）
 ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
-  return { port: AGENT_HTTP_PORT }
+  return findAvailablePortForInject(startPort, endPort)
 })
 
 // 执行注入工具（统一走 runInjectForPort，含重复注入防护）
 ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
+  resetCrashRecoveryProtection()
+  const injectKey = key || DEFAULT_INJECT_KEY
   const sp = parseInt(serverPort, 10) || readInjectConfig().serverPort
-  const result = await getWecomAgentManager().ensureStarted({
-    callbackUrl: `http://127.0.0.1:${sp}/msg`
-  })
-  return { ...result, port: AGENT_HTTP_PORT }
+  return runInjectForPort(Number(port), sp, injectKey, '手动')
 })
 
 ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {

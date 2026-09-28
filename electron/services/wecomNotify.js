@@ -19,6 +19,22 @@ function notifyWecomInjectStarted(port, reason = '') {
   }
 }
 
+function notifyWecomSessionEnded(port, reason = '') {
+  const n = Number(port)
+  if (Number.isNaN(n) || n <= 0) return
+  console.log(`[企微退出] 通知渲染进程移除端口 ${n}${reason ? `（${reason}）` : ''}`)
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (!win.isDestroyed()) {
+        win.webContents.send('wecom-session-ended', { port: n, reason })
+      }
+    } catch (e) {
+      console.error('notifyWecomSessionEnded:', e.message)
+    }
+  }
+}
+
 module.exports = {
-  notifyWecomInjectStarted
+  notifyWecomInjectStarted,
+  notifyWecomSessionEnded
 }

@@ -237,9 +237,11 @@ function normalizeAgentEvent(event, robotIds = []) {
     }
   }
   if (eventType === 11027) {
+    const port = event.data.port || event.port
     return {
       type: 900,
       user_id: event.data.user_id || '',
+      ...(port ? { port } : {}),
       event_id: String(event.event_id || '')
     }
   }

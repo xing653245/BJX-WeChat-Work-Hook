@@ -1,8 +1,7 @@
 /**
  * 企微本地 HTTP API 客户端：同一端口所有 Hook 请求串行 + 写操作最小间隔，避免并发压垮 Hook 导致崩溃。
  */
-const { createWecomAgentAdapter } = require('./wecomAgentCompat')
-const { getWecomAgentManager } = require('./wecomAgentManager')
+const axios = require('axios')
 
 /** 消息发送 type（3000～3011） */
 const MESSAGE_SEND_TYPES = new Set([
@@ -177,32 +176,44 @@ function enqueuePortTask(port, type, taskFn) {
  */
 async function postToVWorkApi(port, requestData, options = {}) {
   const type = Number(requestData?.type)
+  const url = `http://127.0.0.1:${port}/api`
   const timeout = options.timeout ?? getRequestTimeout(type)
-  const manager = getWecomAgentManager()
-  const adapter = createWecomAgentAdapter({
-    request: (requestOptions) => manager.request({
-      ...requestOptions,
-      timeout: requestOptions.timeout ?? timeout
-    })
-  })
 
-  return enqueuePortTask(port, type, async () => {
-    try {
-      return await adapter.call(requestData)
-    } catch (error) {
-      if (!['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(error.code)) {
-        throw error
-      }
+  if (type === 4008 || type === 4009) {
+    const {
+      assertFriendNetworkReady,
+      recordNetworkQuery,
+      validateAddNetworkParams,
+      buildAddNetworkHookPayload
+    } = require('./friendNetworkGuard')
 
-      const started = await manager.ensureStarted()
-      if (!started.success) {
-        const unavailable = new Error(started.output || '企微 Agent 启动失败')
-        unavailable.code = 'WECOM_AGENT_UNAVAILABLE'
-        throw unavailable
+    await assertFriendNetworkReady(port)
+
+    let hookPayload = requestData
+    if (type === 4009) {
+      const check = validateAddNetworkParams(port, requestData)
+      if (!check.valid) {
+        const err = new Error(check.message)
+        err.code = 'INVALID_FRIEND_NETWORK_PARAMS'
+        throw err
       }
-      return adapter.call(requestData)
+      hookPayload = buildAddNetworkHookPayload(check.params)
     }
-  })
+
+    const data = await enqueuePortTask(port, type, () =>
+      axios.post(url, hookPayload, { timeout, proxy: false, family: 4 }).then((res) => res.data)
+    )
+
+    if (type === 4008) {
+      recordNetworkQuery(port, requestData.key, data)
+    }
+
+    return data
+  }
+
+  return enqueuePortTask(port, type, () =>
+    axios.post(url, requestData, { timeout, proxy: false, family: 4 }).then((res) => res.data)
+  )
 }
 
 module.exports = {

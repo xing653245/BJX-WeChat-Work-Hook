@@ -1,6 +1,6 @@
 /**
  * 当前企微客户端的旧注入工具路径配置。
- * 正常启动统一使用内置 WeComHttpAgentStable；这里仅保留现有内部兼容调用。
+ * 正常启动使用 bin/v5/it.exe 注入；这里保留注入工具路径解析。
  */
 const path = require('path')
 const fs = require('fs')

@@ -123,7 +123,7 @@
                 <span class="section-icon accent"><el-icon><ChatLineRound /></el-icon></span>
                 <div>
                   <h2 class="section-title">企微接入</h2>
-                  <p class="section-desc">框架已内置当前企微服务，无需选择版本或配置注入工具</p>
+                  <p class="section-desc">通过注入工具启动企微，每个账号使用独立 HTTP 端口</p>
                 </div>
               </div>
             </div>
@@ -131,20 +131,20 @@
               <div class="field-grid">
                 <span class="field-label">接入组件</span>
                 <div class="field-control">
-                  <el-tag type="success" effect="light">企微服务已内置</el-tag>
-                  <p class="field-hint">打开框架时自动启动，客户无需单独运行或注入。</p>
+                  <el-tag type="success" effect="light">it.exe 注入</el-tag>
+                  <p class="field-hint">在「企微管理」右键「添加企微」，由 bin/v5/it.exe 注入并启动。</p>
                 </div>
 
                 <span class="field-label">接口端口</span>
                 <div class="field-control">
-                  <strong>HTTP 8080</strong>
-                  <p class="field-hint">端口由框架固定管理，不需要客户填写。</p>
+                  <strong>每个企微一个端口</strong>
+                  <p class="field-hint">随机分配或手动指定 1025–10000，框架按该端口访问这个企微。</p>
                 </div>
 
                 <span class="field-label">使用方式</span>
                 <div class="field-control">
-                  <strong>打开框架即可使用</strong>
-                  <p class="field-hint">企微登录后会自动显示在「企微管理」，无需选择企微版本。</p>
+                  <strong>添加后再登录</strong>
+                  <p class="field-hint">注入成功后表格出现「登录中」，登录完成会写入账号。</p>
                 </div>
               </div>
             </div>
