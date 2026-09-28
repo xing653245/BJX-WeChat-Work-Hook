@@ -2,6 +2,7 @@
   <div class="settings-page">
     <div class="settings-body">
       <aside class="settings-nav" aria-label="设置分区导航">
+        <div class="nav-caption">设置分区</div>
         <nav class="nav-list">
           <button
             v-for="item in navSections"
@@ -9,6 +10,7 @@
             type="button"
             class="nav-item"
             :class="{ active: activeSection === item.id }"
+            :aria-current="activeSection === item.id ? 'location' : undefined"
             @click="scrollToSection(item.id)"
           >
             <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
@@ -26,7 +28,7 @@
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
-                  <h2 class="section-title">HTTP 设置</h2>
+                  <h2 class="section-title">连接与回调</h2>
                   <p class="section-desc">企微监听端口与消息回调</p>
                 </div>
               </div>
@@ -51,6 +53,26 @@
                   <p class="field-hint">企微直接推送到此地址，不经过框架消息加密。保存后重新启动企微生效</p>
                 </div>
 
+                <label class="field-label" for="settings-push-enabled">开启原生回调</label>
+                <div class="field-control control-inline">
+                  <el-switch id="settings-push-enabled" v-model="formData.push_enabled" />
+                  <span class="field-hint inline-hint">{{ formData.push_enabled ? '已开启消息推送' : '暂不推送消息' }}</span>
+                </div>
+                <label class="field-label">回调策略</label>
+                <div class="field-control callback-options">
+                  <div class="compact-field">
+                    <label for="settings-push-timeout">超时时间 <span>毫秒</span></label>
+                    <el-input-number id="settings-push-timeout" v-model="formData.push_timeout_ms" :min="1" :max="2147483647" :precision="0" controls-position="right" />
+                  </div>
+                  <div class="compact-field">
+                    <label for="settings-push-retries">失败重试 <span>次</span></label>
+                    <el-input-number id="settings-push-retries" v-model="formData.push_retries" :min="0" :max="2147483647" :precision="0" controls-position="right" />
+                  </div>
+                </div>
+              </div>
+              <details class="advanced-settings">
+                <summary>高级设置 · 框架消息加密<span>仅用于框架转发</span></summary>
+                <div class="field-grid advanced-body">
                 <label class="field-label" for="settings-callback-encrypt">消息加密</label>
                 <div class="field-control">
                   <el-switch id="settings-callback-encrypt" v-model="formData.callback_encrypt" />
@@ -92,7 +114,8 @@
                     </div>
                   </div>
                 </template>
-              </div>
+                </div>
+              </details>
             </div>
           </div>
         </section>
@@ -123,12 +146,7 @@
                   <p class="field-hint">仅支持企微 v5.0.3.6005 版本客户端；保存后下次启动生效</p>
                 </div>
 
-                <label class="field-label">开启原生回调</label>
-                <div class="field-control"><el-switch v-model="formData.push_enabled" /></div>
-                <label class="field-label">回调超时（毫秒）</label>
-                <div class="field-control"><el-input-number v-model="formData.push_timeout_ms" :min="1" :max="2147483647" :precision="0" /></div>
-                <label class="field-label">失败重试次数</label>
-                <div class="field-control"><el-input-number v-model="formData.push_retries" :min="0" :max="2147483647" :precision="0" /></div>
+
               </div>
             </div>
           </div>
@@ -553,16 +571,15 @@
     </div>
 
     <footer class="settings-footer" :class="{ 'is-dirty': isDirty, 'is-saving': saving }">
-      <p class="footer-status">
+      <p class="footer-status" role="status" aria-live="polite">
         <span v-if="saving">正在保存…</span>
         <span v-else-if="isDirty">有未保存的更改</span>
-        <span v-else class="footer-status-ok">配置已同步</span>
+        <span v-else class="footer-status-ok">所有更改已保存</span>
       </p>
       <el-button
         type="primary"
         size="large"
         class="save-btn"
-        :class="{ pulse: isDirty && !saving }"
         @click="handleSave"
         :loading="saving"
       >
@@ -610,7 +627,7 @@ const themeMode = ref(getStoredThemeMode())
 const logDirectoryPath = ref('')
 const wecomVersionOptions = ref([{ id: 'v5', label: '企微 v5', available: true }])
 const navSections = [
-  { id: 'http', label: 'HTTP', icon: Connection },
+  { id: 'http', label: '连接与回调', icon: Connection },
   { id: 'wecom', label: '企微版本', icon: ChatLineRound },
   { id: 'api', label: '接口调试', icon: Promotion },
   { id: 'logs', label: '日志', icon: Document },
@@ -1418,7 +1435,7 @@ onUnmounted(() => {
 .settings-nav {
   flex-shrink: 0;
   width: var(--sp-nav-w);
-  padding: 16px 10px;
+  padding: 24px 12px;
   border-right: 1px solid var(--sp-border);
   background: var(--sp-surface);
 }
@@ -1485,13 +1502,15 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 24px 100px;
+  padding: 24px 32px 32px;
+  scrollbar-gutter: stable;
   scroll-behavior: smooth;
 }
 
 .settings-section {
   scroll-margin-top: 12px;
-  margin-bottom: 16px;
+  margin: 0 auto 20px;
+  max-width: 1040px;
 }
 
 .settings-section-last {
@@ -1514,14 +1533,13 @@ onUnmounted(() => {
   background: var(--sp-surface);
   border: 1px solid var(--sp-border);
   border-radius: var(--sp-radius);
-  box-shadow: var(--sp-shadow);
+  box-shadow: 0 2px 6px rgb(15 23 42 / 3%);
   overflow: hidden;
   transition: box-shadow 0.25s ease, border-color 0.25s ease;
 }
 
 .section-card:hover {
-  border-color: #dce3ec;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  border-color: var(--sp-border);
 }
 
 .section-head {
@@ -1529,7 +1547,7 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 20px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--sp-border);
 }
 
@@ -1576,7 +1594,7 @@ onUnmounted(() => {
 
 .section-icon.accent {
   background: rgba(103, 194, 58, 0.1);
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 
 .section-title {
@@ -1594,7 +1612,7 @@ onUnmounted(() => {
 }
 
 .section-body {
-  padding: 20px;
+  padding: 24px;
 }
 
 .api-section-body {
@@ -1662,8 +1680,8 @@ onUnmounted(() => {
 
 .field-grid {
   display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
-  gap: 20px 16px;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 24px 20px;
   align-items: start;
 }
 
@@ -1672,7 +1690,7 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 500;
   color: var(--sp-muted);
-  text-align: right;
+  text-align: left;
 }
 
 .field-control {
@@ -1680,11 +1698,13 @@ onUnmounted(() => {
 }
 
 .field-input {
-  max-width: 280px;
+  width: 100%;
+  max-width: 260px;
 }
 
 .field-input-wide {
-  max-width: 480px;
+  width: 100%;
+  max-width: 620px;
 }
 
 .field-hint {
@@ -1815,7 +1835,7 @@ onUnmounted(() => {
 }
 
 .option-card:hover {
-  border-color: #c6d4e3;
+  border-color: var(--sp-accent);
   transform: translateY(-1px);
 }
 
@@ -2056,7 +2076,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 24px;
+  padding: 14px 28px;
   border-top: 1px solid var(--sp-border);
   background: var(--sp-footer-bg);
   backdrop-filter: blur(8px);
@@ -2064,7 +2084,7 @@ onUnmounted(() => {
 }
 
 .settings-footer.is-dirty {
-  border-top-color: #fde68a;
+  border-top-color: var(--el-color-warning-light-5);
   box-shadow: 0 -4px 20px rgba(245, 158, 11, 0.08);
 }
 
@@ -2078,8 +2098,9 @@ onUnmounted(() => {
   color: #67c23a;
 }
 
-.save-btn.pulse:not(.is-loading) {
-  animation: save-pulse 2s ease-in-out infinite;
+.save-btn {
+  min-width: 128px;
+  border-radius: 8px;
 }
 
 /* API test (preserved layout) */
@@ -2315,6 +2336,29 @@ onUnmounted(() => {
   transform: translateY(-8px);
 }
 
+
+
+.nav-caption { padding: 0 12px 14px; font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--sp-muted); }
+.control-inline { display: flex; align-items: center; gap: 12px; }
+.inline-hint { margin: 0; }
+.callback-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; max-width: 460px; }
+.compact-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.compact-field label { font-size: 12px; color: var(--sp-text); }
+.compact-field label span { margin-left: 6px; color: var(--sp-muted); }
+.compact-field :deep(.el-input-number) { width: 100%; }
+.advanced-settings { margin-top: 24px; border-top: 1px solid var(--sp-border); }
+.advanced-settings summary { padding: 18px 0 0; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--sp-text); }
+.advanced-settings summary span { display: inline-block; margin-left: 12px; font-size: 12px; font-weight: 400; color: var(--sp-muted); }
+.advanced-body { padding-top: 24px; }
+.settings-page :deep(.el-input__wrapper), .settings-page :deep(.el-select__wrapper) { min-height: 36px; border-radius: 7px; }
+.settings-page :deep(.el-textarea__inner) { border-radius: 7px; }
+.settings-page button:focus-visible, .advanced-settings summary:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
+.section-desc, .field-hint, .option-card-desc, .switch-card-desc { line-height: 1.65; overflow-wrap: anywhere; }
+.footer-status { display: flex; align-items: center; gap: 8px; }
+.footer-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--el-color-success); flex-shrink: 0; }
+.is-dirty .footer-status::before { background: var(--el-color-warning); }
+.is-saving .footer-status::before { background: var(--sp-accent); }
+
 @media (max-width: 960px) {
   .settings-body {
     flex-direction: column;
@@ -2325,6 +2369,7 @@ onUnmounted(() => {
     border-right: none;
     border-bottom: 1px solid var(--sp-border);
     padding: 10px 16px;
+    box-sizing: border-box;
     overflow-x: auto;
   }
 
@@ -2336,6 +2381,8 @@ onUnmounted(() => {
 
   .nav-item {
     flex-shrink: 0;
+    width: auto;
+    white-space: nowrap;
     padding: 8px 12px;
   }
 
@@ -2343,9 +2390,8 @@ onUnmounted(() => {
     display: none;
   }
 
-  .option-cards {
-    grid-template-columns: 1fr;
-  }
+  .nav-caption { display: none; }
+  .option-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
   .api-test-split {
     grid-template-columns: 1fr;
@@ -2353,8 +2399,9 @@ onUnmounted(() => {
 
   .field-grid {
     grid-template-columns: 1fr;
-    gap: 6px;
+    gap: 8px;
   }
+  .field-control { margin-bottom: 12px; }
 
   .field-label {
     text-align: left;
@@ -2363,6 +2410,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
+  .section-head, .section-body { padding: 18px 16px; }
+  .option-cards { grid-template-columns: 1fr; }
+  .settings-main { padding-top: 16px; }
+  .field-input, .field-input-wide { max-width: 100%; }
+  .advanced-settings summary span { display: block; margin: 6px 0 0; }
   .settings-main,
   .settings-footer {
     padding-left: 16px;
@@ -2387,6 +2439,9 @@ onUnmounted(() => {
   .api-test-field-label {
     padding-top: 0;
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-page *, .settings-page *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 </style>
 
