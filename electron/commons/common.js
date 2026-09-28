@@ -13,8 +13,10 @@ const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
 const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
 const {
+  ALG_NAME: CALLBACK_ENCRYPT_ALG,
   encryptCallbackPayload,
-  isValidCallbackEncryptKey
+  isValidCallbackEncryptKey,
+  decodePemFromIni
 } = require('./callbackCrypto')
 
 const LEGACY_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8001/msg'
@@ -279,14 +281,14 @@ function buildCallbackPostBody(data) {
   if (!isValidCallbackEncryptKey(ini_config.callback_encrypt_key)) {
     return {
       ok: false,
-      message: '回调加密已开启但密钥无效，请在设置中生成密钥并保存'
+      message: '回调加密已开启但 RSA 公钥无效，请在设置中重新生成密钥对并保存'
     }
   }
   try {
     return {
       ok: true,
-      body: encryptCallbackPayload(data, ini_config.callback_encrypt_key),
-      headers: { 'X-VWork-Encrypt': 'AES-256-GCM' }
+      body: encryptCallbackPayload(data, decodePemFromIni(ini_config.callback_encrypt_key)),
+      headers: { 'X-VWork-Encrypt': CALLBACK_ENCRYPT_ALG }
     }
   } catch (error) {
     return {
@@ -490,6 +492,7 @@ function readIni(configPath = null) {
     let save_log = true
     let callback_encrypt = false
     let callback_encrypt_key = ''
+    let callback_encrypt_private_key = ''
 
     if (conf.sys) {
       server_port = conf.sys.server_port || server_port
@@ -505,7 +508,8 @@ function readIni(configPath = null) {
       open_log = parseIniFlag(conf.sys.open_log)
       save_log = parseIniFlag(conf.sys.save_log)
       callback_encrypt = parseIniFlag(conf.sys.callback_encrypt)
-      callback_encrypt_key = String(conf.sys.callback_encrypt_key || '').trim()
+      callback_encrypt_key = decodePemFromIni(conf.sys.callback_encrypt_key || '')
+      callback_encrypt_private_key = decodePemFromIni(conf.sys.callback_encrypt_private_key || '')
     }
 
     let login_info_list = '[]'
@@ -530,6 +534,7 @@ function readIni(configPath = null) {
       save_log,
       callback_encrypt,
       callback_encrypt_key,
+      callback_encrypt_private_key,
       login_info
     })
   } catch (error) {
@@ -541,6 +546,7 @@ function readIni(configPath = null) {
       save_log: true,
       callback_encrypt: false,
       callback_encrypt_key: '',
+      callback_encrypt_private_key: '',
       login_info: []
     })
   }

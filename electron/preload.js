@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 日志和回调相关
   saveLogToFile: (data) => ipcRenderer.invoke('save-log-to-file', data),
   sendCallback: (url, data) => ipcRenderer.invoke('send-callback', { url, data }),
+  generateCallbackRsaKeypair: () => ipcRenderer.invoke('generate-callback-rsa-keypair'),
 
   // 关闭主窗口前：主进程通知渲染层展示自定义确认框，渲染层应答
   onCloseConfirmRequest: (callback) => {

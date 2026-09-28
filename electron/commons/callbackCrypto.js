@@ -1,44 +1,93 @@
 /**
- * 回调推送 AES-256-GCM 加解密
+ * 回调推送纯 RSA-OAEP 加解密（无 AES）
  *
  * 加密开启后，POST 到用户回调地址的 JSON 形态为：
  * {
  *   encrypted: true,
- *   alg: "AES-256-GCM",
- *   iv: "<Base64 12字节>",
- *   tag: "<Base64 16字节>",
- *   ciphertext: "<Base64>"
+ *   alg: "RSA-OAEP-SHA256",
+ *   chunks: ["<Base64>", "..."]  // 明文按块 RSA 加密后的密文列表
  * }
  *
- * 密钥为 32 字节，设置页与 conf.ini 中以 64 位十六进制保存。
+ * 说明：RSA-OAEP(SHA-256) 单次可加密约 190 字节（2048 位密钥），
+ * 因此将 UTF-8 JSON 明文分块后逐块 publicEncrypt，解密时按序 privateDecrypt 再拼接。
+ *
+ * 配置中：
+ * - callback_encrypt_key：RSA 公钥 PEM（框架加密用）
+ * - callback_encrypt_private_key：RSA 私钥 PEM（回调服务解密用）
+ * ini 中换行存为字面量 \n。
  */
 const crypto = require('crypto')
 
-const ALG = 'aes-256-gcm'
-const ALG_NAME = 'AES-256-GCM'
-const IV_LEN = 12
-const KEY_LEN = 32
-const KEY_HEX_LEN = KEY_LEN * 2
+const ALG_NAME = 'RSA-OAEP-SHA256'
+const RSA_MODULUS_BITS = 2048
+/** OAEP SHA-256：max = floor(nBits/8) - 2*hashLen - 2 = 256 - 64 - 2 */
+const RSA_OAEP_MAX_PLAIN_BYTES = Math.floor(RSA_MODULUS_BITS / 8) - 2 * 32 - 2
 
-function generateCallbackEncryptKey() {
-  return crypto.randomBytes(KEY_LEN).toString('hex')
+const RSA_OAEP_OPTIONS = {
+  padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+  oaepHash: 'sha256'
 }
 
-function decodeCallbackEncryptKey(raw) {
-  const hex = String(raw || '').trim()
-  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-    throw new Error('加密密钥必须是 64 位十六进制（32 字节）')
+function normalizePem(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/\r\n/g, '\n')
+    .replace(/\\n/g, '\n')
+}
+
+/** 写入 conf.ini 时把 PEM 压成单行 */
+function encodePemForIni(pem) {
+  return normalizePem(pem).replace(/\n/g, '\\n')
+}
+
+/** 从 conf.ini / 表单读出 PEM */
+function decodePemFromIni(raw) {
+  return normalizePem(raw)
+}
+
+function generateCallbackEncryptKeyPair() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: RSA_MODULUS_BITS,
+    publicExponent: 0x10001,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  })
+  return {
+    publicKey: normalizePem(publicKey),
+    privateKey: normalizePem(privateKey)
   }
-  return Buffer.from(hex, 'hex')
 }
 
-function isValidCallbackEncryptKey(raw) {
+/** @deprecated 兼容旧调用名；请用 generateCallbackEncryptKeyPair */
+function generateCallbackEncryptKey() {
+  return generateCallbackEncryptKeyPair().publicKey
+}
+
+function isValidCallbackEncryptPublicKey(raw) {
   try {
-    decodeCallbackEncryptKey(raw)
-    return true
+    const pem = decodePemFromIni(raw)
+    if (!pem.includes('BEGIN PUBLIC KEY')) return false
+    const key = crypto.createPublicKey(pem)
+    return key.asymmetricKeyType === 'rsa'
   } catch {
     return false
   }
+}
+
+function isValidCallbackEncryptPrivateKey(raw) {
+  try {
+    const pem = decodePemFromIni(raw)
+    if (!/BEGIN (?:RSA )?PRIVATE KEY/.test(pem)) return false
+    const key = crypto.createPrivateKey(pem)
+    return key.asymmetricKeyType === 'rsa'
+  } catch {
+    return false
+  }
+}
+
+/** 框架侧校验「加密公钥」；旧名保留给 common.js */
+function isValidCallbackEncryptKey(raw) {
+  return isValidCallbackEncryptPublicKey(raw)
 }
 
 function isEncryptedCallbackBody(body) {
@@ -46,50 +95,61 @@ function isEncryptedCallbackBody(body) {
     body &&
     body.encrypted === true &&
     body.alg &&
-    body.iv &&
-    body.tag &&
-    body.ciphertext
+    Array.isArray(body.chunks) &&
+    body.chunks.length > 0
   )
 }
 
-function encryptCallbackPayload(data, keyHex) {
-  const key = decodeCallbackEncryptKey(keyHex)
-  const iv = crypto.randomBytes(IV_LEN)
-  const cipher = crypto.createCipheriv(ALG, key, iv)
+function encryptCallbackPayload(data, publicKeyPem) {
+  const publicKey = crypto.createPublicKey(decodePemFromIni(publicKeyPem))
   const plaintext = Buffer.from(JSON.stringify(data ?? {}), 'utf8')
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
-  const tag = cipher.getAuthTag()
+  const chunks = []
+  for (let offset = 0; offset < plaintext.length; offset += RSA_OAEP_MAX_PLAIN_BYTES) {
+    const slice = plaintext.subarray(offset, offset + RSA_OAEP_MAX_PLAIN_BYTES)
+    const enc = crypto.publicEncrypt({ key: publicKey, ...RSA_OAEP_OPTIONS }, slice)
+    chunks.push(enc.toString('base64'))
+  }
+  // 空 JSON 对象 "{}" 也会至少一块；若明文为空仍给一块空加密
+  if (chunks.length === 0) {
+    const enc = crypto.publicEncrypt(
+      { key: publicKey, ...RSA_OAEP_OPTIONS },
+      Buffer.alloc(0)
+    )
+    chunks.push(enc.toString('base64'))
+  }
   return {
     encrypted: true,
     alg: ALG_NAME,
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    ciphertext: ciphertext.toString('base64')
+    chunks
   }
 }
 
-function decryptCallbackPayload(body, keyHex) {
+function decryptCallbackPayload(body, privateKeyPem) {
   if (!isEncryptedCallbackBody(body)) {
     return body
   }
-  const key = decodeCallbackEncryptKey(keyHex)
-  const iv = Buffer.from(body.iv, 'base64')
-  const tag = Buffer.from(body.tag, 'base64')
-  const ciphertext = Buffer.from(body.ciphertext, 'base64')
-  if (iv.length !== IV_LEN) {
-    throw new Error('加密数据 IV 长度无效')
-  }
-  const decipher = crypto.createDecipheriv(ALG, key, iv)
-  decipher.setAuthTag(tag)
-  const json = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
-  return JSON.parse(json)
+  const privateKey = crypto.createPrivateKey(decodePemFromIni(privateKeyPem))
+  const parts = body.chunks.map((chunk) =>
+    crypto.privateDecrypt(
+      { key: privateKey, ...RSA_OAEP_OPTIONS },
+      Buffer.from(chunk, 'base64')
+    )
+  )
+  const json = Buffer.concat(parts).toString('utf8')
+  return JSON.parse(json || '{}')
 }
 
 module.exports = {
   ALG_NAME,
-  KEY_HEX_LEN,
+  RSA_MODULUS_BITS,
+  RSA_OAEP_MAX_PLAIN_BYTES,
+  generateCallbackEncryptKeyPair,
   generateCallbackEncryptKey,
+  encodePemForIni,
+  decodePemFromIni,
   isValidCallbackEncryptKey,
+  isValidCallbackEncryptPublicKey,
+  isValidCallbackEncryptPrivateKey,
   isEncryptedCallbackBody,
   encryptCallbackPayload,
   decryptCallbackPayload

@@ -73,9 +73,9 @@
                 <div class="field-control">
                   <el-switch id="settings-callback-encrypt" v-model="formData.callback_encrypt" />
                   <p class="field-hint">
-                    开启后，推送到回调地址的正文使用 AES-256-GCM 加密；未开启则仍为明文 JSON。保存后需要重启框架
+                    开启后，推送到回调地址的正文使用 RSA-OAEP（SHA-256）加密；未开启则仍为明文 JSON。保存后需要重启框架
                     <el-tooltip
-                      content="加密后请求头带 X-VWork-Encrypt: AES-256-GCM&#10;正文为 { encrypted, alg, iv, tag, ciphertext }&#10;用下方 64 位十六进制密钥解密即可得到原来的 JSON"
+                      content="加密后请求头带 X-VWork-Encrypt: RSA-OAEP-SHA256&#10;正文为 { encrypted, alg, chunks }&#10;用下方 RSA 私钥按块解密并拼接即可得到原来的 JSON"
                       placement="top"
                     >
                       <el-icon class="inline-help"><QuestionFilled /></el-icon>
@@ -84,22 +84,24 @@
                 </div>
 
                 <template v-if="formData.callback_encrypt">
-                  <label class="field-label" for="settings-callback-encrypt-key">解密密钥</label>
+                  <label class="field-label" for="settings-callback-encrypt-private-key">解密私钥</label>
                   <div class="field-control">
                     <div class="key-row">
                       <el-input
-                        id="settings-callback-encrypt-key"
-                        v-model="formData.callback_encrypt_key"
-                        type="password"
-                        show-password
-                        placeholder="64 位十六进制（32 字节）"
+                        id="settings-callback-encrypt-private-key"
+                        v-model="formData.callback_encrypt_private_key"
+                        type="textarea"
+                        :rows="4"
+                        placeholder="RSA PKCS#8 私钥 PEM（请配置到回调服务）"
                         class="field-input-wide"
                       />
-                      <el-button @click="copyEncryptKey">复制</el-button>
-                      <el-button @click="regenerateEncryptKey">重新生成</el-button>
+                    </div>
+                    <div class="key-row key-row-actions">
+                      <el-button @click="copyEncryptPrivateKey">复制私钥</el-button>
+                      <el-button @click="regenerateEncryptKey">重新生成密钥对</el-button>
                     </div>
                     <p class="field-hint">
-                      请妥善保存并配置到你的回调服务；重新生成后旧密钥无法解密之后的推送。
+                      框架用公钥加密推送，你的回调服务用私钥解密。请妥善保存私钥；重新生成后旧私钥无法解密之后的推送。
                     </p>
                     <pre class="decrypt-sample">{{ decryptSampleText }}</pre>
                     <div class="key-row key-row-actions">
@@ -737,6 +739,7 @@ const formData = reactive({
   callback: '',
   callback_encrypt: false,
   callback_encrypt_key: '',
+  callback_encrypt_private_key: '',
   open_log: true,
   save_log: true,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
@@ -814,6 +817,7 @@ const loadConfig = () => {
   formData.callback_encrypt =
     config.sys?.callback_encrypt === 'true' || config.sys?.callback_encrypt === true
   formData.callback_encrypt_key = String(config.sys?.callback_encrypt_key || '').trim()
+  formData.callback_encrypt_private_key = String(config.sys?.callback_encrypt_private_key || '').trim()
   formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
   formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
   formData.auto_check_update = !(
@@ -861,55 +865,66 @@ watch(
   () => formData.callback_encrypt,
   (on) => {
     if (skipDirtyWatch.value) return
-    if (on && !isValidCallbackEncryptKey(formData.callback_encrypt_key)) {
-      formData.callback_encrypt_key = generateCallbackEncryptKey()
+    if (
+      on &&
+      (!isValidCallbackEncryptPublicKey(formData.callback_encrypt_key) ||
+        !isValidCallbackEncryptPrivateKey(formData.callback_encrypt_private_key))
+    ) {
+      ensureCallbackRsaKeypair()
     }
   }
 )
 
-function generateCallbackEncryptKey() {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32))
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+function isValidCallbackEncryptPublicKey(raw) {
+  const pem = String(raw || '').trim()
+  return pem.includes('BEGIN PUBLIC KEY') && pem.includes('END PUBLIC KEY')
 }
 
-function isValidCallbackEncryptKey(raw) {
-  return /^[0-9a-fA-F]{64}$/.test(String(raw || '').trim())
+function isValidCallbackEncryptPrivateKey(raw) {
+  const pem = String(raw || '').trim()
+  return /BEGIN (?:RSA )?PRIVATE KEY/.test(pem) && /END (?:RSA )?PRIVATE KEY/.test(pem)
 }
 
 const decryptSampleText = `{
   "encrypted": true,
-  "alg": "AES-256-GCM",
-  "iv": "<Base64>",
-  "tag": "<Base64>",
-  "ciphertext": "<Base64>"
+  "alg": "RSA-OAEP-SHA256",
+  "chunks": ["<Base64>", "<Base64>"]
 }`
 
 const NODE_DECRYPT_SNIPPET = `const crypto = require('crypto')
 
-function decryptCallback(body, keyHex) {
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    Buffer.from(keyHex, 'hex'),
-    Buffer.from(body.iv, 'base64')
+function decryptCallback(body, privateKeyPem) {
+  const parts = body.chunks.map((chunk) =>
+    crypto.privateDecrypt(
+      {
+        key: privateKeyPem,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: 'sha256'
+      },
+      Buffer.from(chunk, 'base64')
+    )
   )
-  decipher.setAuthTag(Buffer.from(body.tag, 'base64'))
-  const buf = Buffer.concat([
-    decipher.update(Buffer.from(body.ciphertext, 'base64')),
-    decipher.final()
-  ])
-  return JSON.parse(buf.toString('utf8'))
+  return JSON.parse(Buffer.concat(parts).toString('utf8') || '{}')
 }`
 
 const PYTHON_DECRYPT_SNIPPET = `import json, base64
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
-def decrypt_callback(body: dict, key_hex: str) -> dict:
-    key = bytes.fromhex(key_hex)
-    iv = base64.b64decode(body["iv"])
-    tag = base64.b64decode(body["tag"])
-    ct = base64.b64decode(body["ciphertext"])
-    plain = AESGCM(key).decrypt(iv, ct + tag, None)
-    return json.loads(plain)`
+def decrypt_callback(body: dict, private_key_pem: str) -> dict:
+    private_key = serialization.load_pem_private_key(
+        private_key_pem.encode("utf-8"), password=None
+    )
+    oaep = padding.OAEP(
+        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+        algorithm=hashes.SHA256(),
+        label=None,
+    )
+    plain = b"".join(
+        private_key.decrypt(base64.b64decode(chunk), oaep)
+        for chunk in body["chunks"]
+    )
+    return json.loads(plain or b"{}")`
 
 async function copyText(text, okMsg) {
   try {
@@ -920,27 +935,43 @@ async function copyText(text, okMsg) {
   }
 }
 
-async function copyEncryptKey() {
-  const key = String(formData.callback_encrypt_key || '').trim()
-  if (!isValidCallbackEncryptKey(key)) {
-    ElMessage.warning('请先生成有效密钥')
+async function ensureCallbackRsaKeypair() {
+  if (!window.electronAPI?.generateCallbackRsaKeypair) {
+    ElMessage.warning('当前环境无法生成 RSA 密钥对')
+    return false
+  }
+  const result = await window.electronAPI.generateCallbackRsaKeypair()
+  if (!result?.success) {
+    ElMessage.error(result?.message || '生成 RSA 密钥对失败')
+    return false
+  }
+  formData.callback_encrypt_key = result.publicKey
+  formData.callback_encrypt_private_key = result.privateKey
+  return true
+}
+
+async function copyEncryptPrivateKey() {
+  const key = String(formData.callback_encrypt_private_key || '').trim()
+  if (!isValidCallbackEncryptPrivateKey(key)) {
+    ElMessage.warning('请先生成有效的 RSA 私钥')
     return
   }
-  await copyText(key, '密钥已复制')
+  await copyText(key, '私钥已复制')
 }
 
 async function regenerateEncryptKey() {
   try {
     await ElMessageBox.confirm(
-      '重新生成后，旧密钥无法解密之后的推送。请同步更新你的回调服务，并点击「保存修改」。',
-      '重新生成解密密钥',
+      '重新生成后，旧私钥无法解密之后的推送。请同步更新你的回调服务，并点击「保存修改」。',
+      '重新生成 RSA 密钥对',
       { type: 'warning', confirmButtonText: '重新生成', cancelButtonText: '取消' }
     )
   } catch {
     return
   }
-  formData.callback_encrypt_key = generateCallbackEncryptKey()
-  ElMessage.success('已生成新密钥，保存后生效')
+  if (await ensureCallbackRsaKeypair()) {
+    ElMessage.success('已生成新密钥对，保存后生效')
+  }
 }
 
 async function copyDecryptSnippet(kind) {
@@ -1226,8 +1257,12 @@ const handleSave = async () => {
     return
   }
 
-  if (formData.callback_encrypt && !isValidCallbackEncryptKey(formData.callback_encrypt_key)) {
-    ElMessage.warning('消息加密已开启，请填写有效的 64 位十六进制密钥，或点击「重新生成」')
+  if (
+    formData.callback_encrypt &&
+    (!isValidCallbackEncryptPublicKey(formData.callback_encrypt_key) ||
+      !isValidCallbackEncryptPrivateKey(formData.callback_encrypt_private_key))
+  ) {
+    ElMessage.warning('消息加密已开启，请重新生成 RSA 密钥对后再保存')
     return
   }
 
@@ -1241,7 +1276,8 @@ const handleSave = async () => {
         server_port: String(formData.server_port),
         callback: formData.callback || '',
         callback_encrypt: String(formData.callback_encrypt),
-        callback_encrypt_key: String(formData.callback_encrypt_key || '').trim().toLowerCase(),
+        callback_encrypt_key: String(formData.callback_encrypt_key || '').trim(),
+        callback_encrypt_private_key: String(formData.callback_encrypt_private_key || '').trim(),
         open_log: String(formData.open_log),
         save_log: String(formData.save_log),
         auto_check_update: String(formData.auto_check_update),

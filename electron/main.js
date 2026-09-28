@@ -63,6 +63,11 @@ try {
 }
 const axios = require('axios')
 const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
+const {
+  generateCallbackEncryptKeyPair,
+  encodePemForIni,
+  decodePemFromIni
+} = require('./commons/callbackCrypto')
 const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
@@ -557,6 +562,7 @@ const readConfig = () => {
         callback: '',
         callback_encrypt: 'false',
         callback_encrypt_key: '',
+        callback_encrypt_private_key: '',
         open_log: 'true',
         save_log: 'true',
         auto_check_update: 'true',
@@ -1309,10 +1315,17 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 
 ipcMain.handle('read-config', () => {
   const config = readConfig()
+  const sys = { ...(config.sys || {}) }
+  if (sys.callback_encrypt_key) {
+    sys.callback_encrypt_key = decodePemFromIni(sys.callback_encrypt_key)
+  }
+  if (sys.callback_encrypt_private_key) {
+    sys.callback_encrypt_private_key = decodePemFromIni(sys.callback_encrypt_private_key)
+  }
   return {
     ...config,
     sys: {
-      ...(config.sys || {}),
+      ...sys,
       inject_key: DEFAULT_INJECT_KEY
     }
   }
@@ -1321,11 +1334,31 @@ ipcMain.handle('read-config', () => {
 ipcMain.handle('save-config', (event, config) => {
   assertMainWindow(event, mainWindow)
   const prev = readConfig()
+  const mergedSys = { ...(prev.sys || {}), ...((config && config.sys) || {}) }
+  if (mergedSys.callback_encrypt_key) {
+    mergedSys.callback_encrypt_key = encodePemForIni(
+      decodePemFromIni(mergedSys.callback_encrypt_key)
+    )
+  }
+  if (mergedSys.callback_encrypt_private_key) {
+    mergedSys.callback_encrypt_private_key = encodePemForIni(
+      decodePemFromIni(mergedSys.callback_encrypt_private_key)
+    )
+  }
   const merged = {
-    sys: { ...(prev.sys || {}), ...((config && config.sys) || {}) },
+    sys: mergedSys,
     custom: { ...(prev.custom || {}), ...((config && config.custom) || {}) }
   }
   return saveConfig(applyListenPortChangeToConfig(prev, merged))
+})
+
+ipcMain.handle('generate-callback-rsa-keypair', (event) => {
+  assertMainWindow(event, mainWindow)
+  try {
+    return { success: true, ...generateCallbackEncryptKeyPair() }
+  } catch (error) {
+    return { success: false, message: error.message }
+  }
 })
 
 ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
