@@ -37,14 +37,27 @@ test('配置字段正确读写，保留未编辑字段，支持恢复原始文�
 test('消息加密与公钥写入 settings.json，并保留其它字段', (t) => {
   const dir = fixture(t)
   const original = readInjectSettings(dir)
-  const pem = '-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----'
-  saveInjectSettings(dir, { ...original, encrypt: true, public_key: pem })
+  const public_key = require('node:crypto').generateKeyPairSync('rsa', {
+    modulusLength: 1024,
+    publicKeyEncoding: { type: 'pkcs1', format: 'pem' }
+  }).publicKey.trim()
+  saveInjectSettings(dir, { ...original, encrypt: true, public_key })
   const settings = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json')))
   assert.equal(settings.encrypt, true)
-  assert.equal(settings.public_key, pem)
+  assert.equal(settings.public_key, public_key)
   assert.equal(settings.logs, 'keep')
   assert.equal(settings.startup_mode, 'start_and_load')
-  assert.deepEqual(readInjectSettings(dir), { ...original, encrypt: true, public_key: pem })
+  assert.deepEqual(readInjectSettings(dir), { ...original, encrypt: true, public_key })
+})
+
+test('开启加密时拒绝非 PKCS#1 1024 bits 公钥', (t) => {
+  const dir = fixture(t)
+  const original = readInjectSettings(dir)
+  assert.throws(
+    () => saveInjectSettings(dir, { ...original, encrypt: true, public_key: 'not-a-key' }),
+    /Base64|PKCS#1|公钥/
+  )
+  assert.deepEqual(readInjectSettings(dir), original)
 })
 
 test('无效路径、端口、回调参数和损坏 JSON 均不覆盖已有文件', (t) => {

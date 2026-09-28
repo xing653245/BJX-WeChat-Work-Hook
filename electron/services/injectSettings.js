@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const { validatePkcs1Rsa1024PublicKey } = require('../commons/pkcs1PublicKey.cjs')
 
 function readDocument(dir, name) {
   const text = fs.readFileSync(path.join(dir, name), 'utf8')
@@ -46,7 +47,11 @@ function saveInjectSettings(dir, input) {
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('回调地址必须使用 HTTP/HTTPS')
   }
   const encrypt = parseEncryptFlag(input.encrypt)
-  const public_key = String(input.public_key || '')
+  const public_key = String(input.public_key || '').trim()
+  if (encrypt || public_key) {
+    const keyCheck = validatePkcs1Rsa1024PublicKey(public_key)
+    if (!keyCheck.ok) throw new Error(keyCheck.message)
+  }
   const settings = readDocument(dir, 'settings.json')
   const push = readDocument(dir, 'push.json')
   const documents = [

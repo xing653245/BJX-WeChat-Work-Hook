@@ -81,14 +81,14 @@
                         v-model="formData.public_key"
                         type="textarea"
                         :rows="4"
-                        placeholder="RSA 公钥 PEM"
+                        placeholder="PKCS#1 RSA 1024 bits 公钥"
                         class="field-input-wide"
                       />
                     </div>
                     <div class="key-row key-row-actions">
                       <el-button @click="copyEncryptPublicKey">复制公钥</el-button>
-                      <el-button @click="regenerateEncryptKey">重新生成密钥对</el-button>
                     </div>
+                    <p class="field-hint">须为 PKCS#1 格式（BEGIN RSA PUBLIC KEY），内容为 Base64，密钥位数 1024 bits</p>
                   </div>
                 </template>
                 </div>
@@ -536,6 +536,7 @@ import { useConfigStore } from '../stores/config'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
 import { getStoredThemeMode } from '../utils/theme'
+import { validatePkcs1Rsa1024PublicKey } from '../utils/pkcs1PublicKey'
 
 const configStore = useConfigStore()
 const setThemeModeGlobal = inject('setThemeMode', null)
@@ -857,19 +858,6 @@ async function copyEncryptPublicKey() {
   await copyText(key, '公钥已复制')
 }
 
-async function regenerateEncryptKey() {
-  try {
-    await ElMessageBox.confirm(
-      '重新生成后，旧公钥无法用于之后的推送加密。请同步更新配置，并点击「保存修改」。',
-      '重新生成 RSA 密钥对',
-      { type: 'warning', confirmButtonText: '重新生成', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  formData.public_key = `-----BEGIN PUBLIC KEY-----\n（界面展示）\n-----END PUBLIC KEY-----`
-}
-
 async function copyDecryptSnippet(kind) {
   if (kind === 'python') {
     await copyText(PYTHON_DECRYPT_SNIPPET, 'Python 解密示例已复制')
@@ -1155,6 +1143,15 @@ const handleSave = async () => {
     ElMessage.warning('企微监听端口必须为 1025–10000 的整数')
     loadConfig() // 恢复原值
     return
+  }
+
+  const publicKey = String(formData.public_key || '').trim()
+  if (formData.encrypt || publicKey) {
+    const keyCheck = validatePkcs1Rsa1024PublicKey(publicKey)
+    if (!keyCheck.ok) {
+      ElMessage.warning(keyCheck.message)
+      return
+    }
   }
 
   saving.value = true
