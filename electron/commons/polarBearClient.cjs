@@ -3,7 +3,7 @@
  */
 const axios = require('axios')
 const { formatAuthFetchError } = require('./authFetchError')
-const { getPolarBearBaseUrl } = require('../configs/polarBearBackend')
+const { getPolarBearBaseUrl, buildPolarBearAuthHeaders } = require('../configs/polarBearBackend')
 
 function pickBackendMessage(data) {
   if (!data) return ''
@@ -80,7 +80,10 @@ async function postPolarBear(path, body) {
   const url = `${getPolarBearBaseUrl()}${path}`
   const response = await axios.post(url, body, {
     timeout: 10000,
-    headers: { 'Content-Type': 'application/json' }
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildPolarBearAuthHeaders()
+    }
   })
   return response.data
 }

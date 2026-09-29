@@ -1646,13 +1646,16 @@ ipcMain.handle('reset-crash-recovery-protection', () => {
 
 // 获取授权信息
 const { formatAuthFetchError } = require('./commons/authFetchError')
-const { getPolarBearBaseUrl } = require('./configs/polarBearBackend')
+const { getPolarBearBaseUrl, buildPolarBearAuthHeaders } = require('./configs/polarBearBackend')
 const { bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
 
 ipcMain.handle('get-auth-info', async (event, wxid) => {
   const authUrl = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo?wxid=${encodeURIComponent(wxid)}`
   try {
-    const response = await axios.get(authUrl, { timeout: 10000 });
+    const response = await axios.get(authUrl, {
+      timeout: 10000,
+      headers: buildPolarBearAuthHeaders()
+    });
     const result = { success: true, data: response.data }
     
     // 读取配置，检查是否开启日志
