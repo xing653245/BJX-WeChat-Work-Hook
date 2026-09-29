@@ -1,9 +1,13 @@
 /**
- * 北极熊授权后端 HTTP 客户端（主进程）
+ * 北极熊授权 HTTP 客户端（主进程，经对应企微实例转发）
  */
 const axios = require('axios')
 const { formatAuthFetchError } = require('./authFetchError')
-const { getPolarBearBaseUrl, buildPolarBearAuthHeaders } = require('../configs/polarBearBackend')
+const { getPolarBearBaseUrl } = require('../configs/polarBearBackend')
+const { enqueuePortTask } = require('../services/wecomApiClient')
+
+// 本地企微请求不经系统代理，也不跟随重定向到外部后端。
+const requestOptions = { timeout: 10000, proxy: false, maxRedirects: 0 }
 
 function pickBackendMessage(data) {
   if (!data) return ''
@@ -76,29 +80,25 @@ function normalizePolarBearResponse(responseData, fallbackSuccessMsg, fallbackFa
   }
 }
 
-async function getAuthInfo(wxid) {
-  const url = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo?wxid=${encodeURIComponent(wxid)}`
-  const response = await axios.get(url, {
-    timeout: 10000,
-    headers: buildPolarBearAuthHeaders()
-  })
-  return response.data
+async function getAuthInfo(wxid, port) {
+  const userId = String(wxid || '').trim()
+  if (!userId) throw new Error('缺少 wxid，无法查询授权')
+  const url = `${getPolarBearBaseUrl(port)}/polarBear/getAuthInfo?wxid=${encodeURIComponent(userId)}`
+  return enqueuePortTask(Number(port), 0, () => axios.get(url, requestOptions).then(response => response.data))
 }
 
-async function postPolarBear(path, body) {
-  const url = `${getPolarBearBaseUrl()}${path}`
-  const response = await axios.post(url, body, {
-    timeout: 10000,
+async function postPolarBear(port, path, body) {
+  const url = `${getPolarBearBaseUrl(port)}${path}`
+  return enqueuePortTask(Number(port), 0, () => axios.post(url, body, {
+    ...requestOptions,
     headers: {
-      'Content-Type': 'application/json',
-      ...buildPolarBearAuthHeaders()
+      'Content-Type': 'application/json'
     }
-  })
-  return response.data
+  }).then(response => response.data))
 }
 
 /**
- * @param {{ wxid: string, card_key: string }} payload
+ * @param {{ wxid: string, card_key: string, port: string|number }} payload
  */
 async function bindCard(payload) {
   const wxid = String(payload?.wxid || '').trim()
@@ -107,7 +107,7 @@ async function bindCard(payload) {
   if (!card_key) return { success: false, msg: '请输入卡密' }
 
   try {
-    const data = await postPolarBear('/polarBear/card/bind', { wxid, card_key })
+    const data = await postPolarBear(payload.port, '/polarBear/card/bind', { wxid, card_key })
     return normalizePolarBearResponse(data, '卡密绑定成功', '卡密绑定失败')
   } catch (error) {
     return { success: false, msg: formatAuthFetchError(error) }
@@ -115,7 +115,7 @@ async function bindCard(payload) {
 }
 
 /**
- * @param {{ wxid: string, card_key: string }} payload
+ * @param {{ wxid: string, card_key: string, port: string|number }} payload
  */
 async function unbindCard(payload) {
   const wxid = String(payload?.wxid || '').trim()
@@ -124,7 +124,7 @@ async function unbindCard(payload) {
   if (!card_key) return { success: false, msg: '请输入卡密' }
 
   try {
-    const data = await postPolarBear('/polarBear/card/unbind', { wxid, card_key })
+    const data = await postPolarBear(payload.port, '/polarBear/card/unbind', { wxid, card_key })
     return normalizePolarBearResponse(data, '卡密解绑成功', '卡密解绑失败')
   } catch (error) {
     return { success: false, msg: formatAuthFetchError(error) }
@@ -133,14 +133,14 @@ async function unbindCard(payload) {
 
 /**
  * 利用 wxid 授权生成新卡密；新卡密继承到期时间，原 wxid 授权置为过期
- * @param {{ wxid: string }} payload
+ * @param {{ wxid: string, port: string|number }} payload
  */
 async function convertCardByWxid(payload) {
   const wxid = String(payload?.wxid || '').trim()
   if (!wxid) return { success: false, msg: '缺少 wxid，无法迁移授权' }
 
   try {
-    const data = await postPolarBear('/polarBear/card/convertByWxid', { wxid })
+    const data = await postPolarBear(payload.port, '/polarBear/card/convertBywxid', { wxid })
     const result = normalizePolarBearResponse(data, '授权迁移成功', '授权迁移失败')
     // 迁移成功必须能拿到新卡密，否则按失败处理，避免把「无授权」文案当成成功
     if (result.success) {

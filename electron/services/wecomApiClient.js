@@ -233,6 +233,10 @@ async function postToVWorkApi(port, requestData, options = {}) {
  * POST 到企微实例自定义路径（如 /updatesettings），不走 /api + type
  */
 async function postToWecomPath(port, pathname, body, options = {}) {
+  if (!['number', 'string'].includes(typeof port) || !/^\d+$/.test(String(port).trim()) || Number(port) < 1 || Number(port) > 65535) {
+    throw new Error('缺少或无效的企微端口')
+  }
+  port = Number(port)
   const path = pathname.startsWith('/') ? pathname : `/${pathname}`
   const url = `http://127.0.0.1:${port}${path}`
   const timeout = options.timeout ?? 10000
@@ -240,6 +244,7 @@ async function postToWecomPath(port, pathname, body, options = {}) {
     axios.post(url, body, {
       timeout,
       proxy: false,
+      maxRedirects: 0,
       family: 4,
       headers: { 'Content-Type': 'application/json' }
     }).then((res) => res.data)

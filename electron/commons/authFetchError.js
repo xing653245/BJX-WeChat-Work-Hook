@@ -1,5 +1,5 @@
 /**
- * 授权服务器请求错误提示（国内服务器，全局 VPN 可能导致不可达）
+ * 通过本地企微请求授权时的错误提示
  */
 
 function normalizeAuthErrorMessage(error) {
@@ -33,7 +33,7 @@ function formatAuthFetchError(error) {
   const code = error?.code || ''
 
   if (code === 'ECONNREFUSED' || msg.includes('ECONNREFUSED')) {
-    return '无法连接授权服务器，请检查网络；若开启了全局 VPN/代理，请尝试关闭后重试'
+    return '无法连接企微授权接口，请确认对应企微实例已启动、注入成功且端口正确'
   }
 
   if (
@@ -42,23 +42,22 @@ function formatAuthFetchError(error) {
     msg.toLowerCase().includes('timeout') ||
     msg.includes('ERR_CONNECTION_TIMED_OUT')
   ) {
-    return '连接授权服务器超时，请检查网络；全局 VPN/代理 可能导致国内授权服务器不可达，请关闭代理后重试'
+    return '企微授权接口响应超时，请检查对应企微实例及其网络连接后重试'
   }
 
   if (code === 'ENOTFOUND' || msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
-    return '无法解析授权服务器地址，请检查网络或 DNS；若使用 VPN，请尝试切换节点或关闭代理'
-  }
-
-  if (error?.response?.status === 404) {
-    return `账号在授权服务器上未找到，请确认已购买授权`
+    return '企微授权请求地址解析失败，请检查企微接口配置'
   }
 
   if (error?.response?.data?.msg) {
     return error.response.data.msg
   }
+  if (error?.response?.status === 404) {
+    return '企微授权接口未找到，请确认当前注入工具支持 /polarBear 接口'
+  }
 
   if (isAuthNetworkError(msg)) {
-    return '授权服务器网络不可达，请检查网络；若开启了 VPN/代理，请关闭后右键「刷新授权」'
+    return '企微授权接口连接异常，请检查企微实例状态后右键「刷新授权」'
   }
 
   return msg ? `获取授权信息失败：${msg}` : '获取授权信息失败，请稍后重试'

@@ -54,7 +54,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   
   // 获取授权信息
-  getAuthInfo: (wxid) => ipcRenderer.invoke('get-auth-info', wxid),
+  getAuthInfo: (wxid, port) => ipcRenderer.invoke('get-auth-info', wxid, port),
 
   // 卡密绑定 / 解绑
   bindCard: (payload) => ipcRenderer.invoke('card-bind', payload),

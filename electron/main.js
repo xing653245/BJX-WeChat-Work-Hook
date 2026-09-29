@@ -1624,9 +1624,9 @@ ipcMain.handle('reset-crash-recovery-protection', () => {
 const { formatAuthFetchError } = require('./commons/authFetchError')
 const { getAuthInfo, bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
 
-ipcMain.handle('get-auth-info', async (event, wxid) => {
+ipcMain.handle('get-auth-info', async (event, wxid, port) => {
   try {
-    const data = await getAuthInfo(wxid)
+    const data = await getAuthInfo(wxid, port)
     const result = { success: true, data }
     
     // 读取配置，检查是否开启日志

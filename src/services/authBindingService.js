@@ -1,5 +1,5 @@
 /**
- * 企微卡密绑定 / 解绑（经主进程调用北极熊后端）
+ * 企微卡密绑定 / 解绑（经主进程调用对应企微实例）
  */
 
 function validateCardKey(cardKey) {
@@ -18,7 +18,7 @@ function ensureElectronCardApi(method) {
 }
 
 /**
- * @param {{ wxid: string, cardKey: string, port?: string|number, nickName?: string }} payload
+ * @param {{ wxid: string, cardKey: string, port: string|number, nickName?: string }} payload
  * @returns {Promise<{ success: boolean, msg?: string, data?: unknown }>}
  */
 export async function bindAuthorization(payload) {
@@ -39,12 +39,13 @@ export async function bindAuthorization(payload) {
 
   return window.electronAPI.bindCard({
     wxid,
+    port: payload.port,
     card_key: card.key
   })
 }
 
 /**
- * @param {{ wxid: string, cardKey: string, port?: string|number, nickName?: string }} payload
+ * @param {{ wxid: string, cardKey: string, port: string|number, nickName?: string }} payload
  * @returns {Promise<{ success: boolean, msg?: string, data?: unknown }>}
  */
 export async function unbindAuthorization(payload) {
@@ -65,13 +66,14 @@ export async function unbindAuthorization(payload) {
 
   return window.electronAPI.unbindCard({
     wxid,
+    port: payload.port,
     card_key: card.key
   })
 }
 
 /**
  * 授权迁移：wxid 授权转为新卡密
- * @param {{ wxid: string }} payload
+ * @param {{ wxid: string, port: string|number }} payload
  * @returns {Promise<{ success: boolean, msg?: string, data?: unknown }>}
  */
 export async function convertAuthorizationByWxid(payload) {
@@ -85,7 +87,7 @@ export async function convertAuthorizationByWxid(payload) {
     return { success: false, msg: api.msg }
   }
 
-  return window.electronAPI.convertCardByWxid({ wxid })
+  return window.electronAPI.convertCardByWxid({ wxid, port: payload.port })
 }
 
 /**

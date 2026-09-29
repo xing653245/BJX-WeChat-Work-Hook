@@ -1256,7 +1256,7 @@ const handleAuthConvert = async () => {
 
   authBindingLoading[wxid] = true
   try {
-    const result = await convertAuthorizationByWxid({ wxid })
+    const result = await convertAuthorizationByWxid({ wxid, port: row.port })
     const cardKey =
       pickCardKeyFromConvertResult(result?.data) ||
       pickCardKeyFromConvertResult(result)
@@ -1317,7 +1317,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
       {}
     const prevExpire = prevLoginInfo.expire
 
-    const result = await window.electronAPI.getAuthInfo(userId)
+    const result = await window.electronAPI.getAuthInfo(userId, prevLoginInfo.port)
     const { expire, auth_active: authActive, card_key: resolvedCardKey } =
       resolveAuthFieldsAfterAuthFetch(result, {
         expire: prevExpire,
