@@ -63,9 +63,15 @@
                     <el-input-number id="settings-push-retries" v-model="formData.push_retries" :min="0" :max="2147483647" :precision="0" controls-position="right" />
                   </div>
                 </div>
+
+                <label class="field-label" for="settings-is-debug">启用调试</label>
+                <div class="field-control control-inline">
+                  <el-switch id="settings-is-debug" v-model="formData.is_debug" />
+                  <span class="field-hint inline-hint">{{ formData.is_debug ? '已开启调试' : '未开启调试' }}</span>
+                </div>
               </div>
               <details class="advanced-settings">
-                <summary>高级设置 · 框架消息加密<span>仅用于框架转发</span></summary>
+                <summary>高级设置 · 消息加密</summary>
                 <div class="field-grid advanced-body">
                 <label class="field-label" for="settings-callback-encrypt">消息加密</label>
                 <div class="field-control">
@@ -81,14 +87,14 @@
                         v-model="formData.public_key"
                         type="textarea"
                         :rows="4"
-                        placeholder="PKCS#1 RSA 1024 bits 公钥"
+                        placeholder="PKCS#1 RSA 1024 bits 公钥，内容为 Base64"
                         class="field-input-wide"
                       />
                     </div>
                     <div class="key-row key-row-actions">
                       <el-button @click="copyEncryptPublicKey">复制公钥</el-button>
                     </div>
-                    <p class="field-hint">须为 PKCS#1 格式（BEGIN RSA PUBLIC KEY），内容为 Base64，密钥位数 1024 bits</p>
+                    <p class="field-hint">须为 PKCS#1 格式（BEGIN PUBLIC KEY），内容为 Base64，密钥位数 1024 bits</p>
                   </div>
                 </template>
                 </div>
@@ -665,6 +671,7 @@ const formData = reactive({
   push_retries: 2,
   encrypt: false,
   public_key: '',
+  is_debug: false,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
   auto_check_update: true,
   /** ask | tray | quit，写入 ini sys.window_close_action */
@@ -742,7 +749,8 @@ const applyInjectSettings = (data) => {
   formData.push_timeout_ms = data.timeout_ms
   formData.push_retries = data.retries
   formData.encrypt = data.encrypt === true
-  formData.public_key = String(data.public_key || '')
+  formData.public_key = String(data.public_key || '').replace(/-----BEGIN [^-]+-----/g, '').replace(/-----END [^-]+-----/g, '').replace(/\s+/g, '')
+  formData.is_debug = data.is_debug === true
 }
 const loadInjectSettings = async () => {
   const result = await window.electronAPI?.readInjectSettings()
@@ -856,6 +864,40 @@ async function copyEncryptPublicKey() {
     return
   }
   await copyText(key, '公钥已复制')
+}
+
+function collectWecomNotifyPorts(defaultPort) {
+  const ports = new Set()
+  const add = (value) => {
+    const n = Number(value)
+    if (Number.isInteger(n) && n > 1024 && n <= 10000) ports.add(n)
+  }
+  add(defaultPort)
+  for (const row of wecomManagerInstances.value) add(row.port)
+  return [...ports]
+}
+
+async function notifyWecomSettingsUpdated(wecomPort) {
+  if (!window.electronAPI?.callAPI) {
+    return { ok: false, msg: '当前环境无法通知企微刷新设置' }
+  }
+  const ports = collectWecomNotifyPorts(wecomPort)
+  if (!ports.length) {
+    return { ok: false, msg: '没有可通知的企微端口' }
+  }
+  const results = await Promise.all(ports.map(async (n) => {
+    const result = await window.electronAPI.callAPI({
+      url: `http://127.0.0.1:${n}/updatesettings`,
+      method: 'POST',
+      data: { Update: true }
+    })
+    return { port: n, ok: result?.success === true, msg: result?.msg }
+  }))
+  if (results.some((item) => item.ok)) return { ok: true }
+  return {
+    ok: false,
+    msg: results.map((item) => `${item.port}: ${item.msg || '失败'}`).join('；')
+  }
 }
 
 async function copyDecryptSnippet(kind) {
@@ -1146,12 +1188,15 @@ const handleSave = async () => {
   }
 
   const publicKey = String(formData.public_key || '').trim()
+  let normalizedPublicKey = publicKey
   if (formData.encrypt || publicKey) {
     const keyCheck = validatePkcs1Rsa1024PublicKey(publicKey)
     if (!keyCheck.ok) {
       ElMessage.warning(keyCheck.message)
       return
     }
+    normalizedPublicKey = keyCheck.body
+    formData.public_key = normalizedPublicKey
   }
 
   saving.value = true
@@ -1166,7 +1211,8 @@ const handleSave = async () => {
       timeout_ms: formData.push_timeout_ms,
       retries: formData.push_retries,
       encrypt: formData.encrypt === true,
-      public_key: String(formData.public_key || '').trim()
+      public_key: normalizedPublicKey,
+      is_debug: formData.is_debug === true
     }
     const newConfig = {
       injectTool,
@@ -1198,7 +1244,12 @@ const handleSave = async () => {
         refreshCloseConfirmPrefsHint()
       }
       isDirty.value = false
-      ElMessage.success('保存成功')
+      const notify = await notifyWecomSettingsUpdated(port)
+      if (notify.ok) {
+        ElMessage.success('保存成功')
+      } else {
+        ElMessage.warning(`保存成功，但未能通知企微刷新设置：${notify.msg}`)
+      }
     } else {
       ElMessage.error(result.msg || '保存失败')
       loadConfig() // 恢复原值
@@ -1211,13 +1262,12 @@ const handleSave = async () => {
   }
 }
 
-// 监听配置变化，自动更新表单（当配置加载完成后）
+// 仅在没有未保存草稿时回填；编辑中不读盘、不写 bin，避免和文件来回同步
 watch(
   () => configStore.config.sys,
   (newSys) => {
-    if (newSys && newSys.server_port) {
-      loadConfig()
-    }
+    if (!newSys?.server_port || isDirty.value || saving.value) return
+    loadConfig()
   },
   { deep: true }
 )

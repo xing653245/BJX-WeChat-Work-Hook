@@ -1,6 +1,0 @@
-{
-  "enabled": true,
-  "url": "http://127.0.0.1:8002/msg",
-  "timeout_ms": 2000,
-  "retries": 2
-}

@@ -1,9 +1,14 @@
 {
+  "enabled": false,
+  "url": "http://127.0.0.1:8002/message",
+  "timeout_ms": 1000,
+  "retries": 1,
   "host": "D:\\vwork\\v5\\WXWork\\WXWork.exe",
   "logs": "C:\\Users\\zeng\\AppData\\Local\\VworkReconstruction\\logs",
-  "port": "8989",
-  "automatic_startup": "0",
+  "port": "8986",
+  "automatic_startup": "1",
   "startup_mode": "start_and_load",
-  "encrypt": false,
-  "public_key": ""
+  "Message_Encryption": true,
+  "RSA_PublicKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC1uCR9fcCz4YzMDeD+dWqE0RSa\ntrOH/dbCf+Apiqx0w9t0hujMbxfEpPAEFLxGRvsX7S5Te9Ie2GNHmukwWEifSiXJ\n4SbsU+YnDWvAYenRYLSgKVmZWVZGfzRCkiNO4XK3vugcGYEnRBrPqBQ2+62k0HhH\nvF/GC6PPwNGN13hxcQIDAQAB",
+  "IsDebug": true
 }

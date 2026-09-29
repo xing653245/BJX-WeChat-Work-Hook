@@ -76,7 +76,8 @@ export const useConfigStore = defineStore('config', () => {
       
       const result = await window.electronAPI.saveConfig(configToSave)
       if (result.success) {
-        config.value = newConfig
+        const { injectTool: _injectTool, ...rest } = newConfig
+        config.value = rest
       }
       return result
     } catch (error) {

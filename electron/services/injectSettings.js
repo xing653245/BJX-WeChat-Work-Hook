@@ -2,29 +2,55 @@ const fs = require('fs')
 const path = require('path')
 const { validatePkcs1Rsa1024PublicKey } = require('../commons/pkcs1PublicKey.cjs')
 
-function readDocument(dir, name) {
-  const text = fs.readFileSync(path.join(dir, name), 'utf8')
-  const value = JSON.parse(text.replace(/^\uFEFF/, ''))
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} 必须是 JSON 对象`)
-  return { text, value }
+const SETTINGS_FILE = 'settings.json'
+const LEGACY_PUSH_FILE = 'push.json'
+
+function parseJsonDocument(text) {
+  const raw = String(text || '').replace(/^\uFEFF/, '')
+  try {
+    return JSON.parse(raw)
+  } catch {
+    const stripped = raw.replace(/(^|[^:])\/\/.*$/gm, '$1')
+    return JSON.parse(stripped)
+  }
 }
 
-function parseEncryptFlag(value) {
+function readDocument(dir, name) {
+  const filePath = path.join(dir, name)
+  const text = fs.readFileSync(filePath, 'utf8')
+  const value = parseJsonDocument(text)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} 必须是 JSON 对象`)
+  return { text, value, filePath }
+}
+
+function parseFlag(value) {
   return value === true || value === 'true' || value === '1' || value === 1
 }
 
+function pickFirst(source, keys, fallback = '') {
+  for (const key of keys) {
+    if (source[key] !== undefined && source[key] !== null) return source[key]
+  }
+  return fallback
+}
+
+function removeLegacyPushJson(dir) {
+  const filePath = path.join(dir, LEGACY_PUSH_FILE)
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+}
+
 function readInjectSettings(dir) {
-  const settings = readDocument(dir, 'settings.json').value
-  const push = readDocument(dir, 'push.json').value
+  const settings = readDocument(dir, SETTINGS_FILE).value
   return {
     host: settings.host,
     port: settings.port,
-    url: push.url,
-    enabled: push.enabled,
-    timeout_ms: push.timeout_ms,
-    retries: push.retries,
-    encrypt: parseEncryptFlag(settings.encrypt),
-    public_key: String(settings.public_key || '')
+    url: settings.url,
+    enabled: parseFlag(settings.enabled),
+    timeout_ms: settings.timeout_ms,
+    retries: settings.retries,
+    encrypt: parseFlag(pickFirst(settings, ['Message_Encryption', 'encrypt'], false)),
+    public_key: String(pickFirst(settings, ['RSA_PublicKey', 'public_key'], '')),
+    is_debug: parseFlag(pickFirst(settings, ['IsDebug'], false))
   }
 }
 
@@ -46,33 +72,46 @@ function saveInjectSettings(dir, input) {
     try { parsed = new URL(url) } catch { throw new Error('回调地址必须为有效的 HTTP/HTTPS 地址') }
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('回调地址必须使用 HTTP/HTTPS')
   }
-  const encrypt = parseEncryptFlag(input.encrypt)
-  const public_key = String(input.public_key || '').trim()
+  const encrypt = parseFlag(input.encrypt)
+  let public_key = String(input.public_key || '').trim()
   if (encrypt || public_key) {
     const keyCheck = validatePkcs1Rsa1024PublicKey(public_key)
     if (!keyCheck.ok) throw new Error(keyCheck.message)
+    public_key = keyCheck.body
   }
-  const settings = readDocument(dir, 'settings.json')
-  const push = readDocument(dir, 'push.json')
-  const documents = [
-    ['settings.json', settings, {
-      ...settings.value,
-      host,
-      port: typeof settings.value.port === 'number' ? port : String(port),
-      encrypt,
-      public_key
-    }],
-    ['push.json', push, { ...push.value, url, enabled: input.enabled, timeout_ms: timeout, retries }]
-  ]
+  const is_debug = parseFlag(input.is_debug)
+  const settings = readDocument(dir, SETTINGS_FILE)
+  const next = {
+    ...settings.value,
+    enabled: input.enabled,
+    url,
+    timeout_ms: timeout,
+    retries,
+    host,
+    port: typeof settings.value.port === 'number' ? port : String(port),
+    Message_Encryption: encrypt,
+    RSA_PublicKey: public_key,
+    IsDebug: is_debug
+  }
+  delete next.encrypt
+  delete next.public_key
+
   const written = []
   const rollback = () => {
-    for (const [name, original] of written.reverse()) fs.writeFileSync(path.join(dir, name), original.text, 'utf8')
+    for (const item of written.reverse()) {
+      if (item.type === 'write') fs.writeFileSync(item.filePath, item.text, 'utf8')
+      if (item.type === 'unlink') fs.writeFileSync(item.filePath, item.text, 'utf8')
+    }
   }
   try {
-    for (const [name, original, next] of documents) {
-      if (JSON.stringify(original.value) === JSON.stringify(next)) continue
-      written.push([name, original])
-      fs.writeFileSync(path.join(dir, name), JSON.stringify(next, null, 2) + '\n', 'utf8')
+    if (JSON.stringify(settings.value) !== JSON.stringify(next)) {
+      written.push({ type: 'write', filePath: settings.filePath, text: settings.text })
+      fs.writeFileSync(settings.filePath, JSON.stringify(next, null, 2) + '\n', 'utf8')
+    }
+    const legacyPushPath = path.join(dir, LEGACY_PUSH_FILE)
+    if (fs.existsSync(legacyPushPath)) {
+      written.push({ type: 'unlink', filePath: legacyPushPath, text: fs.readFileSync(legacyPushPath, 'utf8') })
+      removeLegacyPushJson(dir)
     }
   } catch (error) {
     rollback()

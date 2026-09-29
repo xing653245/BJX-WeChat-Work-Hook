@@ -82,7 +82,7 @@ const {
 } = require('./services/wecomInject')
 const { getWecomVersionOptions } = require('./configs/wecomVersion')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
-const { postToVWorkApi } = require('./services/wecomApiClient')
+const { postToVWorkApi, postToWecomPath } = require('./services/wecomApiClient')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
   canInjectPort,
@@ -1326,9 +1326,13 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     // 仅 http://127.0.0.1:{企微端口}/api 走直连；带路径的为框架 REST（如 /api/message/text）
     const directWecomMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/api\/?$/)
     const directWecomPort = directWecomMatch ? parseInt(directWecomMatch[1], 10) : null
+    const wecomUpdateMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/updatesettings\/?$/i)
+    const wecomUpdatePort = wecomUpdateMatch ? parseInt(wecomUpdateMatch[1], 10) : null
 
     let responseData
-    if (directWecomPort && method === 'POST' && data) {
+    if (wecomUpdatePort && method === 'POST') {
+      responseData = await postToWecomPath(wecomUpdatePort, '/updatesettings', data || { Update: true })
+    } else if (directWecomPort && method === 'POST' && data) {
       responseData = await postToVWorkApi(directWecomPort, data)
     } else {
       const isAppletCall =

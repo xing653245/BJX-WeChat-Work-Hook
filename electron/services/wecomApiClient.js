@@ -216,8 +216,26 @@ async function postToVWorkApi(port, requestData, options = {}) {
   )
 }
 
+/**
+ * POST 到企微实例自定义路径（如 /updatesettings），不走 /api + type
+ */
+async function postToWecomPath(port, pathname, body, options = {}) {
+  const path = pathname.startsWith('/') ? pathname : `/${pathname}`
+  const url = `http://127.0.0.1:${port}${path}`
+  const timeout = options.timeout ?? 10000
+  return enqueuePortTask(port, 0, () =>
+    axios.post(url, body, {
+      timeout,
+      proxy: false,
+      family: 4,
+      headers: { 'Content-Type': 'application/json' }
+    }).then((res) => res.data)
+  )
+}
+
 module.exports = {
   postToVWorkApi,
+  postToWecomPath,
   enqueuePortTask,
   MESSAGE_SEND_TYPES,
   GROUP_WRITE_TYPES,

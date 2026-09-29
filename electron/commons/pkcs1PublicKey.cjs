@@ -2,6 +2,8 @@ const crypto = require('crypto')
 
 const PKCS1_BEGIN = '-----BEGIN RSA PUBLIC KEY-----'
 const PKCS1_END = '-----END RSA PUBLIC KEY-----'
+const SPKI_BEGIN = '-----BEGIN PUBLIC KEY-----'
+const SPKI_END = '-----END PUBLIC KEY-----'
 const EXPECTED_BITS = 1024
 
 function compactBase64(value) {
@@ -17,58 +19,75 @@ function isStrictBase64(value) {
   return buf.length === (compact.length / 4) * 3 - pad
 }
 
-function extractPkcs1Body(raw) {
+function normalizeRsaPublicKeyBase64(raw) {
   const text = String(raw || '').trim().replace(/\r\n/g, '\n')
   if (!text) {
     return { ok: false, message: '请填写加密公钥' }
   }
   if (/-----BEGIN RSA PRIVATE KEY-----/.test(text) || /-----BEGIN PRIVATE KEY-----/.test(text)) {
-    return { ok: false, message: '加密公钥须为 PKCS#1 格式（-----BEGIN RSA PUBLIC KEY-----）' }
+    return { ok: false, message: '请填写 RSA 加密公钥，不要填写私钥' }
   }
-  if (/-----BEGIN PUBLIC KEY-----/.test(text)) {
-    return { ok: false, message: '加密公钥须为 PKCS#1 格式（-----BEGIN RSA PUBLIC KEY-----）' }
+  if (/-----BEGIN PUBLIC KEY-----/.test(text) || /-----END PUBLIC KEY-----/.test(text) ||
+      /-----BEGIN RSA PUBLIC KEY-----/.test(text) || /-----END RSA PUBLIC KEY-----/.test(text)) {
+    return { ok: false, message: '只填写 Base64 公钥，不要包含 BEGIN/END PUBLIC KEY' }
   }
-  const pem = text.match(/-----BEGIN RSA PUBLIC KEY-----\s*([\s\S]*?)\s*-----END RSA PUBLIC KEY-----/)
-  let body
-  if (pem) {
-    body = compactBase64(pem[1])
-  } else if (/-----BEGIN /.test(text)) {
-    return { ok: false, message: '加密公钥须为 PKCS#1 格式（-----BEGIN RSA PUBLIC KEY-----）' }
-  } else {
-    body = compactBase64(text)
+  if (/-----BEGIN /.test(text)) {
+    return { ok: false, message: '只填写 Base64 公钥，不要包含 BEGIN/END PUBLIC KEY' }
   }
+  const body = compactBase64(text)
   if (!isStrictBase64(body)) {
     return { ok: false, message: '加密公钥内容须为 Base64' }
   }
   return { ok: true, body }
 }
 
+function loadRsaPublicKey(body) {
+  const attempts = [
+    { type: 'spki', begin: SPKI_BEGIN, end: SPKI_END },
+    { type: 'pkcs1', begin: PKCS1_BEGIN, end: PKCS1_END }
+  ]
+  let lastError
+  for (const attempt of attempts) {
+    try {
+      return crypto.createPublicKey({
+        key: `${attempt.begin}\n${body}\n${attempt.end}`,
+        format: 'pem',
+        type: attempt.type
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError || new Error('invalid public key')
+}
+
 function validatePkcs1Rsa1024PublicKey(raw) {
-  const extracted = extractPkcs1Body(raw)
+  const extracted = normalizeRsaPublicKeyBase64(raw)
   if (!extracted.ok) return extracted
-  const pem = `${PKCS1_BEGIN}\n${extracted.body}\n${PKCS1_END}`
   try {
-    const key = crypto.createPublicKey({ key: pem, format: 'pem', type: 'pkcs1' })
+    const key = loadRsaPublicKey(extracted.body)
     if (key.asymmetricKeyType !== 'rsa') {
-      return { ok: false, message: '加密公钥须为 PKCS#1 RSA 公钥' }
+      return { ok: false, message: '加密公钥须为 1024 bit、PKCS#1 格式的 RSA 加密公钥' }
     }
     const bits = key.asymmetricKeyDetails?.modulusLength
     if (bits !== EXPECTED_BITS) {
-      return { ok: false, message: `加密公钥须为 ${EXPECTED_BITS} bits，当前为 ${bits || '未知'} bits` }
+      return { ok: false, message: `加密公钥须为 1024 bit，当前为 ${bits || '未知'} bit` }
     }
-    return { ok: true }
+    return { ok: true, body: extracted.body }
   } catch {
-    return { ok: false, message: '加密公钥不是有效的 PKCS#1 RSA 公钥' }
+    return { ok: false, message: '加密公钥须为 1024 bit、PKCS#1 格式的 RSA 加密公钥' }
   }
 }
 
 function assertPkcs1Rsa1024PublicKey(raw) {
   const result = validatePkcs1Rsa1024PublicKey(raw)
   if (!result.ok) throw new Error(result.message)
+  return result.body
 }
 
 module.exports = {
   EXPECTED_BITS,
+  normalizeRsaPublicKeyBase64,
   validatePkcs1Rsa1024PublicKey,
   assertPkcs1Rsa1024PublicKey
 }
