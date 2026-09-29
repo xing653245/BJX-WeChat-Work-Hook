@@ -865,6 +865,18 @@ async function copyDecryptSnippet(kind) {
   await copyText(NODE_DECRYPT_SNIPPET, 'Node 解密示例已复制')
 }
 
+/** 企微 Hook 成功时常只返回 { data }，不一定带 errno */
+function isWecomHookBodyOk(body) {
+  if (body == null) return false
+  if (typeof body !== 'object') return true
+  if (body.errno != null && body.errno !== '') return Number(body.errno) === 0
+  if (body.code != null && body.code !== '') return Number(body.code) === 0
+  if (body.errcode != null && body.errcode !== '') return Number(body.errcode) === 0
+  if (body.error) return false
+  if (typeof body.errmsg === 'string' && body.errmsg.trim()) return false
+  return Object.prototype.hasOwnProperty.call(body, 'data')
+}
+
 async function handleTestMessageText() {
   if (!window.electronAPI?.callAPI) {
     ElMessage.warning('当前环境无法调用 Electron 接口')
@@ -917,11 +929,11 @@ async function handleTestMessageText() {
         ? body
         : JSON.stringify(body, null, 2)
 
-    const innerOk = body && typeof body === 'object' && body.errno === 0
+    const innerOk = isWecomHookBodyOk(body)
     if (innerOk) {
       ElMessage.success('调用成功')
     } else {
-      const m = body?.errmsg || body?.message || body?.msg || '接口返回 failure'
+      const m = body?.errmsg || body?.error || body?.message || '接口返回 failure'
       ElMessage.warning(typeof m === 'string' ? m : '接口返回异常，请看下方正文')
     }
   } catch (e) {
