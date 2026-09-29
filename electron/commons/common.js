@@ -80,6 +80,35 @@ function getAppRootPath() {
   return path.dirname(electronDir)
 }
 
+function getInjectBinDir() {
+  try {
+    const { app } = require('electron')
+    if (app && app.isPackaged) {
+      return path.join(process.resourcesPath || '', 'bin')
+    }
+  } catch {
+    /* 非 Electron */
+  }
+  return path.join(getAppRootPath(), 'bin')
+}
+
+function readSettingsCallbackUrl() {
+  try {
+    const settingsPath = path.join(getInjectBinDir(), 'settings.json')
+    if (!fs.existsSync(settingsPath)) return ''
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, ''))
+    const url = String(settings.url || '').trim()
+    return /^https?:\/\//i.test(url) ? url : ''
+  } catch {
+    return ''
+  }
+}
+
+/** 业务回调地址以 bin/settings.json 的 url 为准 */
+function getBusinessCallbackUrl(fallback = '') {
+  return readSettingsCallbackUrl() || String(fallback || '').trim()
+}
+
 /**
  * 解析运行日志目录（与 saveLogToFile 写入位置一致）
  * @returns {{ dir: string, writableRoot: string }}
@@ -272,6 +301,7 @@ function parseIniFlag(value) {
  */
 async function sendCallback(url, data) {
   const startTime = Date.now()
+  url = getBusinessCallbackUrl(url)
   try {
     const response = await axios.post(url, data, {
       timeout: 10000
@@ -503,6 +533,7 @@ module.exports = {
   writeConfigAtomic,
   readConfigTextWithBackup,
   sendCallback,
+  getBusinessCallbackUrl,
   AUTH_REASON,
   checkAuthExpire,
   checkAuthByPort,

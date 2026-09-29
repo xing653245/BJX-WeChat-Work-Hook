@@ -6,7 +6,7 @@
 const express = require('express')
 const cors = require('cors')
 const axios = require('axios')
-const { readIni, sendCallback, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
+const { readIni, sendCallback, getBusinessCallbackUrl, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
 const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
@@ -104,8 +104,9 @@ async function processIncomingWecomMessage(data) {
   }
 
   if (valid_auth) {
-    if (ini_config.callback && ini_config.callback.includes('http') && ini_config.callback.includes('://')) {
-      const callbackResult = await sendCallback(ini_config.callback, payload)
+    const callbackUrl = getBusinessCallbackUrl(ini_config.callback)
+    if (callbackUrl && callbackUrl.includes('http') && callbackUrl.includes('://')) {
+      const callbackResult = await sendCallback(callbackUrl, payload)
 
       if (ini_config.open_log && !callbackResult.success) {
         const callbackLogData = {

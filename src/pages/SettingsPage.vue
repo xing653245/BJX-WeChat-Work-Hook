@@ -63,12 +63,6 @@
                     <el-input-number id="settings-push-retries" v-model="formData.push_retries" :min="0" :max="2147483647" :precision="0" controls-position="right" />
                   </div>
                 </div>
-
-                <label class="field-label" for="settings-is-debug">启用调试</label>
-                <div class="field-control control-inline">
-                  <el-switch id="settings-is-debug" v-model="formData.is_debug" />
-                  <span class="field-hint inline-hint">{{ formData.is_debug ? '已开启调试' : '未开启调试' }}</span>
-                </div>
               </div>
               <details class="advanced-settings">
                 <summary>高级设置 · 消息加密</summary>
@@ -671,7 +665,6 @@ const formData = reactive({
   push_retries: 2,
   encrypt: false,
   public_key: '',
-  is_debug: false,
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
   auto_check_update: true,
   /** ask | tray | quit，写入 ini sys.window_close_action */
@@ -750,7 +743,6 @@ const applyInjectSettings = (data) => {
   formData.push_retries = data.retries
   formData.encrypt = data.encrypt === true
   formData.public_key = String(data.public_key || '').replace(/-----BEGIN [^-]+-----/g, '').replace(/-----END [^-]+-----/g, '').replace(/\s+/g, '')
-  formData.is_debug = data.is_debug === true
 }
 const loadInjectSettings = async () => {
   const result = await window.electronAPI?.readInjectSettings()
@@ -1211,8 +1203,7 @@ const handleSave = async () => {
       timeout_ms: formData.push_timeout_ms,
       retries: formData.push_retries,
       encrypt: formData.encrypt === true,
-      public_key: normalizedPublicKey,
-      is_debug: formData.is_debug === true
+      public_key: normalizedPublicKey
     }
     const newConfig = {
       injectTool,

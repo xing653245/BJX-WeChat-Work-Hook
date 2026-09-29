@@ -67,6 +67,14 @@ test('消息加密与公钥写入 Message_Encryption / RSA_PublicKey，并保留
   assert.deepEqual(readInjectSettings(dir), { ...original, encrypt: true, public_key, is_debug: true })
 })
 
+test('保存时未传 is_debug 则保留文件中的 IsDebug', (t) => {
+  const { dir } = fixture(t, { IsDebug: true })
+  const original = readInjectSettings(dir)
+  const { is_debug: _ignored, ...withoutDebug } = original
+  saveInjectSettings(dir, withoutDebug)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'))).IsDebug, true)
+})
+
 test('开启加密时拒绝带头尾或不合法的公钥', (t) => {
   const { dir } = fixture(t)
   const original = readInjectSettings(dir)

@@ -62,7 +62,7 @@ try {
   }
 }
 const axios = require('axios')
-const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
+const { saveLogToFile, getConfigPath, readIni, sendCallback, getBusinessCallbackUrl, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
 const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
@@ -1559,8 +1559,9 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         const shouldSendCallback = LOGIN_RELATED_API_TYPES.has(apiType) || valid_auth
         
         if (shouldSendCallback) {
-          if (ini_config.callback && ini_config.callback.includes('http') && ini_config.callback.includes('://')) {
-            const callbackResult = await sendCallback(ini_config.callback, callbackLogData)
+          const callbackUrl = getBusinessCallbackUrl(ini_config.callback)
+          if (callbackUrl && callbackUrl.includes('http') && callbackUrl.includes('://')) {
+            const callbackResult = await sendCallback(callbackUrl, callbackLogData)
             
             // 如果开启了日志且回调失败，将回调失败信息推送到前端
             if (ini_config.open_log && !callbackResult.success) {
@@ -1868,7 +1869,7 @@ ipcMain.handle('save-log-to-file', async (event, data) => {
 // 发送回调
 ipcMain.handle('send-callback', async (event, { url, data }) => {
   try {
-    const result = await sendCallback(url, data)
+    const result = await sendCallback(getBusinessCallbackUrl(url), data)
     return result
   } catch (error) {
     console.error('发送回调失败:', error)

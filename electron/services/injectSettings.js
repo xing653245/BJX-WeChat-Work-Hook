@@ -79,8 +79,10 @@ function saveInjectSettings(dir, input) {
     if (!keyCheck.ok) throw new Error(keyCheck.message)
     public_key = keyCheck.body
   }
-  const is_debug = parseFlag(input.is_debug)
   const settings = readDocument(dir, SETTINGS_FILE)
+  const is_debug = Object.prototype.hasOwnProperty.call(input, 'is_debug')
+    ? parseFlag(input.is_debug)
+    : parseFlag(pickFirst(settings.value, ['IsDebug'], false))
   const next = {
     ...settings.value,
     enabled: input.enabled,
