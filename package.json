@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -63,6 +63,8 @@
       "output": "dist-electron",
       "buildResources": "build"
     },
+    "compression": "maximum",
+    "electronLanguages": ["zh-CN", "en-US"],
     "nsis": {
       "oneClick": false,
       "language": "2052",
@@ -74,7 +76,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "!**/*.map"
     ],
     "extraResources": [
       {

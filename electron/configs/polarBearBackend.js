@@ -6,8 +6,8 @@
 const crypto = require('crypto')
 
 /** 不含末尾斜杠，形如 http://host:port */
-// const POLAR_BEAR_BACKEND_ORIGIN = 'http://8.137.76.99:5516'
-const POLAR_BEAR_BACKEND_ORIGIN = 'http://192.168.1.18:5516'
+const POLAR_BEAR_BACKEND_ORIGIN = 'http://8.137.76.99:5516'
+// const POLAR_BEAR_BACKEND_ORIGIN = 'http://192.168.1.18:5516'
 
 const POLAR_BEAR_SIGN_SECRET = 'sadasgfd34355768ghjcv'
 const POLAR_BEAR_SIGN_SALT = 'xxse41235_a1d457a1s000dw22318967e'
