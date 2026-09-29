@@ -34,6 +34,15 @@ function pickFirst(source, keys, fallback = '') {
   return fallback
 }
 
+function fsyncPath(filePath) {
+  const fd = fs.openSync(filePath, 'r+')
+  try {
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
 function removeLegacyPushJson(dir) {
   const filePath = path.join(dir, LEGACY_PUSH_FILE)
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
@@ -110,6 +119,7 @@ function saveInjectSettings(dir, input) {
       written.push({ type: 'write', filePath: settings.filePath, text: settings.text })
       fs.writeFileSync(settings.filePath, JSON.stringify(next, null, 2) + '\n', 'utf8')
     }
+    fsyncPath(settings.filePath)
     const legacyPushPath = path.join(dir, LEGACY_PUSH_FILE)
     if (fs.existsSync(legacyPushPath)) {
       written.push({ type: 'unlink', filePath: legacyPushPath, text: fs.readFileSync(legacyPushPath, 'utf8') })

@@ -105,20 +105,16 @@ const resolveWecomPortFromMessage = (data) => {
     return serverPort
   }
 
-  if (loginInfoList.length === 1 && loginInfoList[0].port) {
-    return parseWecomHttpPort(loginInfoList[0].port)
-  }
-
   return NaN
 }
 
 // 处理退出登录 / 账号切换消息
 const handleLogoutMessage = async (data) => {
-  // 900 = 企微退出或账号掉线。不再等待重新登录，直接结束该端口进程并移出列表。
+  // 900 = 掉线通知。仍登录或进程还在时不能当退出，否则会误杀正常企微。
   if (data.type === 900) {
     const portNum = resolveWecomPortFromMessage(data)
     if (!Number.isNaN(portNum) && portNum > 0) {
-      await vworkManagerRef.value?.removeWecomFromManager?.(portNum)
+      await vworkManagerRef.value?.handleWecomOfflineSignal?.(portNum)
     }
     return
   }

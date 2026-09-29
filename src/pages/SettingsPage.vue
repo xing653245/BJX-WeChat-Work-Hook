@@ -869,29 +869,6 @@ function collectWecomNotifyPorts(defaultPort) {
   return [...ports]
 }
 
-async function notifyWecomSettingsUpdated(wecomPort) {
-  if (!window.electronAPI?.callAPI) {
-    return { ok: false, msg: '当前环境无法通知企微刷新设置' }
-  }
-  const ports = collectWecomNotifyPorts(wecomPort)
-  if (!ports.length) {
-    return { ok: false, msg: '没有可通知的企微端口' }
-  }
-  const results = await Promise.all(ports.map(async (n) => {
-    const result = await window.electronAPI.callAPI({
-      url: `http://127.0.0.1:${n}/updatesettings`,
-      method: 'POST',
-      data: { Update: true }
-    })
-    return { port: n, ok: result?.success === true, msg: result?.msg }
-  }))
-  if (results.some((item) => item.ok)) return { ok: true }
-  return {
-    ok: false,
-    msg: results.map((item) => `${item.port}: ${item.msg || '失败'}`).join('；')
-  }
-}
-
 async function copyDecryptSnippet(kind) {
   if (kind === 'python') {
     await copyText(PYTHON_DECRYPT_SNIPPET, 'Python 解密示例已复制')
@@ -1207,6 +1184,7 @@ const handleSave = async () => {
     }
     const newConfig = {
       injectTool,
+      notifyWecomPorts: collectWecomNotifyPorts(port),
       sys: {
         ...configStore.config.sys,
         wecom_version: 'v5',
@@ -1235,11 +1213,10 @@ const handleSave = async () => {
         refreshCloseConfirmPrefsHint()
       }
       isDirty.value = false
-      const notify = await notifyWecomSettingsUpdated(port)
-      if (notify.ok) {
+      if (result.notify?.ok !== false) {
         ElMessage.success('保存成功')
       } else {
-        ElMessage.warning(`保存成功，但未能通知企微刷新设置：${notify.msg}`)
+        ElMessage.warning(`保存成功，但未能通知企微刷新设置：${result.notify?.msg || '未知错误'}`)
       }
     } else {
       ElMessage.error(result.msg || '保存失败')

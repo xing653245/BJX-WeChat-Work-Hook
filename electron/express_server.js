@@ -11,6 +11,7 @@ const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
 const { notifyWecomSessionEnded } = require('./services/wecomNotify')
+const { isWecomInstanceStillAlive } = require('./services/wecomStability')
 
 function resolveLogoutPort(payload, loginInfo) {
   const data = payload && typeof payload === 'object' ? payload : {}
@@ -23,10 +24,6 @@ function resolveLogoutPort(payload, loginInfo) {
   if (userId) {
     const item = list.find((entry) => entry?.user_id === userId)
     const port = parseInt(item?.port, 10)
-    if (port > 1024 && port <= 10000) return port
-  }
-  if (list.length === 1) {
-    const port = parseInt(list[0]?.port, 10)
     if (port > 1024 && port <= 10000) return port
   }
   return NaN
@@ -61,13 +58,23 @@ async function processIncomingWecomMessage(data) {
   const incomingType = Number(payload?.type)
   if (incomingType === 900 || incomingType === 1003) {
     const port = resolveLogoutPort(payload, ini_config.login_info)
-    if (!Number.isNaN(port)) {
+    let shouldEnd = incomingType === 1003
+    if (incomingType === 900 && !Number.isNaN(port)) {
+      const state = await isWecomInstanceStillAlive(port)
+      shouldEnd = !state.alive && !state.loggedIn
+      if (!shouldEnd) {
+        console.warn(
+          `[企微退出] 收到 type=900 但端口 ${port} 仍在（loggedIn=${state.loggedIn} pid=${state.pid || '-'}），忽略杀进程`
+        )
+      }
+    }
+    if (shouldEnd && !Number.isNaN(port)) {
       try {
         await killProcessByPort(port)
       } catch (error) {
         console.warn(`[企微退出] 结束端口 ${port} 进程失败: ${error.message}`)
       }
-      notifyWecomSessionEnded(port, '企微退出')
+      notifyWecomSessionEnded(port, incomingType === 1003 ? '退出登录' : '企微退出')
     }
     try {
       await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', {

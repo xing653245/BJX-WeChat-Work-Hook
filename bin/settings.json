@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "url": "http://127.0.0.1:8002/message",
   "timeout_ms": 1000,
   "retries": 1,
@@ -9,6 +9,6 @@
   "automatic_startup": "1",
   "startup_mode": "start_and_load",
   "Message_Encryption": true,
-  "RSA_PublicKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC1uCR9fcCz4YzMDeD+dWqE0RSa\ntrOH/dbCf+Apiqx0w9t0hujMbxfEpPAEFLxGRvsX7S5Te9Ie2GNHmukwWEifSiXJ\n4SbsU+YnDWvAYenRYLSgKVmZWVZGfzRCkiNO4XK3vugcGYEnRBrPqBQ2+62k0HhH\nvF/GC6PPwNGN13hxcQIDAQAB",
+  "RSA_PublicKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC1uCR9fcCz4YzMDeD+dWqE0RSatrOH/dbCf+Apiqx0w9t0hujMbxfEpPAEFLxGRvsX7S5Te9Ie2GNHmukwWEifSiXJ4SbsU+YnDWvAYenRYLSgKVmZWVZGfzRCkiNO4XK3vugcGYEnRBrPqBQ2+62k0HhHvF/GC6PPwNGN13hxcQIDAQAB",
   "IsDebug": true
 }

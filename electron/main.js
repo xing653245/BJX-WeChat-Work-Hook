@@ -512,23 +512,19 @@ const findPidByPort = (port) => {
   return new Promise((resolve) => {
     if (process.platform === 'win32') {
       const { exec } = require('child_process')
-      exec(`netstat -ano | findstr :${port}`, (error, stdout) => {
+      const { parseNetstatListeningPids, parseNetstatLocalPids } = require('./commons/portProcess.cjs')
+      exec('netstat -ano -p tcp', (error, stdout) => {
         if (error || !stdout) {
           resolve(-1)
           return
         }
-        const lines = stdout.trim().split('\n')
-        for (const line of lines) {
-          const parts = line.trim().split(/\s+/)
-          if (parts.length >= 5 && parts[1].includes(`:${port}`)) {
-            const pid = parseInt(parts[parts.length - 1])
-            if (!isNaN(pid)) {
-              resolve(pid)
-              return
-            }
-          }
+        const listening = parseNetstatListeningPids(stdout, port)
+        if (listening[0]) {
+          resolve(listening[0])
+          return
         }
-        resolve(-1)
+        const local = parseNetstatLocalPids(stdout, port)
+        resolve(local[0] || -1)
       })
     } else {
       // Linux/Mac
@@ -1276,6 +1272,49 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
 const injectSettingsDir = () => path.join(getAppPathForResources(), 'bin')
 
+function collectSettingsNotifyPorts(config, merged) {
+  const ports = new Set()
+  const add = (value) => {
+    const n = Number(value)
+    if (Number.isInteger(n) && n > 1024 && n <= 10000) ports.add(n)
+  }
+  if (Array.isArray(config?.notifyWecomPorts)) {
+    for (const port of config.notifyWecomPorts) add(port)
+  }
+  add(config?.injectTool?.port)
+  let loginInfo = merged?.custom?.login_info
+  if (typeof loginInfo === 'string') {
+    try {
+      loginInfo = JSON.parse(loginInfo)
+    } catch {
+      loginInfo = []
+    }
+  }
+  if (Array.isArray(loginInfo)) {
+    for (const item of loginInfo) add(item?.port)
+  }
+  return [...ports]
+}
+
+async function notifyWecomSettingsUpdated(ports) {
+  if (!ports.length) {
+    return { ok: false, msg: '没有可通知的企微端口' }
+  }
+  const results = await Promise.all(ports.map(async (n) => {
+    try {
+      await postToWecomPath(n, '/updatesettings', { Update: true })
+      return { port: n, ok: true }
+    } catch (error) {
+      return { port: n, ok: false, msg: error.message }
+    }
+  }))
+  if (results.some((item) => item.ok)) return { ok: true }
+  return {
+    ok: false,
+    msg: results.map((item) => `${item.port}: ${item.msg || '失败'}`).join('；')
+  }
+}
+
 ipcMain.handle('read-inject-settings', (event) => {
   assertMainWindow(event, mainWindow)
   try { return { success: true, data: readInjectSettings(injectSettingsDir()) } }
@@ -1294,7 +1333,7 @@ ipcMain.handle('read-config', () => {
   }
 })
 
-ipcMain.handle('save-config', (event, config) => {
+ipcMain.handle('save-config', async (event, config) => {
   assertMainWindow(event, mainWindow)
   const prev = readConfig()
   const mergedSys = { ...(prev.sys || {}), ...((config && config.sys) || {}) }
@@ -1307,10 +1346,15 @@ ipcMain.handle('save-config', (event, config) => {
   }
   let rollback
   try {
-    if (config.injectTool) rollback = saveInjectSettings(injectSettingsDir(), config.injectTool)
+    if (config.injectTool) {
+      rollback = saveInjectSettings(injectSettingsDir(), config.injectTool)
+    }
     const result = saveConfig(applyListenPortChangeToConfig(prev, merged))
     if (!result.success && rollback) rollback()
-    return result
+    if (!result.success) return result
+    if (!config.injectTool) return result
+    const notify = await notifyWecomSettingsUpdated(collectSettingsNotifyPorts(config, merged))
+    return { ...result, notify }
   } catch (error) {
     if (rollback) rollback()
     return { success: false, msg: error.message }

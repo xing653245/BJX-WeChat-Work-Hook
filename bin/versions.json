@@ -19,7 +19,7 @@
     }
   ],
   "files": {
-    "VworkLogger.dll": "08d06243f4968cbe8e422fee5615739266a7b5a46884394e432d620222db19b5",
-    "HookBridge.dll": "79bbc9d761d92a153efa7ccdd09cc2b6e98bff7fb5db5d4e1864abeef53b1c57"
+    "VworkLogger.dll": "8927c6dd168bf20eb0a657c9c7df74e810109875b795473648e556f52a709784",
+    "HookBridge.dll": "3fcd82dc9ffa645c554912e750dabaf2bb71c9f22ec236c375bfd21a57558cec"
   }
 }

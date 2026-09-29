@@ -12,6 +12,7 @@ const { promisify } = require('util')
 const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
 const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
+const { parseNetstatListeningPids } = require('./portProcess.cjs')
 
 const LEGACY_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8001/msg'
 const DEFAULT_BUSINESS_CALLBACK_URL = 'http://127.0.0.1:8002/msg'
@@ -365,34 +366,13 @@ function isPortInUse(port) {
  * 杀死占用指定端口的进程
  */
 async function killProcessByPort(port) {
-  const inUse = await isPortInUse(port)
-  if (!inUse) {
-    return false
-  }
-
-  // Windows 系统
+  // 不用 bind 探测：企微 Hook 常只监听 127.0.0.1，listen(port) 仍可能成功，会误判“端口空闲”而跳过。
   if (process.platform === 'win32') {
     try {
-      // 查找占用端口的进程 PID
-      const { stdout } = await execAsync(`netstat -ano | findstr :${port}`)
-      const lines = stdout.trim().split('\n')
-      if (!lines || lines.length === 0 || lines[0].trim() === '') {
-        console.log(`未找到占用端口 ${port} 的进程`)
-        return false
-      }
-
-      const pids = new Set()
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/)
-        if (parts.length >= 5) {
-          const pid = parseInt(parts[parts.length - 1])
-          if (!isNaN(pid) && pid > 0) {
-            pids.add(pid)
-          }
-        }
-      }
-
+      const { stdout } = await execAsync(`netstat -ano -p tcp`)
+      const pids = new Set(parseNetstatListeningPids(stdout, port))
       if (pids.size === 0) {
+        console.log(`未找到监听端口 ${port} 的进程`)
         return false
       }
 

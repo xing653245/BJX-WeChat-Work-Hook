@@ -693,6 +693,25 @@ const handleClickOutside = (event) => {
   }
 }
 
+/** type=900 掉线：仍登录或进程还在则保留，避免把正常企微从列表杀掉 */
+const handleWecomOfflineSignal = async (port) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return false
+  const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(p), {
+    attempts: 3,
+    intervalMs: 1200
+  })
+  if (loggedIn) {
+    console.warn(`[企微退出] type=900 但端口 ${p} 仍已登录，忽略`)
+    return false
+  }
+  if (await isWecomProcessAlive(p)) {
+    console.warn(`[企微退出] type=900 但端口 ${p} 进程/Hook 仍在，保留列表`)
+    return false
+  }
+  return removeWecomFromManager(p)
+}
+
 const removeWecomFromManager = async (port, options = {}) => {
   const p = Number(port)
   if (Number.isNaN(p) || p <= 0) return false
@@ -1598,7 +1617,7 @@ const refreshList = async () => {
                 attempts: 5,
                 intervalMs: 2000
               })
-              if (mayReturn || (await isWecomPortReachable(port))) {
+              if (mayReturn || (await isWecomPortReachable(port)) || (await isWecomProcessAlive(port))) {
                 validRows.push(row)
               } else {
                 console.log(`端口 ${port} 已不再使用，从表格中移除`)
@@ -1645,6 +1664,7 @@ defineExpose({
   syncPortLogin,
   recoverOrphanedLoggedInPorts,
   removeWecomFromManager,
+  handleWecomOfflineSignal,
   /** 供调试或父组件直接触发，与 HTTP 回调等价 */
   handleInjectStartedFromApi: handleApiInjectPort
 })

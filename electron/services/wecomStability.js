@@ -3,6 +3,7 @@
  */
 const { exec } = require('child_process')
 const axios = require('axios')
+const { parseNetstatListeningPids, parseNetstatLocalPids } = require('../commons/portProcess.cjs')
 
 /** 注入后 Hook 初始化保护（此期间写操作排队延迟） */
 const STABILIZING_AFTER_INJECT_MS = 45000
@@ -42,22 +43,18 @@ function findPidByPort(port) {
       return
     }
     if (process.platform === 'win32') {
-      exec(`netstat -ano | findstr :${p}`, (error, stdout) => {
+      exec('netstat -ano -p tcp', (error, stdout) => {
         if (error || !stdout) {
           resolve(-1)
           return
         }
-        for (const line of stdout.trim().split('\n')) {
-          const parts = line.trim().split(/\s+/)
-          if (parts.length >= 5 && parts[1].includes(`:${p}`)) {
-            const pid = parseInt(parts[parts.length - 1], 10)
-            if (!Number.isNaN(pid) && pid > 0) {
-              resolve(pid)
-              return
-            }
-          }
+        const listening = parseNetstatListeningPids(stdout, p)
+        if (listening[0]) {
+          resolve(listening[0])
+          return
         }
-        resolve(-1)
+        const local = parseNetstatLocalPids(stdout, p)
+        resolve(local[0] || -1)
       })
       return
     }
@@ -207,6 +204,39 @@ async function canInjectPort(port, options = {}) {
   return { allowed: true }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * type=900 可能是瞬时掉线。仍已登录、Hook 还在或进程还在时不能当退出处理。
+ */
+async function isWecomInstanceStillAlive(port) {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return { alive: false, loggedIn: false }
+  for (let i = 0; i < 3; i++) {
+    try {
+      const { data } = await axios.post(`http://127.0.0.1:${p}/api`, { type: 1000 }, {
+        timeout: 4000,
+        proxy: false,
+        family: 4
+      })
+      const status = data && data.data ? data.data.status : undefined
+      if (Number(status) === 1 || status === true) {
+        return { alive: true, loggedIn: true }
+      }
+      if (data != null) return { alive: true, loggedIn: false }
+    } catch {
+      /* Hook 可能瞬时不可达 */
+    }
+    if (i < 2) await sleep(1200)
+  }
+  if (await probeHookReachable(p)) return { alive: true, loggedIn: false }
+  const pid = await findPidByPort(p)
+  if (pid > 0) return { alive: true, loggedIn: false, pid }
+  return { alive: false, loggedIn: false }
+}
+
 /** 崩溃恢复前：确认进程与 Hook 均已不可用 */
 async function isPortSafeForCrashRecoveryInject(port) {
   const p = Number(port)
@@ -228,6 +258,7 @@ module.exports = {
   getProtectionUntil,
   canInjectPort,
   isPortSafeForCrashRecoveryInject,
+  isWecomInstanceStillAlive,
   probeHookReachable,
   findPidByPort
 }
