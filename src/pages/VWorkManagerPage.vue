@@ -228,7 +228,7 @@ import { confirmLoggedIn } from '../utils/loginStatusRetry'
 import { pickPersonalRecord } from '../utils/personalInfo'
 
 const configStore = useConfigStore()
-/** 来自 App.vue：HTTP /api/other/start-wecom 成功后的端口队列 */
+/** 来自 App.vue：企微注入成功后的端口队列 */
 const wecomApiInjectPorts = inject('wecomApiInjectPorts', ref([]))
 const tableData = ref([])
 const selectedRow = ref(null)
@@ -330,7 +330,7 @@ const injectKey = computed(() => configStore.config.sys?.inject_key || '')
 const autoUpdateOffRequestedPorts = new Set()
 
 /**
- * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api/settings/auto-update，state=0）
+ * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api，type=7000，state=0）
  */
 async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
   const p = parseInt(String(wecomHttpPort), 10)
@@ -368,7 +368,7 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
     return
   }
 
-  const url = `http://127.0.0.1:${sp}/api/settings/auto-update`
+  const url = `http://127.0.0.1:${sp}/api`
   try {
     const result = await window.electronAPI.callAPI({
       url,
@@ -379,8 +379,8 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
         type: 7000
       }
     })
-    if (!result?.success) {
-      console.warn('[auto-update] 调用失败:', result?.msg || result)
+    if (!result?.success || result.data?.errno !== 0) {
+      console.warn('[auto-update] 调用失败:', result?.data?.errmsg || result?.msg || result)
     } else {
       console.info('[auto-update] 已请求关闭企微自动更新（成功）', { listenPort: sp, wecomPort: p, response: result?.data })
     }

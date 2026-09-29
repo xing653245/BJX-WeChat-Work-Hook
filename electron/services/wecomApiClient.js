@@ -2,10 +2,11 @@
  * 企微本地 HTTP API 客户端：同一端口所有 Hook 请求串行 + 写操作最小间隔，避免并发压垮 Hook 导致崩溃。
  */
 const axios = require('axios')
+const { validateVworkRequest } = require('../utils/vworkApiContract')
 
-/** 消息发送 type（3000～3011） */
+/** 消息发送 type（3000～3015） */
 const MESSAGE_SEND_TYPES = new Set([
-  3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011
+  3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011, 3013, 3014, 3015
 ])
 
 /** 群组写操作 type（5000～5019），群发/群公告等 */
@@ -15,7 +16,7 @@ const GROUP_WRITE_TYPES = new Set([
 ])
 
 /** 小程序/媒体/CDN 等重操作，间隔更长 */
-const HEAVY_MESSAGE_TYPES = new Set([3001, 3003, 3004, 3007, 3011, 9000])
+const HEAVY_MESSAGE_TYPES = new Set([3001, 3003, 3004, 3007, 3011, 3013, 3014, 3015, 9000, 9005, 9006])
 
 /** 小程序（3006）：群发场景 Hook 需读封面并上传，单独加长间隔与冷却 */
 const APPLET_MESSAGE_TYPE = 3006
@@ -175,7 +176,19 @@ function enqueuePortTask(port, type, taskFn) {
  * @param {{ timeout?: number }} [options]
  */
 async function postToVWorkApi(port, requestData, options = {}) {
-  const type = Number(requestData?.type)
+  if (!/^\d+$/.test(String(port)) || Number(port) <= 1024 || Number(port) > 65535) {
+    const error = new Error('企微端口必须为 1025–65535 的整数')
+    error.code = 'INVALID_API_PARAMS'
+    throw error
+  }
+  const checked = validateVworkRequest(requestData)
+  if (!checked.valid) {
+    const error = new Error(checked.message)
+    error.code = 'INVALID_API_PARAMS'
+    throw error
+  }
+  requestData = checked.params
+  const type = requestData.type
   const url = `http://127.0.0.1:${port}/api`
   const timeout = options.timeout ?? getRequestTimeout(type)
 

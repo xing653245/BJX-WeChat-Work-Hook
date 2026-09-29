@@ -171,25 +171,10 @@ app.post('/msg', (req, res) => {
 app.get('/', (req, res) => {
   res.json({ 
     message: 'Express Server Running',
-      endpoints: {
-        message: 'POST /msg - 接收企微消息推送',
-        // API路由
-        login: '/api/login/* - 登录相关接口',
-        user: '/api/user/* - 用户相关接口',
-        contact: '/api/contact/* - 联系人/列表相关接口',
-        group: '/api/group/* - 群组相关接口',
-        message: '/api/message/* - 消息发送接口',
-        friend: '/api/friend/* - 好友管理接口',
-        tag: '/api/tag/* - 标签管理接口',
-        settings: '/api/settings/* - 设置相关接口',
-        idConvert: '/api/id-convert/* - ID转换接口',
-        cdn: '/api/cdn/* - CDN相关接口',
-        other: '/api/other/* - 其他功能接口（含 POST /api/other/start-wecom 启动企微）',
-        // 通用接口
-        apiCall: 'POST /api/call - 通用企微API调用接口',
-        // 兼容接口
-        groupMembersLegacy: 'POST /api/group-members - 获取群成员列表（兼容接口）'
-      }
+    endpoints: {
+      message: 'POST /msg - 接收企微消息推送',
+      api: 'POST /api - 请求体使用 type 指定企微 Hook 操作，可使用 port 选择实例'
+    }
   })
 })
 

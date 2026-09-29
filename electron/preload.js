@@ -84,7 +84,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fastapiMessageCallbacks.clear()
   },
 
-  // HTTP /api/other/start-wecom 启动企微成功后，主进程转发，用于企微管理表格与登录轮询
+  // 启动企微成功后，主进程转发，用于企微管理表格与登录轮询
   onWecomInjectStarted: (callback) => {
     ipcRenderer.on('wecom-inject-started', (event, data) => callback(data))
   },

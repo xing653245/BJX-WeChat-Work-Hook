@@ -551,6 +551,27 @@ export class VWorkApi {
     })
   }
 
+  // CDN 发送使用上传接口返回的参数。
+  static async sendCdnImageMessage(port, user_id, cdn_key, aes_key, md5, size) {
+    return callAPI(port, { type: 3013, user_id, cdn_key, aes_key, md5, size })
+  }
+
+  static async sendCdnVideoMessage(port, user_id, cdn_key, aes_key, md5, size, video_time) {
+    return callAPI(port, { type: 3014, user_id, cdn_key, aes_key, md5, size, video_time })
+  }
+
+  static async sendCdnFileMessage(port, user_id, cdn_key, aes_key, md5, size, file_name) {
+    return callAPI(port, { type: 3015, user_id, cdn_key, aes_key, md5, size, file_name })
+  }
+
+  static async cdnUploadImage(port, path) {
+    return callAPI(port, { type: 9005, path })
+  }
+
+  static async cdnUploadVideo(port, path, cover_path) {
+    return callAPI(port, { type: 9006, path, cover_path })
+  }
+
   // 10000: 清空聊天记录
   static async clearChatHistory(port, user_id, type = 10000) {
     return await callAPI(port, { type, user_id })

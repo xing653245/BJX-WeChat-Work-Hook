@@ -186,13 +186,13 @@ function validateAddNetworkParams(port, params) {
   if (!cache) {
     return {
       valid: false,
-      message: '请先调用 /api/friend/query-network 搜索用户，再使用其返回结果调用 add-network'
+      message: '请先调用 POST /api (type=4008) 搜索用户，再使用其返回结果调用 type=4009'
     }
   }
   if (Date.now() - cache.queriedAt > QUERY_CACHE_TTL_MS) {
     return {
       valid: false,
-      message: '网络查询结果已过期（超过 5 分钟），请重新调用 /api/friend/query-network'
+      message: '网络查询结果已过期（超过 5 分钟），请重新调用 POST /api (type=4008)'
     }
   }
   if (cache.contacts.length === 0) {

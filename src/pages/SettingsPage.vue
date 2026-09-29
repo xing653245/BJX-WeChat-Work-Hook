@@ -142,12 +142,12 @@
                 <span class="section-icon accent"><el-icon><Promotion /></el-icon></span>
                 <div>
                   <h2 class="section-title">接口调试 · 文本消息</h2>
-                  <p class="section-desc">POST /api/message/text 快速验证</p>
+                  <p class="section-desc">POST /api · type 3000</p>
                 </div>
               </div>
               <div class="section-head-right">
                 <el-tooltip
-                  content="发往本框架：POST http://127.0.0.1:{监听端口}/api/message/text。请求 JSON 包含 port（企微实例 HTTP 端口）、user_id、msg。"
+                  content="发往本框架：POST http://127.0.0.1:{监听端口}/api。请求 JSON 包含 type: 3000、port（企微实例 HTTP 端口）、user_id、msg。"
                   placement="top"
                 >
                   <span class="help-btn" @click.stop><el-icon><QuestionFilled /></el-icon></span>
@@ -211,7 +211,7 @@
                           :disabled="!isElectronAvailable"
                           @click="handleTestMessageText"
                         >
-                          发送 POST /api/message/text
+                          发送 POST /api
                         </el-button>
                       </div>
                     </div>
@@ -611,7 +611,7 @@ function setupSectionObserver() {
 /** localStorage「不再提醒」存在时文案提示 */
 const hasStoredCloseConfirmPrefs = ref(false)
 
-/** POST /api/message/text 调试：固定正文；user_id、企微 port 用户填写 */
+/** POST /api 调试：固定正文；user_id、企微 port 用户填写 */
 const TEXT_MSG_TEST_BODY = 'Hello 北极熊，这是一条自动化测试消息！'
 const textTestUserId = ref('')
 const textTestWecomPort = ref('')
@@ -677,8 +677,8 @@ const textTestRequestPreview = computed(() => {
   const listenOk =
     !Number.isNaN(listenPort) && listenPort > 1024 && listenPort <= 10000
   const url = listenOk
-    ? `http://127.0.0.1:${listenPort}/api/message/text`
-    : '（请先填写顶部「监听端口」，有效范围：(1024, 10000]）'
+    ? `http://127.0.0.1:${listenPort}/api`
+    : '（框架监听端口配置无效）'
 
   const wPortParsed = parseInt(String(textTestWecomPort.value || '').trim(), 10)
   const portOk =
@@ -686,6 +686,7 @@ const textTestRequestPreview = computed(() => {
   const uid = String(textTestUserId.value || '').trim()
 
   const payload = {
+    type: 3000,
     port: portOk ? wPortParsed : '（请选择企微 HTTP 端口）',
     user_id: uid || '（请填写接收方 user_id）',
     msg: TEXT_MSG_TEST_BODY
@@ -894,18 +895,19 @@ async function handleTestMessageText() {
   }
   const listenPort = parseInt(String(formData.server_port || '').trim(), 10)
   if (Number.isNaN(listenPort) || listenPort <= 1024 || listenPort > 10000) {
-    ElMessage.warning('请先在「HTTP 设置」中填写有效的监听端口')
+    ElMessage.warning('框架监听端口配置无效，请检查配置文件')
     return
   }
 
   testingTextMsg.value = true
   textTestResponseRaw.value = ''
-  const url = `http://127.0.0.1:${listenPort}/api/message/text`
+  const url = `http://127.0.0.1:${listenPort}/api`
   try {
     const result = await window.electronAPI.callAPI({
       url,
       method: 'POST',
       data: {
+        type: 3000,
         port: wPort,
         user_id: uid,
         msg: TEXT_MSG_TEST_BODY
@@ -928,11 +930,11 @@ async function handleTestMessageText() {
         ? body
         : JSON.stringify(body, null, 2)
 
-    const innerOk = body && typeof body === 'object' && body.success === true
+    const innerOk = body && typeof body === 'object' && body.errno === 0
     if (innerOk) {
       ElMessage.success('调用成功')
     } else {
-      const m = body?.message || body?.msg || '接口返回 failure'
+      const m = body?.errmsg || body?.message || body?.msg || '接口返回 failure'
       ElMessage.warning(typeof m === 'string' ? m : '接口返回异常，请看下方正文')
     }
   } catch (e) {

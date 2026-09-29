@@ -1367,9 +1367,13 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     return { success: false, msg: '仅允许访问本机 HTTP 接口 (127.0.0.1 / localhost)' }
   }
   try {
-    // 仅 http://127.0.0.1:{企微端口}/api 走直连；带路径的为框架 REST（如 /api/message/text）
+    // /api 以请求体 type 分发，区分企微直连端口与框架代理端口。
     const directWecomMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/api\/?$/)
-    const directWecomPort = directWecomMatch ? parseInt(directWecomMatch[1], 10) : null
+    const apiConfig = readConfig()
+    const frameworkPort = Number(apiConfig.sys?.server_port || DEFAULT_SERVER_PORT)
+    const frameworkPorts = new Set([frameworkPort, ...collectHookCompatListenPorts(apiConfig, frameworkPort)])
+    const urlPort = directWecomMatch ? Number(directWecomMatch[1]) : null
+    const directWecomPort = urlPort && !frameworkPorts.has(urlPort) ? urlPort : null
     const wecomUpdateMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/updatesettings\/?$/i)
     const wecomUpdatePort = wecomUpdateMatch ? parseInt(wecomUpdateMatch[1], 10) : null
 
@@ -1379,15 +1383,9 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     } else if (directWecomPort && method === 'POST' && data) {
       responseData = await postToVWorkApi(directWecomPort, data)
     } else {
-      const isAppletCall =
-        (data && Number(data.type) === 3006) ||
-        (typeof url === 'string' && url.includes('/api/message/applet'))
-      const isUserTagsCall = typeof url === 'string' && url.includes('/api/tag/user-tags')
-      const isMessageCall = typeof url === 'string' && url.includes('/api/message/')
-      // 与 wecomApiClient 默认 30s Hook 超时对齐；外层过短会导致「消息已发出但设置页报 timeout」
-      const frameworkTimeout = isAppletCall
-        ? 180000
-        : (isUserTagsCall ? 120000 : (isMessageCall ? 35000 : 10000))
+      const apiType = Number(data?.type)
+      const frameworkTimeout = apiType === 3006 ? 180000
+        : ([4008, 4009].includes(apiType) || (apiType >= 3000 && apiType <= 3015) || (apiType >= 9000 && apiType <= 9006) ? 90000 : 35000)
       const response = await axios({
         method,
         url,
@@ -1420,7 +1418,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         
         // 构建API调用日志数据（框架 REST 请求体常无 type，从 URL 推断）
         const { resolveApiTypeForLog } = require('./configs/apiLogResolve')
-        const apiType = resolveApiTypeForLog(url, data)
+        const apiType = resolveApiTypeForLog(data)
         // 与 electron/routes 保持一致，用于 API 调用日志展示
         const apiTypeNames = {
           // login
@@ -1450,6 +1448,9 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           3009: '发送群@消息',
           3010: '发送位置消息',
           3011: '发送语音消息',
+          3013: 'CDN发送图片',
+          3014: 'CDN发送视频',
+          3015: 'CDN发送文件',
           // friend
           4000: '添加好友',
           4001: '删除好友',
@@ -1508,6 +1509,8 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           9002: 'CDN下载视频',
           9003: 'CDN下载文件',
           9004: 'CDN下载个微文件',
+          9005: 'CDN上传图片',
+          9006: 'CDN上传视频',
           // other
           10000: '清空聊天记录',
           10003: '语音转文字',

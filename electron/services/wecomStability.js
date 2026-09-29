@@ -84,10 +84,10 @@ function shouldDeferWriteDuringProtection(type) {
   const t = Number(type)
   if (READ_ONLY_TYPES.has(t)) return false
   if (PRIORITY_DURING_PROTECTION_TYPES.has(t)) return false
-  if (t >= 3000 && t <= 3011) return true
+  if (t >= 3000 && t <= 3015) return true
   if (t >= 5000 && t <= 5019) return true
   if (t >= 7001 && t <= 7003) return true
-  if (t >= 9000 && t <= 9004) return true
+  if (t >= 9000 && t <= 9006) return true
   if (t === 10000 || t === 10003) return true
   if (t >= 6000 && t <= 6007) return true
   return false
