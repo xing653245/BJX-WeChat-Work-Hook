@@ -5,7 +5,7 @@ const path = require('node:path')
 const ini = require('ini')
 const { readIni } = require('../commons/common')
 
-test('打包默认配置使用 8868 接收企微消息并转发到旧服务 8002', () => {
+test('本地 conf.ini 默认使用 8868 并转发到 8002', { skip: !fs.existsSync(path.join(__dirname, '..', '..', 'conf', 'conf.ini')) }, () => {
   const configPath = path.join(__dirname, '..', '..', 'conf', 'conf.ini')
   const config = ini.parse(fs.readFileSync(configPath, 'utf8'))
 
