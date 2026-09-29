@@ -1,18 +1,33 @@
 const fs = require('fs')
 const path = require('path')
+const { writeTextAtomic } = require('../commons/atomicFile')
 const { validatePkcs1Rsa1024PublicKey } = require('../commons/pkcs1PublicKey.cjs')
 
 const SETTINGS_FILE = 'settings.json'
-const LEGACY_PUSH_FILE = 'push.json'
 
+// 只移除字符串以外的注释，保留 URL、路径和转义引号。
 function parseJsonDocument(text) {
   const raw = String(text || '').replace(/^\uFEFF/, '')
-  try {
-    return JSON.parse(raw)
-  } catch {
-    const stripped = raw.replace(/(^|[^:])\/\/.*$/gm, '$1')
-    return JSON.parse(stripped)
+  let cleaned = '', quoted = false, escaped = false
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw[i], next = raw[i + 1]
+    if (quoted) {
+      cleaned += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+    } else if (char === '"') { quoted = true; cleaned += char }
+    else if (char === '/' && next === '/') {
+      while (i < raw.length && raw[i] !== '\n') i++
+      cleaned += '\n'
+    } else if (char === '/' && next === '*') {
+      const end = raw.indexOf('*/', i + 2)
+      if (end < 0) throw new Error('settings.json 注释未闭合')
+      cleaned += ' '
+      i = end + 1
+    } else cleaned += char
   }
+  return JSON.parse(cleaned)
 }
 
 function readDocument(dir, name) {
@@ -32,20 +47,6 @@ function pickFirst(source, keys, fallback = '') {
     if (source[key] !== undefined && source[key] !== null) return source[key]
   }
   return fallback
-}
-
-function fsyncPath(filePath) {
-  const fd = fs.openSync(filePath, 'r+')
-  try {
-    fs.fsyncSync(fd)
-  } finally {
-    fs.closeSync(fd)
-  }
-}
-
-function removeLegacyPushJson(dir) {
-  const filePath = path.join(dir, LEGACY_PUSH_FILE)
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
 }
 
 function readInjectSettings(dir) {
@@ -107,29 +108,14 @@ function saveInjectSettings(dir, input) {
   delete next.encrypt
   delete next.public_key
 
-  const written = []
-  const rollback = () => {
-    for (const item of written.reverse()) {
-      if (item.type === 'write') fs.writeFileSync(item.filePath, item.text, 'utf8')
-      if (item.type === 'unlink') fs.writeFileSync(item.filePath, item.text, 'utf8')
-    }
+  if (JSON.stringify(settings.value) === JSON.stringify(next)) return () => {}
+  writeTextAtomic(settings.filePath, JSON.stringify(next, null, 2) + '\n')
+  let rolledBack = false
+  return () => {
+    if (rolledBack) return
+    writeTextAtomic(settings.filePath, settings.text)
+    rolledBack = true
   }
-  try {
-    if (JSON.stringify(settings.value) !== JSON.stringify(next)) {
-      written.push({ type: 'write', filePath: settings.filePath, text: settings.text })
-      fs.writeFileSync(settings.filePath, JSON.stringify(next, null, 2) + '\n', 'utf8')
-    }
-    fsyncPath(settings.filePath)
-    const legacyPushPath = path.join(dir, LEGACY_PUSH_FILE)
-    if (fs.existsSync(legacyPushPath)) {
-      written.push({ type: 'unlink', filePath: legacyPushPath, text: fs.readFileSync(legacyPushPath, 'utf8') })
-      removeLegacyPushJson(dir)
-    }
-  } catch (error) {
-    rollback()
-    throw error
-  }
-  return rollback
 }
 
-module.exports = { readInjectSettings, saveInjectSettings }
+module.exports = { readInjectSettings, saveInjectSettings, parseJsonDocument }

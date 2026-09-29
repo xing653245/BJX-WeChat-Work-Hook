@@ -1,12 +1,9 @@
-const path = require('path')
 const { callVWorkAPI } = require('./apiHandler')
-const { getAppPathForResources } = require('../services/wecomInject')
-const { resolveInjectToolPath } = require('../configs/wecomVersion')
+const { getInjectBinDir } = require('../commons/resourcePaths')
 const { readInjectSettings } = require('../services/injectSettings')
 
 function defaultPort() {
-  const { injectToolPath } = resolveInjectToolPath(getAppPathForResources(), 'v5')
-  return readInjectSettings(path.dirname(injectToolPath)).port
+  return readInjectSettings(getInjectBinDir()).port
 }
 
 // 文档入口保留 Hook 的 errno/errmsg/data；port 是多实例代理的可选扩展。

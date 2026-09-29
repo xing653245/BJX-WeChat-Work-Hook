@@ -11,63 +11,14 @@ const {
   initUpdateFeeds,
   shouldSuppressErrorEvent
 } = require('./services/updateService')
-let ini
-try {
-  ini = require('ini')
-} catch (e) {
-  // 如果ini包不存在，使用简单的解析器
-  ini = {
-    parse: (str) => {
-      const result = {}
-      let currentSection = null
-      str.split('\n').forEach(line => {
-        line = line.trim()
-        if (line.startsWith('[') && line.endsWith(']')) {
-          currentSection = line.slice(1, -1)
-          result[currentSection] = {}
-        } else if (line.includes('=') && currentSection) {
-          // 只分割第一个 =，以支持值中包含 = 的情况（如URL）
-          const equalIndex = line.indexOf('=')
-          const key = line.substring(0, equalIndex).trim()
-          let value = line.substring(equalIndex + 1).trim()
-          // 如果值被引号包裹，移除引号并处理转义的引号
-          if ((value.startsWith('"') && value.endsWith('"')) || 
-              (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'")
-          }
-          result[currentSection][key] = value
-        }
-      })
-      return result
-    },
-    stringify: (obj) => {
-      let result = ''
-      Object.keys(obj).forEach(section => {
-        result += `[${section}]\n`
-        Object.keys(obj[section]).forEach(key => {
-          const value = obj[section][key]
-          // 如果值是字符串且包含特殊字符、空格或JSON数组/对象，则添加引号并转义内部引号
-          if (typeof value === 'string' && (value.startsWith('[') || value.startsWith('{') || value.includes(' ') || value.includes('='))) {
-            // 转义字符串中的引号
-            const escapedValue = value.replace(/"/g, '\\"')
-            result += `${key}="${escapedValue}"\n`
-          } else {
-            result += `${key}=${value}\n`
-          }
-        })
-        result += '\n'
-      })
-      return result
-    }
-  }
-}
+const ini = require('ini')
 const axios = require('axios')
 const { saveLogToFile, getConfigPath, readIni, sendCallback, getBusinessCallbackUrl, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
 const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
 const { initCrashDiagnostics, attachWebContentsDiagnostics } = require('./services/crashDiagnostics')
-const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
+const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING } = require('./configs/defaults')
 const {
   collectHookCompatListenPorts,
   applyListenPortChangeToConfig
@@ -75,14 +26,12 @@ const {
 const {
   checkPortListenAvailable,
   findAvailablePort: findAvailablePortForInject,
-  runInjectTool: runInjectToolService,
-  readInjectConfig,
-  getAppPathForResources,
-  readWecomRegistryInfo
+  runInjectTool: runInjectToolService
 } = require('./services/wecomInject')
-const { getWecomVersionOptions } = require('./configs/wecomVersion')
+const { getInjectBinDir } = require('./commons/resourcePaths')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
 const { postToVWorkApi, postToWecomPath } = require('./services/wecomApiClient')
+const { callVWorkAPI } = require('./middleware/apiHandler')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
   canInjectPort,
@@ -331,18 +280,7 @@ autoUpdater.on('update-downloaded', (info) => {
   }
 })
 
-// 获取应用资源路径（处理打包后的路径）
-const getAppPath = () => {
-  // 使用 app.isPackaged 判断是否是打包后的应用
-  if (app.isPackaged) {
-    // 打包后：process.resourcesPath 指向 resources 目录
-    // extraResources 中的 bin 和 conf 目录在 resources 目录中（与 app.asar 同级）
-    // 所以直接返回 resources 目录
-    return process.resourcesPath
-  }
-  // 开发环境：返回 electron 目录的父目录（项目根目录）
-  return path.join(__dirname, '..')
-}
+
 
 // 启动消息接收服务器（用于接收FastAPI推送的消息）
 const startMessageServer = () => {
@@ -642,7 +580,7 @@ const probeLoggedIn = async (robotPort) => {
  * 对单端口执行注入（含互斥锁与单端口冷却）
  * @returns {Promise<boolean>} 是否已发起注入
  */
-const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
+const runInjectForPort = async (robotPort, reason) => {
   if (isAutoInjectReason(reason) && crashRecoveryAutoInjectSuspended) {
     console.log(`[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
     return { success: false, output: '自动恢复已暂停', blocked: true }
@@ -652,25 +590,18 @@ const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
     return { success: false, output: '该端口注入进行中', blocked: true }
   }
 
-  const safety = await canInjectPort(robotPort, { reason })
-  if (!safety.allowed) {
-    console.log(`[注入] 端口 ${robotPort} 跳过（${reason}）: ${safety.reason}`)
-    return { success: false, output: safety.reason, blocked: true }
-  }
-
+  // 必须在首次 await 前占用端口锁，避免两个调用同时通过前置检查。
   injectInProgressPorts.add(robotPort)
   try {
-    const { wecomVersion } = readInjectConfig()
-    const result = await runInjectToolService({
-      port: robotPort,
-      serverPort,
-      key: injectKey,
-      wecomVersion
-    })
+    const safety = await canInjectPort(robotPort, { reason })
+    if (!safety.allowed) {
+      return { success: false, output: safety.reason, blocked: true }
+    }
+    const result = await runInjectToolService({ port: robotPort })
     const ok = result.success === true
     recordInjectAttempt(robotPort, ok)
     console.log(
-      `[注入] 端口 ${robotPort} 已执行注入（${reason}，${wecomVersion}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
+      `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
     )
     if (ok) {
       markPortStabilizing(robotPort)
@@ -693,7 +624,6 @@ const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
  * 仅在「未登录且进程/Hook 均已不可用」时才注入，避免误判重复启动。
  */
 const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
-  const { serverPort, key: injectKey } = readInjectConfig()
   const ports = getTimedCheckPorts()
   if (ports.length === 0) return
 
@@ -714,7 +644,7 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
     }
 
     if (fromCrashRecovery) {
-      await runInjectForPort(robotPort, serverPort, injectKey, '崩溃恢复')
+      await runInjectForPort(robotPort, '崩溃恢复')
     } else {
       console.log(
         `[登录探测] 端口 ${robotPort} 未登录且进程已退出，不自动拉起企微；请在「企微管理」中手动添加`
@@ -1270,7 +1200,7 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 })
 
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
-const injectSettingsDir = () => path.join(getAppPathForResources(), 'bin')
+const injectSettingsDir = getInjectBinDir
 
 function collectSettingsNotifyPorts(config, merged) {
   const ports = new Set()
@@ -1328,7 +1258,7 @@ ipcMain.handle('read-config', () => {
     ...config,
     sys: {
       ...sys,
-      inject_key: DEFAULT_INJECT_KEY
+      callback: getBusinessCallbackUrl()
     }
   }
 })
@@ -1337,9 +1267,9 @@ ipcMain.handle('save-config', async (event, config) => {
   assertMainWindow(event, mainWindow)
   const prev = readConfig()
   const mergedSys = { ...(prev.sys || {}), ...((config && config.sys) || {}) }
-  delete mergedSys.callback_encrypt
-  delete mergedSys.callback_encrypt_key
-  delete mergedSys.callback_encrypt_private_key
+  // 注入相关字段只属于 bin/settings.json，不再写回 INI。
+  for (const key of ['callback', 'callback_encrypt', 'callback_encrypt_key', 'callback_encrypt_private_key',
+    'inject_key', 'wecom_version', 'wecom_version_selected', 'wecom_exe_path', 'wecom_exe_path_v5']) delete mergedSys[key]
   const merged = {
     sys: mergedSys,
     custom: { ...(prev.custom || {}), ...((config && config.custom) || {}) }
@@ -1353,8 +1283,14 @@ ipcMain.handle('save-config', async (event, config) => {
     if (!result.success && rollback) rollback()
     if (!result.success) return result
     if (!config.injectTool) return result
-    const notify = await notifyWecomSettingsUpdated(collectSettingsNotifyPorts(config, merged))
-    return { ...result, notify }
+    // 文件已提交；通知失败只报告状态，不回滚已保存的配置。
+    rollback = undefined
+    try {
+      const notify = await notifyWecomSettingsUpdated(collectSettingsNotifyPorts(config, merged))
+      return { ...result, notify }
+    } catch (error) {
+      return { ...result, notify: { ok: false, msg: error.message } }
+    }
   } catch (error) {
     if (rollback) rollback()
     return { success: false, msg: error.message }
@@ -1381,7 +1317,8 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     if (wecomUpdatePort && method === 'POST') {
       responseData = await postToWecomPath(wecomUpdatePort, '/updatesettings', data || { Update: true })
     } else if (directWecomPort && method === 'POST' && data) {
-      responseData = await postToVWorkApi(directWecomPort, data)
+      const { type, port: _routingPort, ...params } = data
+      responseData = await callVWorkAPI(directWecomPort, type, params)
     } else {
       const apiType = Number(data?.type)
       const frameworkTimeout = apiType === 3006 ? 180000
@@ -1656,20 +1593,11 @@ ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
   return findAvailablePortForInject(startPort, endPort)
 })
 
-ipcMain.handle('get-wecom-version-options', () => {
-  return {
-    options: getWecomVersionOptions(getAppPathForResources())
-  }
-})
-
-ipcMain.handle('get-wecom-registry-info', () => readWecomRegistryInfo())
-
-// 执行注入工具（统一走 runInjectForPort，含重复注入防护）
-ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
+// 注入只接收端口；宿主路径和回调配置由 bin/settings.json 提供。
+ipcMain.handle('run-inject-tool', async (event, { port }) => {
+  assertMainWindow(event, mainWindow)
   resetCrashRecoveryProtection()
-  const injectKey = key || DEFAULT_INJECT_KEY
-  const sp = parseInt(serverPort, 10) || readInjectConfig().serverPort
-  return runInjectForPort(Number(port), sp, injectKey, '手动')
+  return runInjectForPort(Number(port), '手动')
 })
 
 ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {

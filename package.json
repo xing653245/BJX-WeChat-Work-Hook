@@ -5,7 +5,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
-    "test": "node --test electron/tests/*.test.js",
+    "test": "node scripts/run-tests.js",
     "build": "vite build",
     "preview": "vite preview",
     "convert-icon": "node scripts/convert-icon.js",
@@ -35,10 +35,10 @@
     "electron-updater": "^6.7.3",
     "element-plus": "^2.5.6",
     "express": "^4.22.1",
-    "iconv-lite": "^0.7.2",
     "pinia": "^2.1.7",
     "vue": "^3.4.15",
-    "vue-router": "^4.2.5"
+    "vue-router": "^4.2.5",
+    "ini": "^4.1.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.3",
@@ -50,9 +50,6 @@
     "to-ico": "^1.1.5",
     "vite": "^5.1.0",
     "wait-on": "^7.2.0"
-  },
-  "optionalDependencies": {
-    "ini": "^4.1.2"
   },
   "build": {
     "appId": "com.vwork.framework",
@@ -74,19 +71,32 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "!electron/tests/**/*"
     ],
     "extraResources": [
       {
         "from": "bin",
         "to": "bin",
-        "filter": ["**/*"]
+        "filter": [
+          "it.exe",
+          "HookBridge.dll",
+          "VworkLogger.dll",
+          "versions.json"
+        ]
       },
       {
-        "from": "conf",
+        "from": ".cache/package-resources/bin",
+        "to": "bin",
+        "filter": [
+          "settings.json"
+        ]
+      },
+      {
+        "from": ".cache/package-resources/conf",
         "to": "conf",
         "filter": [
-          "**/*"
+          "conf.ini"
         ]
       }
     ],

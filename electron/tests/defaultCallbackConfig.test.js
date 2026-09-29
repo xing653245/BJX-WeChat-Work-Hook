@@ -2,55 +2,30 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const ini = require('ini')
-const { readIni } = require('../commons/common')
+const os = require('node:os')
+const vm = require('node:vm')
+const { createRequire } = require('node:module')
 
-test('本地 conf.ini 默认使用 8868 并转发到 8002', { skip: !fs.existsSync(path.join(__dirname, '..', '..', 'conf', 'conf.ini')) }, () => {
-  const configPath = path.join(__dirname, '..', '..', 'conf', 'conf.ini')
-  const config = ini.parse(fs.readFileSync(configPath, 'utf8'))
-
-  assert.equal(String(config.sys.server_port), '8868')
-  assert.equal(config.sys.callback, 'http://127.0.0.1:8002/msg')
-})
-
-test('已有电脑的旧 8001 回调在读取时自动迁移到 8002', () => {
-  const os = require('node:os')
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-callback-migration-'))
-  const configPath = path.join(tempRoot, 'conf.ini')
-
-  try {
-    fs.writeFileSync(
-      configPath,
-      '[sys]\nserver_port=8868\ncallback=http://127.0.0.1:8001/msg\n',
-      'utf8'
-    )
-
-    const config = readIni(configPath)
-
-    assert.equal(config.callback, 'http://127.0.0.1:8002/msg')
-    assert.match(fs.readFileSync(configPath, 'utf8'), /callback=http:\/\/127\.0\.0\.1:8002\/msg/)
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true })
-  }
-})
-
-test('用户自定义回调地址保持不变', () => {
-  const os = require('node:os')
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-custom-callback-'))
-  const configPath = path.join(tempRoot, 'conf.ini')
-  const customCallback = 'http://192.168.1.18:9000/custom-msg'
-
-  try {
-    fs.writeFileSync(
-      configPath,
-      `[sys]\nserver_port=8868\ncallback=${customCallback}\n`,
-      'utf8'
-    )
-
-    const config = readIni(configPath)
-
-    assert.equal(config.callback, customCallback)
-  } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true })
-  }
+test('回调只读 bin 配置，禁用或缺失时不回退旧 INI，读取不触发迁移写入', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-callback-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const iniPath = path.join(root, 'conf.ini')
+  const original = '[sys]\nserver_port=8868\ncallback=http://old:8001/msg\n'
+  fs.writeFileSync(iniPath, original)
+  const filename = path.resolve(__dirname, '../commons/common.js')
+  const localRequire = createRequire(filename)
+  const module = { exports: {} }
+  vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
+    module, __dirname: path.dirname(filename), console, process, Buffer,
+    require(name) { return name === './resourcePaths' ? { getInjectBinDir: () => root } : localRequire(name) }
+  }, { filename })
+  const { readIni, getBusinessCallbackUrl } = module.exports
+  fs.writeFileSync(path.join(root, 'settings.json'), '{"enabled":true,"url":"http://new:9000/msg"}')
+  assert.equal(readIni(iniPath).callback, 'http://new:9000/msg')
+  fs.writeFileSync(path.join(root, 'settings.json'), '{"enabled":false,"url":"http://new:9000/msg"}')
+  assert.equal(getBusinessCallbackUrl('http://old:8001/msg'), '')
+  assert.equal(readIni(iniPath).callback, '')
+  fs.unlinkSync(path.join(root, 'settings.json'))
+  assert.equal(getBusinessCallbackUrl(), '')
+  assert.equal(fs.readFileSync(iniPath, 'utf8'), original)
 })

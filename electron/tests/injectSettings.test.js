@@ -103,14 +103,14 @@ test('无效路径、端口、回调参数和损坏 JSON 均不覆盖已有文�
   assert.equal(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'), settings)
 })
 
-test('保存时移除遗留的 push.json，并把回调字段写入 settings.json', (t) => {
+test('保存只更新 settings.json，不删除同目录的其它文件', (t) => {
   const { dir } = fixture(t)
   fs.writeFileSync(path.join(dir, 'push.json'), JSON.stringify({
     enabled: false, url: 'http://127.0.0.1:8002/mess', timeout_ms: 3000, retries: 5
   }))
   const original = readInjectSettings(dir)
   saveInjectSettings(dir, original)
-  assert.equal(fs.existsSync(path.join(dir, 'push.json')), false)
+  assert.equal(fs.existsSync(path.join(dir, 'push.json')), true)
   const settings = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json')))
   assert.equal(settings.url, original.url)
   assert.equal(settings.enabled, original.enabled)

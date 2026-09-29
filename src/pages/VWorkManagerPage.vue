@@ -324,7 +324,6 @@ const deleteTableRowByPort = (port) => {
 }
 
 const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT_SERVER_PORT_STRING)
-const injectKey = computed(() => configStore.config.sys?.inject_key || '')
 
 /** 已请求关闭自动更新的企微端口，避免 completePortLogin 重复触发时打两次 */
 const autoUpdateOffRequestedPorts = new Set()
@@ -770,9 +769,7 @@ const executeAddWechat = async (portType, customPortValue) => {
   if (!window.electronAPI) return
   try {
     const result = await window.electronAPI.runInjectTool({
-      port,
-      serverPort: serverPort.value,
-      key: injectKey.value
+      port
     })
     if (result.success) {
       ElMessage.success('企微启动成功，正在登录...')

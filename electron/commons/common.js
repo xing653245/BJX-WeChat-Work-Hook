@@ -6,6 +6,8 @@ const path = require('path')
 const fs = require('fs')
 const axios = require('axios')
 const ini = require('ini')
+const { getInjectBinDir } = require('./resourcePaths')
+const { readInjectSettings } = require('../services/injectSettings')
 const { ReadConfig, LoginInfo } = require('../utils/schemas')
 const { exec } = require('child_process')
 const { promisify } = require('util')
@@ -14,8 +16,6 @@ const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
 const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
 const { parseNetstatListeningPids } = require('./portProcess.cjs')
 
-const LEGACY_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8001/msg'
-const DEFAULT_BUSINESS_CALLBACK_URL = 'http://127.0.0.1:8002/msg'
 
 /**
  * 获取配置文件路径
@@ -81,33 +81,12 @@ function getAppRootPath() {
   return path.dirname(electronDir)
 }
 
-function getInjectBinDir() {
+/** 注入与回调只认 bin/settings.json；禁用或读取失败时不回退到旧 INI。 */
+function getBusinessCallbackUrl() {
   try {
-    const { app } = require('electron')
-    if (app && app.isPackaged) {
-      return path.join(process.resourcesPath || '', 'bin')
-    }
-  } catch {
-    /* 非 Electron */
-  }
-  return path.join(getAppRootPath(), 'bin')
-}
-
-function readSettingsCallbackUrl() {
-  try {
-    const settingsPath = path.join(getInjectBinDir(), 'settings.json')
-    if (!fs.existsSync(settingsPath)) return ''
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, ''))
-    const url = String(settings.url || '').trim()
-    return /^https?:\/\//i.test(url) ? url : ''
-  } catch {
-    return ''
-  }
-}
-
-/** 业务回调地址以 bin/settings.json 的 url 为准 */
-function getBusinessCallbackUrl(fallback = '') {
-  return readSettingsCallbackUrl() || String(fallback || '').trim()
+    const settings = readInjectSettings(getInjectBinDir())
+    return settings.enabled && /^https?:\/\//i.test(settings.url || '') ? String(settings.url).trim() : ''
+  } catch { return '' }
 }
 
 /**
@@ -302,7 +281,8 @@ function parseIniFlag(value) {
  */
 async function sendCallback(url, data) {
   const startTime = Date.now()
-  url = getBusinessCallbackUrl(url)
+  url = getBusinessCallbackUrl()
+  if (!url) return { success: false, message: '回调未开启或地址不可用' }
   try {
     const response = await axios.post(url, data, {
       timeout: 10000
@@ -452,21 +432,12 @@ function readIni(configPath = null) {
     const conf = ini.parse(content)
 
     let server_port = DEFAULT_SERVER_PORT_STRING
-    let callback = ''
+    const callback = getBusinessCallbackUrl()
     let open_log = true
     let save_log = true
 
     if (conf.sys) {
       server_port = conf.sys.server_port || server_port
-      callback = conf.sys.callback || callback
-      if (callback === LEGACY_LOCAL_CALLBACK_URL) {
-        callback = DEFAULT_BUSINESS_CALLBACK_URL
-        conf.sys.callback = callback
-        const migration = writeConfigAtomic(configPath, ini.stringify(conf))
-        if (!migration.success) {
-          console.error(`迁移旧回调地址失败: ${migration.msg}`)
-        }
-      }
       open_log = parseIniFlag(conf.sys.open_log)
       save_log = parseIniFlag(conf.sys.save_log)
     }

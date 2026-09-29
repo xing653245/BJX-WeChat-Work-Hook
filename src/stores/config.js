@@ -113,7 +113,7 @@ export const useConfigStore = defineStore('config', () => {
 
   // 更新登录信息
   const updateLoginInfo = async (loginInfo) => {
-    const currentConfig = { ...config.value }
+    const currentConfig = { ...config.value, custom: { ...config.value.custom } }
     if (!currentConfig.custom) {
       currentConfig.custom = {}
     }

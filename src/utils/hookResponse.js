@@ -1,5 +1,5 @@
 /**
- * 企微 Hook 响应归一化（与 electron/utils/hookResponse.js 保持一致）
+ * 企微 Hook 响应归一化（用于页面兼容显示）
  */
 
 const ID_CONVERT_TYPES = new Set([8000, 8001, 8002, 8003])

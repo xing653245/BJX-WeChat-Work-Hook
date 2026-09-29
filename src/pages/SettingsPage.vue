@@ -547,7 +547,6 @@ const activeSection = ref('http')
 const mainScrollRef = ref(null)
 const sectionExpanded = reactive({ api: true })
 const themeMode = ref(getStoredThemeMode())
-const wecomVersionOptions = ref([{ id: 'v5', label: '企微 v5', available: true }])
 const navSections = [
   { id: 'http', label: '连接与回调', icon: Connection },
   { id: 'wecom', label: '企微版本', icon: ChatLineRound },
@@ -644,19 +643,9 @@ function formatWecomInstanceOptionLabel(row) {
   return `端口 ${row.port} · ${nn}（${uid}）`
 }
 
-const DEFAULT_WECOM_VERSION = 'v5'
-
-async function loadWecomVersionOptions() {
-  if (!window.electronAPI?.getWecomVersionOptions) return
-  const res = await window.electronAPI.getWecomVersionOptions()
-  const options = Array.isArray(res?.options) ? res.options.filter((item) => item.id === 'v5') : []
-  if (options.length) wecomVersionOptions.value = options
-}
-
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
-  wecom_version: DEFAULT_WECOM_VERSION,
   wecom_exe_path_v5: '',
   wecom_port: '8989',
   push_url: '',
@@ -763,8 +752,6 @@ const loadConfig = () => {
   const config = configStore.config
   formData.server_port = config.sys?.server_port || DEFAULT_SERVER_PORT_STRING
   formData.callback = config.sys?.callback || ''
-  formData.wecom_version = 'v5'
-  formData.wecom_exe_path_v5 = config.sys?.wecom_exe_path_v5 || ''
   if (savedInjectSettings.value) applyInjectSettings(savedInjectSettings.value)
   formData.auto_check_update = !(
     config.sys?.auto_check_update === 'false' ||
@@ -1189,9 +1176,6 @@ const handleSave = async () => {
       notifyWecomPorts: collectWecomNotifyPorts(port),
       sys: {
         ...configStore.config.sys,
-        wecom_version: 'v5',
-        wecom_exe_path_v5: String(formData.wecom_exe_path_v5 || '').trim(),
-        wecom_version_selected: 'true',
         auto_check_update: String(formData.auto_check_update),
         window_close_action: formData.window_close_action || 'ask'
       },
@@ -1252,7 +1236,6 @@ onMounted(async () => {
   }
   loadConfig()
   await loadInjectSettings()
-  loadWecomVersionOptions()
   loadAppVersion()
   setupUpdateListeners()
   themeMode.value = getStoredThemeMode()
