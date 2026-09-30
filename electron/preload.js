@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 配置相关
   readConfig: () => ipcRenderer.invoke('read-config'),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
+  setNativeTheme: (mode) => ipcRenderer.invoke('set-native-theme', mode),
   
   // API调用
   callAPI: (options) => ipcRenderer.invoke('call-api', options),

@@ -381,7 +381,7 @@ defineExpose({
 
 .toolbar-warn {
   font-size: 12px;
-  color: #b45309;
+  color: var(--el-color-warning);
   font-weight: 500;
 }
 

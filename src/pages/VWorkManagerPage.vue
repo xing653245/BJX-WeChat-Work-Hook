@@ -47,16 +47,34 @@
 
     <el-dialog
       v-model="showAddDialog"
-      title="添加企微（指定端口）"
-      width="400px"
+      width="420px"
+      align-center
+      class="port-add-dialog"
+      :show-close="true"
     >
-      <el-input
-        v-model="customPort"
-        placeholder="请输入端口号(1024-10000)"
-      />
+      <template #header>
+        <div class="port-add-head">
+          <strong>添加企微</strong>
+          <span>指定一个未被占用的 HTTP 端口</span>
+        </div>
+      </template>
+      <div class="port-add-body">
+        <label class="port-add-label" for="custom-wecom-port">端口号</label>
+        <el-input
+          id="custom-wecom-port"
+          v-model="customPort"
+          size="large"
+          clearable
+          placeholder="例如 6272"
+          @keyup.enter="handleAddWechat"
+        />
+        <p class="port-add-hint">可用范围 1025–10000。该端口会作为这个企微实例的 HTTP 端口。</p>
+      </div>
       <template #footer>
-        <el-button @click="showAddDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleAddWechat">确定</el-button>
+        <div class="port-add-footer">
+          <el-button @click="showAddDialog = false">取消</el-button>
+          <el-button type="primary" @click="handleAddWechat">确定</el-button>
+        </div>
       </template>
     </el-dialog>
 
@@ -1829,7 +1847,7 @@ defineExpose({
 }
 
 .context-menu-item.disabled {
-  color: #c0c4cc;
+  color: var(--sp-disabled);
   cursor: not-allowed;
 }
 
@@ -1894,6 +1912,93 @@ defineExpose({
   .service-status {
     margin-left: 50px;
   }
+}
+</style>
+
+<style>
+.port-add-dialog.el-dialog {
+  padding: 0;
+  border: 1px solid var(--sp-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--sp-surface);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+}
+
+.port-add-dialog .el-dialog__header {
+  margin: 0;
+  padding: 18px 48px 0 20px;
+}
+
+.port-add-dialog .el-dialog__headerbtn {
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.port-add-dialog .el-dialog__headerbtn:hover {
+  background: var(--sp-subtle-bg);
+}
+
+.port-add-dialog .el-dialog__body {
+  padding: 16px 20px 4px;
+}
+
+.port-add-dialog .el-dialog__footer {
+  padding: 12px 20px 18px;
+}
+
+.port-add-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.port-add-head strong {
+  color: var(--sp-text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.port-add-head span {
+  color: var(--sp-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.port-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.port-add-label {
+  color: var(--sp-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.port-add-hint {
+  margin: 0;
+  color: var(--sp-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.port-add-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.port-add-footer .el-button {
+  min-width: 76px;
+  margin: 0;
 }
 </style>
 

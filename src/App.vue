@@ -3,15 +3,27 @@
     <el-main class="app-main">
       <el-tabs v-model="activeTab" type="border-card" class="main-tabs">
         <el-tab-pane label="首页" name="index">
+          <template #label>
+            <span class="main-tab-label"><el-icon aria-hidden="true"><House /></el-icon><span>首页</span></span>
+          </template>
           <IndexPage />
         </el-tab-pane>
         <el-tab-pane label="运行日志" name="logs">
+          <template #label>
+            <span class="main-tab-label"><el-icon aria-hidden="true"><Document /></el-icon><span>运行日志</span></span>
+          </template>
           <RunLogsPage />
         </el-tab-pane>
         <el-tab-pane label="企微管理" name="manager">
+          <template #label>
+            <span class="main-tab-label"><el-icon aria-hidden="true"><ChatLineRound /></el-icon><span>企微管理</span></span>
+          </template>
           <VWorkManagerPage ref="vworkManagerRef" />
         </el-tab-pane>
         <el-tab-pane label="设置" name="settings">
+          <template #label>
+            <span class="main-tab-label"><el-icon aria-hidden="true"><Setting /></el-icon><span>设置</span></span>
+          </template>
           <SettingsPage />
         </el-tab-pane>
       </el-tabs>
@@ -27,6 +39,7 @@ const feedback = createFeedback('App.vue')
 
 import { ref, onMounted, onUnmounted, provide, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { House, Document, ChatLineRound, Setting } from '@element-plus/icons-vue'
 import IndexPage from './pages/IndexPage.vue'
 import RunLogsPage from './pages/RunLogsPage.vue'
 import VWorkManagerPage from './pages/VWorkManagerPage.vue'
@@ -222,16 +235,25 @@ body {
   flex: 1;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .main-tabs {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   border: none;
 }
 
-.main-tabs .el-tabs__content {
-  height: calc(100% - 55px);
-  overflow: auto;
+.main-tabs > .el-tabs__header {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.main-tabs > .el-tabs__content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .main-tabs .el-tab-pane {

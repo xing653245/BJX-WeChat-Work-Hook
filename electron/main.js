@@ -1,6 +1,6 @@
 const { createDiagnostics } = require('./commons/diagnostics.cjs')
 const diagnostics = createDiagnostics('main.js')
-const { app, BrowserWindow, ipcMain, shell, Menu, dialog, Tray, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, Menu, dialog, Tray, nativeImage, nativeTheme } = require('electron')
 require('./commons/diagnostics.cjs').setConsoleDiagnosticsEnabled(!app.isPackaged)
 const path = require('path')
 const { spawn } = require('child_process')
@@ -1236,6 +1236,16 @@ app.on('before-quit', () => {
 })
 
 // IPC 通信处理
+// 将页面外观同步到原生窗口标题栏；system 保留系统自动切换能力。
+ipcMain.handle('set-native-theme', (event, mode) => {
+  assertMainWindow(event, mainWindow)
+  if (!['light', 'dark', 'system'].includes(mode)) {
+    throw new Error('无效的外观模式')
+  }
+  nativeTheme.themeSource = mode
+  return { success: true }
+})
+
 ipcMain.handle('respond-close-confirm', (event, action) => {
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     return { ok: false }

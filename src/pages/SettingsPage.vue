@@ -20,7 +20,7 @@
         </nav>
       </aside>
 
-      <main ref="mainScrollRef" class="settings-main">
+      <main ref="mainScrollRef" class="settings-main" tabindex="0" aria-label="设置内容">
         <!-- HTTP -->
         <section :id="sectionDomId('http')" class="settings-section">
           <div class="section-card">
@@ -1284,6 +1284,7 @@ onUnmounted(() => {
   padding: 24px 12px;
   border-right: 1px solid var(--sp-border);
   background: var(--sp-surface);
+  overflow-y: auto;
 }
 
 .nav-list {
@@ -1349,8 +1350,13 @@ onUnmounted(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 24px clamp(16px, 3vw, 36px) 40px;
-  scrollbar-gutter: stable;
   scroll-behavior: smooth;
+}
+
+.settings-main:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: -2px;
 }
 
 .settings-section {
@@ -1630,7 +1636,7 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  border: 2px solid #c0c4cc;
+  border: 2px solid var(--sp-control-border);
   border-radius: 50%;
   transition: border-color 0.2s, box-shadow 0.2s;
 }

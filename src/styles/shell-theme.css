@@ -2,8 +2,8 @@
  * 全应用页面壳主题变量（浅色默认 + html.dark 覆盖）
  * 各 page-shell / settings-page 继承使用，避免暗色硬编码色块不一致
  */
-.page-shell,
-.settings-page {
+:root {
+  color-scheme: light;
   --sp-bg: #eef1f5;
   --sp-surface: #ffffff;
   --sp-surface-raised: #ffffff;
@@ -14,6 +14,8 @@
   --sp-border: #dfe4ea;
   --sp-text: #1c2430;
   --sp-muted: #647086;
+  --sp-disabled: #a8abb2;
+  --sp-control-border: #c0c4cc;
   --sp-accent: #409eff;
   --sp-accent-soft: rgba(64, 158, 255, 0.1);
   --sp-radius: 12px;
@@ -27,14 +29,6 @@
 
 html.dark {
   color-scheme: dark;
-}
-
-html.dark body {
-  background: #12171d;
-}
-
-html.dark .page-shell,
-html.dark .settings-page {
   --sp-bg: #12171d;
   --sp-surface: #1b222c;
   --sp-surface-raised: #222b36;
@@ -45,6 +39,8 @@ html.dark .settings-page {
   --sp-border: #343f4d;
   --sp-text: #e8edf3;
   --sp-muted: #9aa7b8;
+  --sp-disabled: #687587;
+  --sp-control-border: #566477;
   --sp-accent: #66b1ff;
   --sp-accent-soft: rgba(102, 177, 255, 0.14);
   --sp-shadow: 0 2px 10px rgba(0, 0, 0, 0.32);
@@ -52,33 +48,162 @@ html.dark .settings-page {
   --sp-warning-border: rgba(245, 158, 11, 0.35);
   --sp-warning-text: #d4a574;
   --sp-footer-bg: rgba(27, 34, 44, 0.94);
+
+  /* Element Plus 弹层挂载到 body，统一从根节点继承配色。 */
+  --el-bg-color: var(--sp-surface);
+  --el-bg-color-page: var(--sp-bg);
+  --el-bg-color-overlay: var(--sp-surface-raised);
+  --el-text-color-primary: var(--sp-text);
+  --el-text-color-regular: #c3cdd9;
+  --el-text-color-secondary: var(--sp-muted);
+  --el-text-color-placeholder: #8391a4;
+  --el-text-color-disabled: var(--sp-disabled);
+  --el-border-color: var(--sp-border);
+  --el-border-color-light: #2f3947;
+  --el-border-color-lighter: #293341;
+  --el-border-color-extra-light: #252e3a;
+  --el-border-color-dark: #465469;
+  --el-border-color-darker: var(--sp-control-border);
+  --el-fill-color: #293443;
+  --el-fill-color-light: var(--sp-subtle-bg);
+  --el-fill-color-lighter: #202934;
+  --el-fill-color-extra-light: #1b2430;
+  --el-fill-color-dark: #344154;
+  --el-fill-color-darker: #40506a;
+  --el-fill-color-blank: var(--sp-surface);
+  --el-disabled-bg-color: var(--sp-toolbar-bg);
+  --el-disabled-text-color: var(--sp-disabled);
+  --el-disabled-border-color: var(--sp-border);
+  --el-mask-color: rgba(18, 23, 29, 0.85);
+  --el-mask-color-extra-light: rgba(18, 23, 29, 0.35);
 }
 
-/* 顶栏 Tab 与暗色协调 */
-html.dark .main-tabs.el-tabs--border-card {
+html body {
   background: var(--sp-bg);
-  border-color: var(--sp-border);
+  color: var(--sp-text);
 }
 
-html.dark .main-tabs.el-tabs--border-card > .el-tabs__header {
+/* 隐藏页面纵向滚动条，保留滚轮、触控板和键盘滚动。 */
+.settings-main,
+.settings-nav,
+.page-body,
+.main-tabs > .el-tabs__content {
+  scrollbar-width: none;
+}
+
+.settings-main::-webkit-scrollbar,
+.settings-nav::-webkit-scrollbar,
+.page-body::-webkit-scrollbar,
+.main-tabs > .el-tabs__content::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* 表格保留横向滚动入口，只隐藏右侧纵向滑块。 */
+.data-table .el-scrollbar__bar.is-vertical {
+  display: none;
+}
+
+.main-tabs.el-tabs--border-card {
+  background: var(--sp-bg);
+  box-shadow: none;
+}
+
+html.dark .el-input__wrapper,
+html.dark .el-textarea__inner,
+html.dark .el-select__wrapper {
+  background-color: var(--sp-toolbar-bg);
+}
+
+html.dark .el-dialog,
+html.dark .el-message-box {
+  border: 1px solid var(--sp-border);
+}
+
+html.dark .data-table {
+  --el-table-current-row-bg-color: var(--sp-accent-soft);
+}
+
+html.dark .data-table .el-table__body tr.hover-row > td.el-table__cell,
+html.dark .data-table .el-table__body tr:hover > td.el-table__cell {
+  background-color: var(--sp-accent-soft);
+}
+
+html.dark .context-menu,
+html.dark .custom-context-menu,
+html.dark .context-submenu {
+  background: var(--sp-surface-raised);
+  box-shadow: var(--el-box-shadow-dark);
+}
+
+/* 主导航：保留 Tabs 的键盘行为，统一深浅色圆角选态。 */
+.main-tabs.el-tabs--border-card > .el-tabs__header {
+  padding: 10px 20px;
   background: var(--sp-surface);
-  border-bottom-color: var(--sp-border);
+  border-bottom: 1px solid var(--sp-border);
 }
 
-html.dark .main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item {
+.main-tabs > .el-tabs__header .el-tabs__nav-wrap {
+  margin-bottom: 0;
+}
+
+.main-tabs > .el-tabs__header .el-tabs__nav {
+  display: flex;
+  gap: 6px;
+  border: 0;
+}
+
+.main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item {
+  height: 38px;
+  margin: 0;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--sp-muted);
-  border-color: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
 }
 
-html.dark .main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
+.main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item:hover {
+  color: var(--sp-text);
+  background: var(--sp-subtle-bg);
+}
+
+.main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
   color: var(--sp-accent);
-  background: var(--sp-bg);
-  border-color: var(--sp-border);
-  border-bottom-color: var(--sp-bg);
+  background: var(--sp-accent-soft);
+  border-color: var(--sp-accent-soft);
+  font-weight: 600;
 }
 
-html.dark .main-tabs .el-tabs__content {
+.main-tabs > .el-tabs__header .el-tabs__item:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.main-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.main-tab-label .el-icon {
+  font-size: 16px;
+}
+
+.main-tabs > .el-tabs__content {
   background: var(--sp-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-tabs.el-tabs--border-card > .el-tabs__header .el-tabs__item {
+    transition: none;
+  }
 }
 
 html.dark .settings-footer.is-dirty {
@@ -131,6 +256,10 @@ html.dark .api-test-msg-code {
 
 html.dark .data-table .el-table__row.el-table__row--striped td.el-table__cell {
   background: var(--sp-subtle-bg);
+}
+
+html.dark .data-table .el-table__body tr.current-row > td.el-table__cell {
+  background: var(--sp-accent-soft);
 }
 
 html.dark .dirty-badge {

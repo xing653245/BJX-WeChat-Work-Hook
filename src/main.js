@@ -7,7 +7,10 @@ import './styles/shell-theme.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
+import { applyThemeMode, getStoredThemeMode } from './utils/theme'
 
+// 首次渲染前应用主题，弹窗和顶栏也能立即获得正确配色。
+applyThemeMode(getStoredThemeMode())
 const app = createApp(App)
 const pinia = createPinia()
 
