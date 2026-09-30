@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('run-tests.js')
 const fs = require('fs')
 const path = require('path')
 const { spawnSync } = require('child_process')
@@ -6,5 +8,5 @@ const files = fs.readdirSync(path.join(root, 'electron/tests'))
   .filter(name => name.endsWith('.test.js'))
   .map(name => path.join(root, 'electron/tests', name))
 const result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit', cwd: root })
-if (result.error) console.error(result.error.message)
+if (result.error) diagnostics.error('L001', result.error.message)
 process.exitCode = result.status ?? 1

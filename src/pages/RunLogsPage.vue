@@ -15,6 +15,7 @@
               合并今日文件日志
             </el-button>
             <el-button size="small" plain @click="openLogFolder">打开日志目录</el-button>
+            <el-button size="small" plain :loading="exportingReport" @click="exportReport">导出故障报告</el-button>
             <el-button size="small" plain :disabled="logCount === 0" @click="clearLogs">
               清空
             </el-button>
@@ -57,6 +58,11 @@
 </template>
 
 <script setup>
+import { createFeedback } from '../utils/feedback.mjs'
+const feedback = createFeedback('pages/RunLogsPage.vue')
+import { userMessage } from '../utils/diagnostics.mjs'
+const exportingReport = ref(false)
+
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { formatMessageContent, formatMessageTypeLabel } from '../utils/msgParser'
@@ -106,7 +112,7 @@ const addLog = (data) => {
   }
 
   const timestamp = data.time_stamp || Math.floor(Date.now() / 1000)
-  const content = formatMessageContent(data)
+  const content = data.sys ? userMessage(formatMessageContent(data), '系统操作未完成，请稍后重试') : formatMessageContent(data)
 
   const logEntry = {
     index: logs.value.length + 1,
@@ -166,7 +172,7 @@ const onMenuClick = (command) => {
 
 const handleMenuCommand = (command) => {
   if (command !== 'clear' && !selectedRow.value) {
-    ElMessage.warning('请先选择一行日志')
+    feedback.warning('U001', '请先选择一行日志')
     return
   }
 
@@ -209,7 +215,7 @@ function parseFileLogLine(line) {
       time: sysMatch[1],
       sender: '系统提示',
       type: '系统提示',
-      message: sysMatch[2],
+      message: userMessage(sysMatch[2], '系统操作未完成，请稍后重试'),
       rawData: { sys: true, content: sysMatch[2] }
     }
   }
@@ -238,14 +244,14 @@ function parseFileLogLine(line) {
 async function mergeTodayFileLogs() {
   if (loadingFileLogs.value) return
   if (!window.electronAPI?.readTodayLogFile) {
-    ElMessage.warning('当前环境无法读取文件日志')
+    feedback.warning('U002', '当前环境无法读取文件日志')
     return
   }
   loadingFileLogs.value = true
   try {
     const res = await window.electronAPI.readTodayLogFile({ maxLines: 300 })
     if (!res?.success) {
-      ElMessage.warning('读取文件日志失败')
+      feedback.warning('U003', '读取文件日志失败')
       return
     }
     if (!res.lines?.length) {
@@ -268,7 +274,7 @@ async function mergeTodayFileLogs() {
     })
     ElMessage.success(added ? `已合并 ${added} 条文件日志` : '文件日志与当前列表一致，无新增')
   } catch (e) {
-    ElMessage.error(e?.message || '读取文件日志失败')
+    feedback.error('U004', e?.message || '读取文件日志失败')
   } finally {
     loadingFileLogs.value = false
   }
@@ -276,15 +282,27 @@ async function mergeTodayFileLogs() {
 
 async function openLogFolder() {
   if (!window.electronAPI?.openLogDirectory) {
-    ElMessage.warning('当前环境无法打开日志目录')
+    feedback.warning('U005', '当前环境无法打开日志目录')
     return
   }
   const res = await window.electronAPI.openLogDirectory()
   if (res?.success) {
     if (res.path) logDirPath.value = res.path
   } else {
-    ElMessage.warning(res?.error || '打开日志目录失败')
+    feedback.warning('U006', res?.error || '打开日志目录失败')
   }
+}
+
+async function exportReport() {
+  if (exportingReport.value) return
+  exportingReport.value = true
+  try {
+    const result = await window.electronAPI?.exportDiagnosticReport?.()
+    if (result?.canceled) return
+    if (result?.success) ElMessage.success('故障报告已加密导出，请将文件发送给技术支持')
+    else feedback.error('U009', result?.message || '导出失败，请重启应用后重试')
+  } catch (error) { feedback.error('U010', error) }
+  finally { exportingReport.value = false }
 }
 
 defineExpose({

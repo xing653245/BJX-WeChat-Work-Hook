@@ -29,15 +29,10 @@
     "url": "https://gitee.com/ldsz_1/vworkqt.git"
   },
   "dependencies": {
-    "@element-plus/icons-vue": "^2.3.1",
     "axios": "^1.6.5",
     "cors": "^2.8.5",
     "electron-updater": "^6.7.3",
-    "element-plus": "^2.5.6",
     "express": "^4.22.1",
-    "pinia": "^2.1.7",
-    "vue": "^3.4.15",
-    "vue-router": "^4.2.5",
     "ini": "^4.1.2"
   },
   "devDependencies": {
@@ -49,7 +44,12 @@
     "sharp": "^0.34.5",
     "to-ico": "^1.1.5",
     "vite": "^5.1.0",
-    "wait-on": "^7.2.0"
+    "wait-on": "^7.2.0",
+    "@element-plus/icons-vue": "^2.3.1",
+    "element-plus": "^2.5.6",
+    "pinia": "^2.1.7",
+    "vue": "^3.4.15",
+    "vue-router": "^4.2.5"
   },
   "build": {
     "appId": "com.vwork.framework",
@@ -72,7 +72,11 @@
       "dist/**/*",
       "electron/**/*",
       "node_modules/**/*",
-      "!electron/tests/**/*"
+      "!electron/tests{,/**/*}",
+      "!**/*.map",
+      "!**/*.{log,tmp,temp,pem,key}",
+      "!**/.env{,.*}",
+      "!electron/**/*.md"
     ],
     "extraResources": [
       {

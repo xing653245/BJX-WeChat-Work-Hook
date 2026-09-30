@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('services/wecomApiClient.js')
 /**
  * 企微本地 HTTP API 客户端：同一端口所有 Hook 请求串行 + 写操作最小间隔，避免并发压垮 Hook 导致崩溃。
  */
@@ -123,7 +125,7 @@ function enqueuePortTask(port, type, taskFn) {
   const run = async () => {
     const stabilizingWait = heavyApiDeferMs(port, type)
     if (stabilizingWait > 0) {
-      console.log(
+      diagnostics.info('L001',
         `[Hook队列] 端口 ${port} 登录保护期内，写操作延迟 ${Math.round(stabilizingWait / 1000)}s（type ${type}）`
       )
       await sleep(stabilizingWait)
@@ -145,7 +147,7 @@ function enqueuePortTask(port, type, taskFn) {
       throw e
     } finally {
       if (failed && applet) {
-        console.warn(
+        diagnostics.warn('L002',
           `[Hook队列] 端口 ${port} 小程序发送失败，额外等待 ${APPLET_ERROR_RECOVERY_MS / 1000}s 再处理下一请求`
         )
         await sleep(APPLET_ERROR_RECOVERY_MS)

@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('services/updateService.js')
 /**
  * 自动更新：优先 Gitee，失败后尝试 GitHub
  */
@@ -171,13 +173,13 @@ async function checkForUpdatesWithFallback() {
     for (let i = 0; i < UPDATE_FEEDS.length; i++) {
       const feed = UPDATE_FEEDS[i]
       applyFeed(feed)
-      console.log(`[update] 正在从 ${feed.label} 检查更新: ${describeFeed(feed)}`)
+      diagnostics.info('L001', `[update] 正在从 ${feed.label} 检查更新: ${describeFeed(feed)}`)
 
       try {
         const result = await autoUpdater.checkForUpdates()
         const usedFallback = i > 0
         if (usedFallback) {
-          console.log(`[update] ${UPDATE_FEEDS[0].label} 不可用，已改用 ${feed.label} 更新源`)
+          diagnostics.info('L002', `[update] ${UPDATE_FEEDS[0].label} 不可用，已改用 ${feed.label} 更新源`)
         }
         return {
           feed,
@@ -186,7 +188,7 @@ async function checkForUpdatesWithFallback() {
         }
       } catch (err) {
         failures.push({ feed, err })
-        console.warn(`[update] ${feed.label} 检查失败:`, err?.message || err)
+        diagnostics.warn('L003', `[update] ${feed.label} 检查失败:`, err?.message || err)
 
         const hasNext = i < UPDATE_FEEDS.length - 1
         if (hasNext && isRetriableUpdateError(err)) {

@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('./diagnostics.cjs')
+const diagnostics = createDiagnostics('commons/common.js')
 /**
  * Electron版本的通用工具函数
  * Node.js版本，独立于vwork_qt项目
@@ -55,7 +57,7 @@ function getConfigPath() {
         }
       } catch (e) {
         // 复制失败时不影响后续读取逻辑，后面 readIni 会有默认配置兜底
-        console.error(`初始化用户配置文件失败: ${e.message}`)
+        diagnostics.error('L001', `初始化用户配置文件失败: ${e.message}`)
       }
 
       return userConfigPath
@@ -175,7 +177,7 @@ function readConfigTextWithBackup(configPath) {
   } catch (primaryErr) {
     const backupPath = `${configPath}.bak`
     if (fs.existsSync(backupPath)) {
-      console.warn(`主配置读取失败，使用备份: ${primaryErr.message}`)
+      diagnostics.warn('L002', `主配置读取失败，使用备份: ${primaryErr.message}`)
       const content = fs.readFileSync(backupPath, 'utf-8')
       try {
         writeConfigAtomic(configPath, content)
@@ -256,15 +258,15 @@ async function saveLogToFile(data) {
           writeToDir(fallbackDir)
           return true
         } catch (e2) {
-          console.error(`保存日志失败(主目录和备用目录都失败): ${e2.message}`)
+          diagnostics.error('L003', `保存日志失败(主目录和备用目录都失败): ${e2.message}`)
           return false
         }
       }
-      console.error(`保存日志失败: ${err.message}`)
+      diagnostics.error('L004', `保存日志失败: ${err.message}`)
       return false
     }
   } catch (error) {
-    console.error(`保存日志失败: ${error.message}`)
+    diagnostics.error('L005', `保存日志失败: ${error.message}`)
     return false
   }
 }
@@ -306,7 +308,7 @@ async function sendCallback(url, data) {
     } else {
       errorMessage = `回调发送失败: ${error.message}`
     }
-    console.error(`❌ ${errorMessage} (耗时: ${duration}ms)`)
+    diagnostics.error('L006', `❌ ${errorMessage} (耗时: ${duration}ms)`)
     return {
       success: false,
       message: errorMessage,
@@ -351,7 +353,7 @@ async function killProcessByPort(port) {
       const { stdout } = await execAsync(`netstat -ano -p tcp`)
       const pids = new Set(parseNetstatListeningPids(stdout, port))
       if (pids.size === 0) {
-        console.log(`未找到监听端口 ${port} 的进程`)
+        diagnostics.info('L007', `未找到监听端口 ${port} 的进程`)
         return false
       }
 
@@ -359,16 +361,16 @@ async function killProcessByPort(port) {
       const selfPid = process.pid
       const toKill = [...pids].filter((pid) => pid !== selfPid)
       if (toKill.length === 0) {
-        console.log(`端口 ${port} 仅由当前进程监听，跳过 taskkill（避免自杀）`)
+        diagnostics.info('L008', `端口 ${port} 仅由当前进程监听，跳过 taskkill（避免关闭框架自身）`)
         return false
       }
 
       for (const pid of toKill) {
         try {
           await execAsync(`taskkill /F /PID ${pid}`)
-          console.log(`成功终止进程 (PID: ${pid})`)
+          diagnostics.info('L009', `成功终止进程 (PID: ${pid})`)
         } catch (error) {
-          console.error(`终止进程失败 (PID: ${pid}):`, error.message)
+          diagnostics.error('L010', `终止进程失败 (PID: ${pid}):`, error.message)
         }
       }
       return true
@@ -377,7 +379,7 @@ async function killProcessByPort(port) {
         // 未找到进程
         return false
       }
-      console.error(`终止进程失败: ${error.message}`)
+      diagnostics.error('L011', `终止进程失败: ${error.message}`)
       return false
     }
   } else {
@@ -389,9 +391,9 @@ async function killProcessByPort(port) {
       const toKill = pids.filter((pid) => pid !== selfPid)
       if (toKill.length === 0) {
         if (pids.length > 0) {
-          console.log(`端口 ${port} 仅由当前进程监听，跳过 kill（避免自杀）`)
+          diagnostics.info('L012', `端口 ${port} 仅由当前进程监听，跳过 kill（避免关闭框架自身）`)
         } else {
-          console.log(`未找到占用端口 ${port} 的进程`)
+          diagnostics.info('L013', `未找到占用端口 ${port} 的进程`)
         }
         return false
       }
@@ -399,9 +401,9 @@ async function killProcessByPort(port) {
       for (const pid of toKill) {
         try {
           await execAsync(`kill -9 ${pid}`)
-          console.log(`成功终止进程 (PID: ${pid})`)
+          diagnostics.info('L014', `成功终止进程 (PID: ${pid})`)
         } catch (error) {
-          console.error(`终止进程失败 (PID: ${pid}):`, error.message)
+          diagnostics.error('L015', `终止进程失败 (PID: ${pid}):`, error.message)
         }
       }
       return true
@@ -410,7 +412,7 @@ async function killProcessByPort(port) {
         // 未找到进程
         return false
       }
-      console.error(`终止进程失败: ${error.message}`)
+      diagnostics.error('L016', `终止进程失败: ${error.message}`)
       return false
     }
   }
@@ -453,7 +455,7 @@ function readIni(configPath = null) {
         login_info = parsed.map(item => new LoginInfo(item))
       }
     } catch (e) {
-      console.error('解析login_info失败:', e)
+      diagnostics.error('L017', '账号列表格式异常，请检查配置备份：', e)
     }
 
     return new ReadConfig({
@@ -464,7 +466,7 @@ function readIni(configPath = null) {
       login_info
     })
   } catch (error) {
-    console.error(`读取配置失败: ${error.message}`)
+    diagnostics.error('L018', `读取配置失败: ${error.message}`)
     return new ReadConfig({
       server_port: DEFAULT_SERVER_PORT_STRING,
       callback: '',

@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('./commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('express_server.js')
 /**
  * Express服务器 - 供Electron启动
  * 接收企微消息并转发
@@ -63,7 +65,7 @@ async function processIncomingWecomMessage(data) {
       const state = await isWecomInstanceStillAlive(port)
       shouldEnd = !state.alive && !state.loggedIn
       if (!shouldEnd) {
-        console.warn(
+        diagnostics.warn('L001',
           `[企微退出] 收到 type=900 但端口 ${port} 仍在（loggedIn=${state.loggedIn} pid=${state.pid || '-'}），忽略杀进程`
         )
       }
@@ -72,7 +74,7 @@ async function processIncomingWecomMessage(data) {
       try {
         await killProcessByPort(port)
       } catch (error) {
-        console.warn(`[企微退出] 结束端口 ${port} 进程失败: ${error.message}`)
+        diagnostics.warn('L002', `[企微退出] 结束端口 ${port} 进程失败: ${error.message}`)
       }
       notifyWecomSessionEnded(port, incomingType === 1003 ? '退出登录' : '企微退出')
     }
@@ -82,7 +84,7 @@ async function processIncomingWecomMessage(data) {
         port: Number.isNaN(port) ? payload.port : port
       }, messageServerAxiosConfig())
     } catch (error) {
-      console.error(`推送退出登录消息失败: ${error.message}`)
+      diagnostics.error('L003', `推送退出登录消息失败: ${error.message}`)
     }
     return
   }
@@ -100,12 +102,12 @@ async function processIncomingWecomMessage(data) {
     try {
       await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', payload, messageServerAxiosConfig())
     } catch (error) {
-      console.error(`推送消息到Electron失败: ${error.message}`)
+      diagnostics.error('L004', `推送消息到Electron失败: ${error.message}`)
     }
 
     if (ini_config.save_log) {
       saveLogToFile(payload).catch(err => {
-        console.error(`保存日志到文件失败: ${err.message}`)
+        diagnostics.error('L005', `保存日志到文件失败: ${err.message}`)
       })
     }
   }
@@ -125,12 +127,12 @@ async function processIncomingWecomMessage(data) {
         try {
           await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', callbackLogData, messageServerAxiosConfig({ timeout: 1000 }))
         } catch (error) {
-          console.error(`推送回调日志到Electron失败: ${error.message}`)
+          diagnostics.error('L006', `推送回调日志到Electron失败: ${error.message}`)
         }
 
         if (ini_config.save_log) {
           saveLogToFile(callbackLogData).catch(err => {
-            console.error(`保存回调日志到文件失败: ${err.message}`)
+            diagnostics.error('L007', `保存回调日志到文件失败: ${err.message}`)
           })
         }
       }
@@ -143,12 +145,12 @@ async function processIncomingWecomMessage(data) {
     try {
       await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', error_data, messageServerAxiosConfig({ timeout: 1000 }))
     } catch (error) {
-      console.error(`推送错误消息失败: ${error.message}`)
+      diagnostics.error('L008', `推送错误消息失败: ${error.message}`)
     }
 
     if (ini_config.open_log && ini_config.save_log) {
       saveLogToFile(error_data).catch(err => {
-        console.error(`保存错误日志到文件失败: ${err.message}`)
+        diagnostics.error('L009', `保存错误日志到文件失败: ${err.message}`)
       })
     }
   }
@@ -161,7 +163,7 @@ app.post('/msg', (req, res) => {
   const data = req.body
   res.json({ message: 'success' })
   processIncomingWecomMessage(data).catch((error) => {
-    console.error(`处理消息推送失败: ${error.message}`)
+    diagnostics.error('L010', `处理消息推送失败: ${error.message}`)
   })
 })
 
@@ -189,11 +191,11 @@ app.use('/api', apiRoutes)
 function listenAppOnPort(port) {
   return new Promise((resolve, reject) => {
     const server = app.listen(Number(port), '127.0.0.1', () => {
-      console.log(`Express服务器启动在端口 ${port}`)
+      diagnostics.info('L011', `Express服务器启动在端口 ${port}`)
       resolve(server)
     })
     server.on('error', (error) => {
-      console.error(`Express服务器启动失败: ${error.message}`)
+      diagnostics.error('L012', `Express服务器启动失败: ${error.message}`)
       reject(error)
     })
   })

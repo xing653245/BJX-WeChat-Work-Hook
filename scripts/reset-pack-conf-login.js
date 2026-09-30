@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('reset-pack-conf-login.js')
 /** 打包副本：不会改写开发目录的账号和注入配置。 */
 const fs = require('fs')
 const path = require('path')
@@ -23,5 +25,8 @@ function preparePackageConfig(root) {
   return output
 }
 
-if (require.main === module) console.log('已生成打包配置副本:', preparePackageConfig(path.resolve(__dirname, '..')))
+if (require.main === module) {
+  require('../electron/commons/reportEncryption.cjs').loadReportPublicKey()
+  diagnostics.info('L001', '已生成打包配置副本:', preparePackageConfig(path.resolve(__dirname, '..')))
+}
 module.exports = { preparePackageConfig }

@@ -1,4 +1,7 @@
+const { createDiagnostics } = require('./commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('main.js')
 const { app, BrowserWindow, ipcMain, shell, Menu, dialog, Tray, nativeImage } = require('electron')
+require('./commons/diagnostics.cjs').setConsoleDiagnosticsEnabled(!app.isPackaged)
 const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
@@ -87,10 +90,11 @@ function notifyPortError({ port, service, detail }) {
     detail ||
     `端口 ${port} 已被占用或无法绑定。\n\n请检查：\n1. 是否重复打开了本应用（应只保留一个实例）\n2. 是否有其他程序占用该端口\n3. 可在设置中更换 HTTP 监听端口后重启框架`
 
-  console.error(`[端口错误] ${title}: ${message}`)
+  diagnostics.error('L001', `[端口错误] ${title}: ${message}`)
+  const userDetail = require('./commons/diagnostics.cjs').userMessage(message, '服务暂时无法启动，请关闭重复打开的应用后重试；如仍然失败，请联系技术支持')
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('service-error', { port, service, message: title, detail: message })
+    mainWindow.webContents.send('service-error', { port, service, message: '服务启动失败', detail: userDetail })
   }
 
   showDesktopNotification({
@@ -99,7 +103,7 @@ function notifyPortError({ port, service, detail }) {
     onClick: () => {
       focusMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('service-error', { port, service, message: title, detail: message })
+        mainWindow.webContents.send('service-error', { port, service, message: '服务启动失败', detail: userDetail })
       }
     }
   })
@@ -109,7 +113,7 @@ function notifyPortError({ port, service, detail }) {
       type: 'error',
       title: '服务启动失败',
       message: title,
-      detail: message,
+      detail: userDetail,
       buttons: ['知道了']
     })
     .catch(() => {})
@@ -129,8 +133,8 @@ const notifyCrashRecoverySuspended = () => {
   const detail =
     `已连续 ${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次崩溃恢复仍未登录。\n` +
     `已暂停自动注入（端口：${portHint}）。\n\n` +
-    `请先在任务管理器中结束所有 WXWork.exe，关闭错误报告窗口，排查 Hook/企微版本兼容问题后，在「企微管理」中手动重新添加。`
-  console.warn('[企微崩溃] 自动恢复已暂停:', detail.replace(/\n/g, ' '))
+    `请关闭异常的企微窗口，确认客户端版本符合要求后，在「企微管理」中重新添加；如持续失败，请联系技术支持。`
+  diagnostics.warn('L002', '[企微崩溃] 自动恢复已暂停:', detail.replace(/\n/g, ' '))
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show()
     mainWindow.focus()
@@ -164,7 +168,7 @@ const recordCrashRecoveryCycleResult = async () => {
   }
 
   crashRecoveryCyclesWithoutLogin++
-  console.log(
+  diagnostics.info('L003',
     `[企微崩溃] 本轮恢复后仍未登录（连续 ${crashRecoveryCyclesWithoutLogin}/${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次）`
   )
   if (
@@ -188,7 +192,7 @@ initUpdateFeeds()
 
 // 更新事件处理
 autoUpdater.on('checking-for-update', () => {
-  console.log('正在检查更新...')
+  diagnostics.info('L004', '正在检查更新...')
   if (mainWindow) {
     mainWindow.webContents.send('update-status', { status: 'checking', message: '正在检查更新...' })
   }
@@ -211,7 +215,7 @@ function normalizeReleaseNotes(releaseNotes) {
 }
 
 autoUpdater.on('update-available', (info) => {
-  console.log('发现新版本:', info.version)
+  diagnostics.info('L005', '发现新版本:', info.version)
   showDesktopNotification({
     title: '发现新版本',
     body: `版本 ${info.version} 可用，打开「设置 → 更新」可下载安装。`
@@ -227,7 +231,7 @@ autoUpdater.on('update-available', (info) => {
 })
 
 autoUpdater.on('update-not-available', (info) => {
-  console.log('当前已是最新版本:', info.version)
+  diagnostics.info('L006', '当前已是最新版本:', info.version)
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'not-available',
@@ -239,10 +243,10 @@ autoUpdater.on('update-not-available', (info) => {
 
 autoUpdater.on('error', (err) => {
   if (shouldSuppressErrorEvent()) {
-    console.warn('[update] 当前更新源失败，尝试备用源:', err?.message || err)
+    diagnostics.warn('L007', '[update] 当前更新源失败，尝试备用源:', err?.message || err)
     return
   }
-  console.error('更新检查失败:', err)
+  diagnostics.error('L008', '更新检查失败:', err)
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'error',
@@ -266,7 +270,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 })
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('更新下载完成:', info.version)
+  diagnostics.info('L009', '更新下载完成:', info.version)
   showDesktopNotification({
     title: '更新已就绪',
     body: `版本 ${info.version} 已下载完成，打开设置可立即重启安装。`
@@ -314,7 +318,7 @@ const startMessageServer = () => {
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: true }))
         } catch (e) {
-          console.error('解析消息失败:', e)
+          diagnostics.error('L010', '解析消息失败:', e)
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: false, error: e.message }))
         }
@@ -326,7 +330,7 @@ const startMessageServer = () => {
   })
   
   messageServer.listen(messagePort, '127.0.0.1', () => {
-    console.log(`消息接收服务器启动在端口 ${messagePort}`)
+    diagnostics.info('L011', `消息接收服务器启动在端口 ${messagePort}`)
     process.env.MESSAGE_SERVER_URL = `http://127.0.0.1:${messagePort}/message`
   })
 
@@ -338,7 +342,7 @@ const startMessageServer = () => {
         detail: `端口 ${messagePort} 已被占用，运行日志/消息推送可能无法正常工作。\n\n若已打开另一个本框架实例，请关闭多余窗口；否则请结束占用该端口的进程后重启应用。`
       })
     } else {
-      console.error('消息服务器错误:', error)
+      diagnostics.error('L012', '消息服务器错误:', error)
       notifyPortError({
         port: messagePort,
         service: '消息推送服务',
@@ -359,14 +363,14 @@ function closeHttpServer(server) {
     }
     try {
       server.close((err) => {
-        if (err) console.error('停止Express失败:', err)
+        if (err) diagnostics.error('L013', '停止Express失败:', err)
         resolve()
       })
       if (typeof server.closeAllConnections === 'function') {
         server.closeAllConnections()
       }
     } catch (e) {
-      console.error('停止Express失败:', e)
+      diagnostics.error('L014', '停止Express失败:', e)
       resolve()
     }
   })
@@ -377,7 +381,7 @@ async function closeAllExpressServers() {
   expressServers = []
   if (oldServers.length === 0) return
   await Promise.all(oldServers.map((server) => closeHttpServer(server)))
-  console.log('Express服务器已关闭')
+  diagnostics.info('L015', 'Express服务器已关闭')
 }
 
 /**
@@ -390,14 +394,14 @@ const startExpressServer = async (port) => {
   const p = parseInt(port, 10)
   if (Number.isNaN(p) || p <= 1024 || p > 10000) {
     const msg = `监听端口无效: ${port}（有效范围 1025～10000）`
-    console.error(msg)
+    diagnostics.error('L016', msg)
     return { success: false, message: msg }
   }
 
   const reservedPorts = new Set([9999])
   if (reservedPorts.has(p)) {
     const msg = `监听端口 ${p} 已由框架内部服务保留，请使用其他端口（推荐 ${DEFAULT_SERVER_PORT}）`
-    console.error(msg)
+    diagnostics.error('L017', msg)
     return { success: false, message: msg }
   }
 
@@ -409,15 +413,15 @@ const startExpressServer = async (port) => {
   process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
   ensureMessageServerToken()
   const { runServer, listenAppOnPort } = require('./express_server')
-  console.log(`启动Express服务器，端口: ${p}`)
+  diagnostics.info('L018', `启动Express服务器，端口: ${p}`)
 
   try {
     const server = await runServer(p)
     expressServers.push(server)
-    console.log(`Express服务器启动成功，监听端口 ${p}`)
+    diagnostics.info('L019', `Express服务器启动成功，监听端口 ${p}`)
   } catch (error) {
     const msg = error.message || String(error)
-    console.error('启动Express服务器失败:', msg)
+    diagnostics.error('L020', '启动Express服务器失败:', msg)
     expressServers = []
     if (/EADDRINUSE|已被占用|address already in use/i.test(msg)) {
       notifyPortError({
@@ -434,9 +438,9 @@ const startExpressServer = async (port) => {
     try {
       const extraServer = await listenAppOnPort(extraPort)
       expressServers.push(extraServer)
-      console.log(`Hook 兼容监听已启动: ${extraPort}（已注入企微仍向旧 --my_port 回包）`)
+      diagnostics.info('L021', `Hook 兼容监听已启动: ${extraPort}（已注入企微仍向旧 --my_port 回包）`)
     } catch (error) {
-      console.warn(
+      diagnostics.warn('L022',
         `Hook 兼容端口 ${extraPort} 无法监听: ${error.message}。已登录企微若仍指向该端口，接口可能超时。`
       )
     }
@@ -486,7 +490,7 @@ const readConfig = () => {
     const content = readConfigTextWithBackup(configPath)
     return ini.parse(content)
   } catch (error) {
-    console.error('读取配置失败:', error)
+    diagnostics.error('L023', '读取配置失败:', error)
     return {
       sys: {
         server_port: DEFAULT_SERVER_PORT_STRING,
@@ -524,7 +528,7 @@ const saveConfig = (config) => {
     }
     return { success: true, backupPath: result.backupPath }
   } catch (error) {
-    console.error('保存配置失败:', error)
+    diagnostics.error('L024', '保存配置失败:', error)
     return { success: false, msg: error.message }
   }
 }
@@ -582,11 +586,11 @@ const probeLoggedIn = async (robotPort) => {
  */
 const runInjectForPort = async (robotPort, reason) => {
   if (isAutoInjectReason(reason) && crashRecoveryAutoInjectSuspended) {
-    console.log(`[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
+    diagnostics.info('L025', `[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
     return { success: false, output: '自动恢复已暂停', blocked: true }
   }
   if (injectInProgressPorts.has(robotPort)) {
-    console.log(`[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
+    diagnostics.info('L026', `[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
     return { success: false, output: '该端口注入进行中', blocked: true }
   }
 
@@ -600,7 +604,7 @@ const runInjectForPort = async (robotPort, reason) => {
     const result = await runInjectToolService({ port: robotPort })
     const ok = result.success === true
     recordInjectAttempt(robotPort, ok)
-    console.log(
+    diagnostics.info('L027',
       `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
     )
     if (ok) {
@@ -612,7 +616,7 @@ const runInjectForPort = async (robotPort, reason) => {
     return { success: ok, output: result.output || '' }
   } catch (e) {
     recordInjectAttempt(robotPort, false)
-    console.error(`[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
+    diagnostics.error('L028', `[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
     return { success: false, output: e.message }
   } finally {
     injectInProgressPorts.delete(robotPort)
@@ -638,7 +642,7 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
     const safeToInject = await isPortSafeForCrashRecoveryInject(robotPort)
     if (!safeToInject) {
       const pid = await findPidByPort(robotPort)
-      console.log(
+      diagnostics.info('L029',
         `[登录探测] 端口 ${robotPort} 未登录但进程或 Hook 仍存活（pid=${pid}），跳过注入`
       )
       continue
@@ -647,7 +651,7 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
     if (fromCrashRecovery) {
       await runInjectForPort(robotPort, '崩溃恢复')
     } else {
-      console.log(
+      diagnostics.info('L030',
         `[登录探测] 端口 ${robotPort} 未登录且进程已退出，不自动拉起企微；请在「企微管理」中手动添加`
       )
     }
@@ -667,10 +671,10 @@ const startTimedLoginStatusCheck = () => {
       return
     }
     await timedGetLoginStatus().catch((e) => {
-      console.error('定时检查登录状态异常:', e.message)
+      diagnostics.error('L031', '定时检查登录状态异常:', e.message)
     })
   }), TIMED_CHECK_INTERVAL_MS)
-  console.log(`定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
+  diagnostics.info('L032', `定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
 }
 
 /** 崩溃后按退避策略延迟触发注入恢复 */
@@ -679,7 +683,7 @@ const scheduleCrashRecovery = () => {
     return
   }
   if (crashRecoveryAutoInjectSuspended) {
-    console.log('[企微崩溃] 检测到崩溃弹窗，自动恢复已暂停，仅关闭弹窗不再注入')
+    diagnostics.info('L033', '[企微崩溃] 检测到崩溃弹窗，自动恢复已暂停，仅关闭弹窗不再注入')
     return
   }
   const delayMs =
@@ -687,15 +691,15 @@ const scheduleCrashRecovery = () => {
       Math.min(crashRecoveryBackoffLevel, CRASH_RECOVERY_DELAYS_MS.length - 1)
     ]
   timedCheckPausedUntil = Date.now() + delayMs
-  console.log(
+  diagnostics.info('L034',
     `[企微崩溃] 已检测到崩溃，${delayMs / 1000} 秒后尝试注入恢复（退避级别 ${crashRecoveryBackoffLevel}）`
   )
   crashRecoveryTimer = setTimeout(() => {
     crashRecoveryTimer = null
-    console.log('[企微崩溃] 退避结束，开始登录探测与注入恢复')
+    diagnostics.info('L035', '[企微崩溃] 退避结束，开始登录探测与注入恢复')
     timedGetLoginStatus({ fromCrashRecovery: true })
       .catch((e) => {
-        console.error('[企微崩溃] 注入恢复检查失败:', e.message)
+        diagnostics.error('L036', '[企微崩溃] 注入恢复检查失败:', e.message)
       })
       .finally(async () => {
         await recordCrashRecoveryCycleResult()
@@ -722,7 +726,7 @@ const startWecomCrashDialogWatch = () => {
   wecomCrashDialogInterval = setInterval(singleFlight(async () => {
     await pollCrashDialogOnce({
       onCrash: (closed) => {
-        console.log(`[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
+        diagnostics.info('L037', `[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
         scheduleCrashRecovery()
       }
     })
@@ -730,10 +734,10 @@ const startWecomCrashDialogWatch = () => {
         if (closed <= 0) return
       })
       .catch((e) => {
-        console.warn('[企微崩溃] 监视脚本异常:', e.message)
+        diagnostics.warn('L038', '[企微崩溃] 监视脚本异常:', e.message)
       })
   }), intervalMs)
-  console.log(`企微崩溃报告窗口监视已启动，每 ${intervalMs / 1000} 秒检查一次`)
+  diagnostics.info('L039', `企微崩溃报告窗口监视已启动，每 ${intervalMs / 1000} 秒检查一次`)
 }
 
 /** 与应用窗口相同的图标路径，供托盘等复用 */
@@ -755,7 +759,7 @@ function destroyTray() {
     try {
       tray.destroy()
     } catch (e) {
-      console.warn('destroyTray:', e.message)
+      diagnostics.warn('L040', '释放托盘图标失败：', e.message)
     }
     tray = null
   }
@@ -764,12 +768,12 @@ function destroyTray() {
 function createTrayIconImage() {
   const iconPath = resolveAppIconPath()
   if (!fs.existsSync(iconPath)) {
-    console.warn('托盘图标文件不存在:', iconPath)
+    diagnostics.warn('L041', '托盘图标文件不存在:', iconPath)
     return nativeImage.createEmpty()
   }
   let image = nativeImage.createFromPath(iconPath)
   if (image.isEmpty()) {
-    console.warn('托盘图标无法解码:', iconPath)
+    diagnostics.warn('L042', '托盘图标无法解码:', iconPath)
     return nativeImage.createEmpty()
   }
   // Windows 通知区像素小，缩放到 16 避免显示为空白方块
@@ -824,7 +828,7 @@ function ensureTray() {
     })
     return true
   } catch (e) {
-    console.error('创建系统托盘失败:', e)
+    diagnostics.error('L043', '创建系统托盘失败:', e)
     return false
   }
 }
@@ -835,7 +839,7 @@ function ensureTray() {
 function minimizeToTray() {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (!ensureTray()) {
-    console.warn('托盘不可用，退化为普通最小化到任务栏')
+    diagnostics.warn('L044', '托盘不可用，退化为普通最小化到任务栏')
     mainWindow.minimize()
     return
   }
@@ -875,11 +879,11 @@ function createWindow() {
   }
 
   const loadPackagedFrontend = () => {
-    console.log('Loading production build from:', distPath)
+    diagnostics.info('L045', '正在加载应用界面：', distPath)
     if (fs.existsSync(distPath)) {
       mainWindow.loadFile(distPath)
     } else {
-      console.error('dist/index.html 不存在，请先执行 npm run build')
+      diagnostics.error('L046', '应用界面文件缺失，请重新安装；开发环境请先执行 npm run build')
       mainWindow.loadURL('http://localhost:5173')
     }
   }
@@ -891,11 +895,11 @@ function createWindow() {
 
     const checkServer = () => {
       const http = require('http')
-      console.log(`Checking Vite server... (attempt ${retryCount + 1}/${maxRetries})`)
+      diagnostics.info('L047', `正在等待开发服务就绪（第 ${retryCount + 1}/${maxRetries})`)
 
       const req = http.get('http://localhost:5173', (res) => {
         if (res.statusCode === 200) {
-          console.log('Loading http://localhost:5173')
+          diagnostics.info('L048', '正在连接本地开发界面 http://localhost:5173')
           mainWindow.loadURL('http://localhost:5173')
         } else {
           retryCount++
@@ -934,18 +938,18 @@ function createWindow() {
 
   // 监听页面加载错误
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    console.error('Failed to load:', validatedURL, 'Error:', errorCode, errorDescription)
+    diagnostics.error('L049', '界面加载失败，请重启应用；地址：', validatedURL, 'Error:', errorCode, errorDescription)
   })
 
   mainWindow.webContents.on('did-finish-load', () => {
-    console.log('Page loaded successfully')
+    diagnostics.info('L050', '应用界面加载完成')
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) {
       shell.openExternal(url)
     } else {
-      console.warn('[security] 阻止打开外部窗口:', url)
+      diagnostics.warn('L051', '[security] 阻止打开外部窗口:', url)
     }
     return { action: 'deny' }
   })
@@ -1020,7 +1024,7 @@ function createWindow() {
     mainWindow = null
     if (expressServers.length > 0) {
       closeAllExpressServers().catch((e) => {
-        console.error('关闭Express失败:', e)
+        diagnostics.error('L052', '关闭Express失败:', e)
       })
     }
     if (messageServer) {
@@ -1098,8 +1102,46 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  const { setDiagnosticSink } = require('./commons/diagnostics.cjs')
+  const { loadReportPublicKey, sealReport } = require('./commons/reportEncryption.cjs')
+  const reportKey = loadReportPublicKey()
+  const writer = require('./services/diagnosticFile').createDiagnosticWriter(path.join(app.getPath('userData'), 'diagnostics'), { publicKey: reportKey })
+  setDiagnosticSink(writer.write)
+  try {
+    await require('./services/legacyDiagnostics').migrateLegacyDiagnostics(app.getPath('userData'), reportKey)
+  } catch (error) {
+    diagnostics.error('D003', '旧版诊断日志迁移未完成，需开发人员检查旧文件', error)
+  }
+  let exportingReport = false
+  ipcMain.handle('export-diagnostic-report', async (event) => {
+    assertMainWindow(event, mainWindow)
+    if (exportingReport) return { success: false, message: '正在导出，请稍候' }
+    exportingReport = true
+    try {
+      const choice = await dialog.showSaveDialog(mainWindow, {
+        title: '导出故障报告', defaultPath: `故障报告-${new Date().toISOString().replace(/[:.]/g, '-')}.vdiag`,
+        filters: [{ name: '加密故障报告', extensions: ['vdiag'] }]
+      })
+      if (choice.canceled || !choice.filePath) return { canceled: true }
+      const payload = { kind: 'report', version: 1, createdAt: new Date().toISOString(), appVersion: app.getVersion(), platform: process.platform, arch: process.arch, logs: await writer.snapshot() }
+      const encrypted = sealReport(payload, reportKey)
+      // 临时文件中也只有密文；成功后原子替换用户选择的导出文件。
+      require('./commons/atomicFile').writeTextAtomic(choice.filePath, JSON.stringify(encrypted))
+      return { success: true }
+    } catch (error) {
+      diagnostics.error('D002', '故障报告导出失败', error)
+      return { success: false, message: '导出失败，请选择可写入的文件夹后重试' }
+    } finally { exportingReport = false }
+  })
+  ipcMain.on('write-diagnostic', (event, record) => {
+    try {
+      assertMainWindow(event, mainWindow)
+      if (record && ['warn', 'error'].includes(record.level)) writer.write(record)
+    } catch { /* 非主窗口的诊断消息不接收 */ }
+  })
+  if (!gotSingleInstanceLock) return
 
-  initCrashDiagnostics({ getMainWindow: () => mainWindow })
+  initCrashDiagnostics({ getMainWindow: () => mainWindow, writer })
   initDesktopNotifications({
     icon: resolveAppIconPath(),
     focusMainWindow
@@ -1117,7 +1159,7 @@ app.whenReady().then(async () => {
   const frameworkPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
   const expressResult = await startExpressServer(frameworkPort)
   if (!expressResult.success) {
-    console.error('启动Express失败:', expressResult.message)
+    diagnostics.error('L053', '启动Express失败:', expressResult.message)
     if (!/EADDRINUSE|已被占用|address already in use/i.test(expressResult.message || '')) {
       notifyPortError({
         port: frameworkPort,
@@ -1142,7 +1184,7 @@ app.whenReady().then(async () => {
       // 延迟3秒后检查更新，避免影响应用启动速度
       setTimeout(() => {
         checkForUpdatesWithFallback().catch((err) => {
-          console.error('自动检查更新失败:', err)
+          diagnostics.error('L054', '自动检查更新失败:', err)
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-status', {
               status: 'error',
@@ -1519,7 +1561,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
             const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
             await axios.post(MESSAGE_SERVER_URL, displayLogData, messageServerAxiosConfig({ timeout: 1000 }))
           } catch (error) {
-            console.error(`推送API调用日志到Electron失败: ${error.message}`)
+            diagnostics.error('L055', `推送API调用日志到Electron失败: ${error.message}`)
           }
           
           // 如果开启了保存日志功能，保存日志到文件
@@ -1533,7 +1575,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
               nick_name: target_item ? target_item.nick_name : ''
             }
             saveLogToFile(fileLogData).catch(err => {
-              console.error(`保存API调用日志到文件失败: ${err.message}`)
+              diagnostics.error('L056', `保存API调用日志到文件失败: ${err.message}`)
             })
           }
         }
@@ -1560,13 +1602,13 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
                 const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
                 await axios.post(MESSAGE_SERVER_URL, callbackErrorLogData, messageServerAxiosConfig({ timeout: 1000 }))
               } catch (error) {
-                console.error(`推送回调日志到Electron失败: ${error.message}`)
+                diagnostics.error('L057', `推送回调日志到Electron失败: ${error.message}`)
               }
               
               // 如果开启了保存日志功能，保存回调日志到文件
               if (ini_config.save_log) {
                 saveLogToFile(callbackErrorLogData).catch(err => {
-                  console.error(`保存回调日志到文件失败: ${err.message}`)
+                  diagnostics.error('L058', `保存回调日志到文件失败: ${err.message}`)
                 })
               }
             }
@@ -1574,7 +1616,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
         }
       } catch (logError) {
         // 日志记录失败不影响API调用结果
-        console.error(`记录API调用日志失败: ${logError.message}`)
+        diagnostics.error('L059', `记录API调用日志失败: ${logError.message}`)
       }
     }
     
@@ -1653,7 +1695,7 @@ ipcMain.handle('get-auth-info', async (event, wxid, port) => {
       
       // 异步写入日志，不阻塞返回值
       saveLogToFile(logData).catch(err => {
-        console.error(`保存授权刷新日志失败: ${err.message}`)
+        diagnostics.error('L060', `保存授权刷新日志失败: ${err.message}`)
       })
       
       // 同时推送到前端显示（如果开启了日志推送）
@@ -1687,7 +1729,7 @@ ipcMain.handle('get-auth-info', async (event, wxid, port) => {
       
       // 异步写入日志，不阻塞返回值
       saveLogToFile(logData).catch(err => {
-        console.error(`保存授权刷新错误日志失败: ${err.message}`)
+        diagnostics.error('L061', `保存授权刷新错误日志失败: ${err.message}`)
       })
       
       // 同时推送到前端显示（如果开启了日志推送）
@@ -1842,7 +1884,7 @@ ipcMain.handle('save-log-to-file', async (event, data) => {
     const result = await saveLogToFile(data)
     return { success: result }
   } catch (error) {
-    console.error('保存日志失败:', error)
+    diagnostics.error('L062', '保存日志失败:', error)
     return { success: false, message: error.message }
   }
 })
@@ -1853,7 +1895,7 @@ ipcMain.handle('send-callback', async (event, { url, data }) => {
     const result = await sendCallback(getBusinessCallbackUrl(url), data)
     return result
   } catch (error) {
-    console.error('发送回调失败:', error)
+    diagnostics.error('L063', '发送回调失败:', error)
     return { success: false, message: error.message }
   }
 })

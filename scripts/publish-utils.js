@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('publish-utils.js')
 /**
  * 发布脚本共用工具
  */
@@ -26,7 +28,7 @@ function normalizeVersion(version) {
 function getChangelogForVersion(version = pkg.version) {
   const ver = normalizeVersion(version)
   if (!fs.existsSync(CHANGELOG_PATH)) {
-    console.warn(`[publish] 未找到 ${CHANGELOG_PATH}，Release 将使用默认说明`)
+    diagnostics.warn('L001', `[publish] 未找到 ${CHANGELOG_PATH}，Release 将使用默认说明`)
     return ''
   }
 
@@ -34,7 +36,7 @@ function getChangelogForVersion(version = pkg.version) {
   const headerRe = new RegExp(`^##\\s+v?${ver.replace(/\./g, '\\.')}\\s*$`, 'm')
   const match = content.match(headerRe)
   if (!match || match.index == null) {
-    console.warn(`[publish] CHANGELOG.md 中未找到版本 ${ver} 章节，Release 将使用默认说明`)
+    diagnostics.warn('L002', `[publish] CHANGELOG.md 中未找到版本 ${ver} 章节，Release 将使用默认说明`)
     return ''
   }
 
@@ -139,7 +141,7 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   const normalizedExePath = path.join(tempDir, installerName)
   fs.writeFileSync(normalizedYmlPath, fixedYml, 'utf-8')
   fs.copyFileSync(exePath, normalizedExePath)
-  console.log(`[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
+  diagnostics.info('L003', `[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
 
   const uploadPlan = [
     { localPath: normalizedYmlPath, uploadName: 'latest.yml' },
@@ -155,7 +157,7 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   }
 
   if (parsed.url !== installerName || parsed.path !== installerName) {
-    console.log(
+    diagnostics.info('L004',
       `[publish] 已规范化更新文件名: ${parsed.path || parsed.url} -> ${installerName}`
     )
   }

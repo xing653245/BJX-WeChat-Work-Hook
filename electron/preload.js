@@ -15,13 +15,15 @@ function ensureFastapiMessageIpcWired() {
       try {
         cb(data)
       } catch (e) {
-        console.error('[fastapi-message] subscriber error:', e)
+        ipcRenderer.send('write-diagnostic', { source: 'preload', code: 'L001', level: 'error', message: '消息处理失败', details: String(e?.stack || e?.message || '').slice(0, 6000) })
       }
     })
   })
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  writeDiagnostic: (record) => ipcRenderer.send('write-diagnostic', record),
+  exportDiagnosticReport: () => ipcRenderer.invoke('export-diagnostic-report'),
   // 配置相关
   readConfig: () => ipcRenderer.invoke('read-config'),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),

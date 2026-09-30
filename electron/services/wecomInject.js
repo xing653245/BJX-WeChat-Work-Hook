@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('services/wecomInject.js')
 /**
  * 企微注入工具：查找可用端口、执行 it.exe --port <端口>（供主进程 IPC 与 Express API 共用）
  */
@@ -129,7 +131,7 @@ function runInjectTool({ port }) {
       resolve({ ...payload, injectToolPath })
     }
 
-    console.log(`[注入工具] exe=${injectToolPath} cwd=${injectBinDir} port=${port}`)
+    diagnostics.info('L001', `[注入工具] exe=${injectToolPath} cwd=${injectBinDir} port=${port}`)
 
     const child = spawn(injectToolPath, spawnArgs, {
       cwd: injectBinDir,

@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('services/desktopNotifications.js')
 const { Notification } = require('electron')
 
 let iconPath = null
@@ -24,7 +26,7 @@ function showDesktopNotification({ title, body, onClick }) {
     n.show()
     return true
   } catch (e) {
-    console.warn('[notification] 显示失败:', e.message)
+    diagnostics.warn('L001', '[notification] 显示失败:', e.message)
     return false
   }
 }

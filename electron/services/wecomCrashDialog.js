@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('services/wecomCrashDialog.js')
 /**
  * Windows：检测并关闭企业微信崩溃后的「错误报告」窗口，便于后续由注入工具重启实例。
  */
@@ -21,7 +23,7 @@ function tryCloseWecomCrashDialogs() {
       const script = fs.readFileSync(ps1, 'utf8')
       encoded = Buffer.from(script, 'utf16le').toString('base64')
     } catch (e) {
-      console.warn('[wecom-crash-dialog] 读取脚本失败:', e.message)
+      diagnostics.warn('L001', '[wecom-crash-dialog] 读取脚本失败:', e.message)
       return resolve(0)
     }
     execFile(
@@ -30,7 +32,7 @@ function tryCloseWecomCrashDialogs() {
       { timeout: 20000, windowsHide: true },
       (err, stdout) => {
         if (err) {
-          console.warn('[wecom-crash-dialog]', err.message)
+          diagnostics.warn('L002', '[wecom-crash-dialog]', err.message)
           return resolve(0)
         }
         const m = String(stdout || '').match(/CLOSED:(\d+)/)

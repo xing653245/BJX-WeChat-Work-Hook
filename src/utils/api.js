@@ -1,3 +1,5 @@
+import { createFeedback } from './feedback.mjs'
+const feedback = createFeedback('utils/api.js')
 /**
  * API 接口封装
  * 保留原项目的接口定义，为后续修改做预留
@@ -50,9 +52,9 @@ export const callAPI = async (port, jsonData) => {
     // 授权失败统一提示
     if (error && error.code === 'NO_AUTH') {
       if (error.reason === AUTH_REASON.AUTH_FETCH_FAILED) {
-        ElMessage.warning(error.message || '授权状态未能确认，请关闭 VPN/代理 后右键「刷新授权」')
+        feedback.warning('U001', error.message || '授权状态未能确认，请关闭 VPN/代理 后右键「刷新授权」')
       } else {
-        ElMessage.error(error.message || '当前账号未授权或授权已到期，请重新购买授权')
+        feedback.error('U002', error.message || '当前账号未授权或授权已到期，请重新购买授权')
       }
     }
     throw error

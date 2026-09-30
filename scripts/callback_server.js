@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('callback_server.js')
 /**
  * 回调服务器示例
  * 监听地址和路径从 bin/settings.json 的 url 读取
@@ -173,23 +175,23 @@ function startServer() {
   const privateKey = loadPrivateKey(process.env.CALLBACK_PRIVATE_KEY_FILE)
   const app = createCallbackApp(target, { privateKey })
   const server = app.listen(target.port, target.host, () => {
-    console.log(`📄 配置文件: ${SETTINGS_PATH}`)
-    console.log(`📡 监听地址: http://${target.host}:${target.port}`)
-    console.log(`📥 回调接口: ${target.url}`)
-    console.log(`🔑 RSA 解密: ${privateKey ? '已配置（1024 bits / PKCS#1 v1.5）' : '未配置私钥，仍可接收明文'}`)
+    diagnostics.info('L001', `📄 配置文件: ${SETTINGS_PATH}`)
+    diagnostics.info('L002', `📡 监听地址: http://${target.host}:${target.port}`)
+    diagnostics.info('L003', `📥 回调接口: ${target.url}`)
+    diagnostics.info('L004', `🔑 RSA 解密: ${privateKey ? '已配置（1024 bits / PKCS#1 v1.5）' : '未配置私钥，仍可接收明文'}`)
   })
   server.on('error', error => {
-    console.error('回调服务器启动失败:', error.message)
+    diagnostics.error('L005', '回调服务器启动失败:', error.message)
     process.exitCode = 1
   })
 
   process.on('SIGINT', () => {
-    console.log('\n正在关闭服务器...')
+    diagnostics.info('L006', '\n正在关闭服务器...')
     process.exit(0)
   })
 
   process.on('SIGTERM', () => {
-    console.log('\n正在关闭服务器...')
+    diagnostics.info('L007', '\n正在关闭服务器...')
     process.exit(0)
   })
   return server
@@ -197,7 +199,7 @@ function startServer() {
 
 if (require.main === module) {
   try { startServer() } catch (error) {
-    console.error('回调服务器启动失败:', error.message)
+    diagnostics.error('L008', '回调服务器启动失败:', error.message)
     process.exitCode = 1
   }
 }

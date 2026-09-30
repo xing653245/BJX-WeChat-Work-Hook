@@ -43,7 +43,7 @@ test('自动移除不杀进程，手动退出才允许结束进程', async () =>
     findRowIndexByPort: () => 0, deleteTableRowByPort() {},
     configStore: { getLoginInfo: () => [], updateLoginInfo: async () => {} },
     window: { electronAPI: { killProcessByPort: async () => { kills++ } } },
-    ElMessage: { warning() {} }, console
+    ElMessage: { warning() {} }, feedback: { warning() {} }, console
   }
   vm.createContext(context)
   vm.runInContext(page.slice(start, end) + '\nthis.remove = removeWecomFromManager', context)

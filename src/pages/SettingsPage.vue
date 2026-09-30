@@ -510,6 +510,11 @@
 
 
 <script setup>
+import { createDiagnostics } from '../utils/diagnostics.mjs'
+const diagnostics = createDiagnostics('pages/SettingsPage.vue')
+import { createFeedback } from '../utils/feedback.mjs'
+const feedback = createFeedback('pages/SettingsPage.vue')
+
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -734,7 +739,7 @@ const applyInjectSettings = (data) => {
 const loadInjectSettings = async () => {
   const result = await window.electronAPI?.readInjectSettings()
   if (!result?.success) {
-    ElMessage.error(result?.msg || '读取注入配置失败，请重启框架后重试')
+    feedback.error('U001', result?.msg || '读取注入配置失败，请重启框架后重试')
     return
   }
   savedInjectSettings.value = result.data
@@ -830,7 +835,7 @@ async function copyText(text, okMsg) {
     await navigator.clipboard.writeText(text)
     ElMessage.success(okMsg)
   } catch {
-    ElMessage.warning('复制失败，请手动复制')
+    feedback.warning('U002', '复制失败，请手动复制')
   }
 }
 
@@ -867,22 +872,22 @@ function isWecomHookBodyOk(body) {
 
 async function handleTestMessageText() {
   if (!window.electronAPI?.callAPI) {
-    ElMessage.warning('当前环境无法调用 Electron 接口')
+    feedback.warning('U003', '当前环境无法调用 Electron 接口')
     return
   }
   const uid = String(textTestUserId.value || '').trim()
   if (!uid) {
-    ElMessage.warning('请填写接收方 user_id')
+    feedback.warning('U004', '请填写接收方 user_id')
     return
   }
   const wPort = parseInt(String(textTestWecomPort.value || '').trim(), 10)
   if (Number.isNaN(wPort) || wPort < 1 || wPort > 65535) {
-    ElMessage.warning('请填写有效的企微 HTTP 端口（请求体里的 port，1～65535）')
+    feedback.warning('U005', '请填写有效的企微 HTTP 端口（请求体里的 port，1～65535）')
     return
   }
   const listenPort = parseInt(String(formData.server_port || '').trim(), 10)
   if (Number.isNaN(listenPort) || listenPort <= 1024 || listenPort > 10000) {
-    ElMessage.warning('框架监听端口配置无效，请检查配置文件')
+    feedback.warning('U006', '框架监听端口配置无效，请检查配置文件')
     return
   }
 
@@ -907,7 +912,7 @@ async function handleTestMessageText() {
         null,
         2
       )
-      ElMessage.error(result?.msg || '请求失败')
+      feedback.error('U007', result?.msg || '请求失败')
       return
     }
 
@@ -922,7 +927,7 @@ async function handleTestMessageText() {
       ElMessage.success('调用成功')
     } else {
       const m = body?.errmsg || body?.error || body?.message || '接口返回 failure'
-      ElMessage.warning(typeof m === 'string' ? m : '接口返回异常，请看下方正文')
+      feedback.warning('U008', typeof m === 'string' ? m : '接口返回异常，请看下方正文')
     }
   } catch (e) {
     const wrap = {
@@ -930,7 +935,7 @@ async function handleTestMessageText() {
       message: e?.message || String(e)
     }
     textTestResponseRaw.value = JSON.stringify(wrap, null, 2)
-    ElMessage.error(e?.message || String(e))
+    feedback.error('U009', e?.message || String(e))
   } finally {
     testingTextMsg.value = false
   }
@@ -942,7 +947,7 @@ const loadAppVersion = async () => {
     try {
       appVersion.value = await window.electronAPI.getAppVersion()
     } catch (error) {
-      console.error('获取版本失败:', error)
+      diagnostics.error('L001', '获取版本失败:', error)
       appVersion.value = '未知'
     }
   }
@@ -951,7 +956,7 @@ const loadAppVersion = async () => {
 // 工具函数：检查 Electron API 是否可用
 const checkElectronAPI = () => {
   if (!window.electronAPI) {
-    ElMessage.warning('当前环境不支持更新功能')
+    feedback.warning('U010', '当前环境不支持更新功能')
     return false
   }
   return true
@@ -986,7 +991,7 @@ const handleCheckUpdate = async () => {
         '检查更新失败',
         result.message || '检查更新失败'
       )
-      ElMessage.warning(result.message || '检查更新失败')
+      feedback.warning('U011', result.message || '检查更新失败')
     } else if (result.usedFallback) {
       ElMessage.info(result.message || '已改用备用更新源检查更新')
     }
@@ -997,7 +1002,7 @@ const handleCheckUpdate = async () => {
       '检查更新失败',
       error.message
     )
-    ElMessage.error('检查更新失败: ' + error.message)
+    feedback.error('U012', '检查更新失败: ' + error.message)
   } finally {
     checkingUpdate.value = false
   }
@@ -1013,11 +1018,11 @@ const handleDownloadUpdate = async () => {
   try {
     const result = await window.electronAPI.downloadUpdate()
     if (!result.success) {
-      ElMessage.warning(result.message || '下载更新失败')
+      feedback.warning('U013', result.message || '下载更新失败')
       resetUpdateState()
     }
   } catch (error) {
-    ElMessage.error('下载更新失败: ' + error.message)
+    feedback.error('U014', '下载更新失败: ' + error.message)
     resetUpdateState()
   }
 }
@@ -1031,11 +1036,11 @@ const handleInstallUpdate = async () => {
   try {
     const result = await window.electronAPI.quitAndInstall()
     if (!result.success) {
-      ElMessage.warning(result.message || '安装更新失败')
+      feedback.warning('U015', result.message || '安装更新失败')
       installingUpdate.value = false
     }
   } catch (error) {
-    ElMessage.error('安装更新失败: ' + error.message)
+    feedback.error('U016', '安装更新失败: ' + error.message)
     installingUpdate.value = false
   }
 }
@@ -1104,7 +1109,7 @@ const handleUpdateStatusChange = (data) => {
         data.message
       )
       resetUpdateState()
-      ElMessage.error(data.message)
+      feedback.error('U017', data.message)
     }
   }
 
@@ -1112,7 +1117,7 @@ const handleUpdateStatusChange = (data) => {
   if (handler) {
     handler()
   } else {
-    console.warn('未知的更新状态:', data.status)
+    diagnostics.warn('L002', '未知的更新状态:', data.status)
   }
 }
 
@@ -1134,13 +1139,13 @@ const setupUpdateListeners = () => {
 // 保存配置
 const handleSave = async () => {
   if (!injectSettingsLoaded.value) {
-    ElMessage.error('注入配置尚未读取成功，请重新打开设置页')
+    feedback.error('U018', '注入配置尚未读取成功，请重新打开设置页')
     return
   }
   // 验证端口
   const port = Number(formData.wecom_port)
   if (!Number.isInteger(port) || port <= 1024 || port > 10000) {
-    ElMessage.warning('企微监听端口必须为 1025–10000 的整数')
+    feedback.warning('U019', '企微监听端口必须为 1025–10000 的整数')
     loadConfig() // 恢复原值
     return
   }
@@ -1150,7 +1155,7 @@ const handleSave = async () => {
   if (formData.encrypt || publicKey) {
     const keyCheck = validatePkcs1Rsa1024PublicKey(publicKey)
     if (!keyCheck.ok) {
-      ElMessage.warning(keyCheck.message)
+      feedback.warning('U020', keyCheck.message)
       return
     }
     normalizedPublicKey = keyCheck.body
@@ -1202,14 +1207,14 @@ const handleSave = async () => {
       if (result.notify?.ok !== false) {
         ElMessage.success('保存成功')
       } else {
-        ElMessage.warning(`保存成功，但未能通知企微刷新设置：${result.notify?.msg || '未知错误'}`)
+        feedback.warning('U021', `保存成功，但未能通知企微刷新设置：${result.notify?.msg || '未知错误'}`)
       }
     } else {
-      ElMessage.error(result.msg || '保存失败')
+      feedback.error('U022', result.msg || '保存失败')
       loadConfig() // 恢复原值
     }
   } catch (error) {
-    ElMessage.error('保存失败: ' + error.message)
+    feedback.error('U023', '保存失败: ' + error.message)
     loadConfig() // 恢复原值
   } finally {
     saving.value = false
