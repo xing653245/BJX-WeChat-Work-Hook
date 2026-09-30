@@ -102,6 +102,7 @@ const formatTime = (timestamp) => {
 const addLog = (data) => {
   if (logs.value.length >= maxRows) {
     logs.value = logs.value.slice(maxRows / 2)
+    logs.value.forEach((log, index) => { log.index = index + 1 })
   }
 
   const timestamp = data.time_stamp || Math.floor(Date.now() / 1000)
@@ -118,9 +119,6 @@ const addLog = (data) => {
 
   logs.value.push(logEntry)
 
-  logs.value.forEach((log, index) => {
-    log.index = index + 1
-  })
 }
 
 onMounted(() => {
@@ -238,6 +236,7 @@ function parseFileLogLine(line) {
 }
 
 async function mergeTodayFileLogs() {
+  if (loadingFileLogs.value) return
   if (!window.electronAPI?.readTodayLogFile) {
     ElMessage.warning('当前环境无法读取文件日志')
     return
@@ -263,6 +262,7 @@ async function mergeTodayFileLogs() {
       logs.value.push(entry)
       added++
     }
+    if (logs.value.length > maxRows) logs.value = logs.value.slice(-maxRows)
     logs.value.forEach((log, index) => {
       log.index = index + 1
     })

@@ -623,6 +623,7 @@ const runInjectForPort = async (robotPort, reason) => {
  * 单次执行：对配置中的每个企微端口检查登录状态；
  * 仅在「未登录且进程/Hook 均已不可用」时才注入，避免误判重复启动。
  */
+const { singleFlight } = require('./commons/singleFlight.cjs')
 const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
   const ports = getTimedCheckPorts()
   if (ports.length === 0) return
@@ -661,14 +662,14 @@ const startTimedLoginStatusCheck = () => {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
   }
-  loginStatusCheckInterval = setInterval(() => {
+  loginStatusCheckInterval = setInterval(singleFlight(async () => {
     if (Date.now() < timedCheckPausedUntil) {
       return
     }
-    timedGetLoginStatus().catch((e) => {
+    await timedGetLoginStatus().catch((e) => {
       console.error('定时检查登录状态异常:', e.message)
     })
-  }, TIMED_CHECK_INTERVAL_MS)
+  }), TIMED_CHECK_INTERVAL_MS)
   console.log(`定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
 }
 
@@ -718,8 +719,8 @@ const startWecomCrashDialogWatch = () => {
     wecomCrashDialogInterval = null
   }
   const intervalMs = 8000
-  wecomCrashDialogInterval = setInterval(() => {
-    pollCrashDialogOnce({
+  wecomCrashDialogInterval = setInterval(singleFlight(async () => {
+    await pollCrashDialogOnce({
       onCrash: (closed) => {
         console.log(`[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
         scheduleCrashRecovery()
@@ -731,7 +732,7 @@ const startWecomCrashDialogWatch = () => {
       .catch((e) => {
         console.warn('[企微崩溃] 监视脚本异常:', e.message)
       })
-  }, intervalMs)
+  }), intervalMs)
   console.log(`企微崩溃报告窗口监视已启动，每 ${intervalMs / 1000} 秒检查一次`)
 }
 
@@ -1718,6 +1719,11 @@ ipcMain.handle('open-external', async (event, url) => {
 // 根据端口查找PID
 ipcMain.handle('find-pid-by-port', async (event, port) => {
   return await findPidByPort(port)
+})
+
+ipcMain.handle('get-process-state', (event, pid) => {
+  assertMainWindow(event, mainWindow)
+  return require('./commons/processLiveness.cjs').getProcessState(pid)
 })
 
 // 根据端口杀死进程

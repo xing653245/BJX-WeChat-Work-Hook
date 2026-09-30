@@ -288,7 +288,6 @@ async function sendCallback(url, data) {
       timeout: 10000
     })
     const duration = Date.now() - startTime
-    console.log(`✅ 回调发送成功: ${url} (耗时: ${duration}ms)`)
     return {
       success: true,
       message: '回调发送成功',

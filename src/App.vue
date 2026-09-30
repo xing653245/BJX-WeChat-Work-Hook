@@ -119,40 +119,15 @@ const handleLogoutMessage = async (data) => {
     return
   }
 
-  const isLogout =
-    data.type === 1003 ||
-    (data.msg && ['退出登录', 'logout', '已退出'].some((k) => String(data.msg).includes(k)))
+  const isLogout = data.type === 1003
 
   if (!isLogout) return
 
-  const userInfo = data.user_id || data.self_user_id || '未知用户'
   const portNum = resolveWecomPortFromMessage(data)
-
   if (!Number.isNaN(portNum) && portNum > 0) {
-    await vworkManagerRef.value?.removeWecomFromManager?.(portNum)
-    return
+    await vworkManagerRef.value?.handleWecomOfflineSignal?.(portNum)
   }
-
-  if (userInfo === '未知用户') return
-
-  try {
-    const loginInfoList = configStore.getLoginInfo()
-    const filtered = loginInfoList.filter((item) => item.user_id !== userInfo)
-
-    if (filtered.length !== loginInfoList.length) {
-      await configStore.updateLoginInfo(filtered)
-      await refreshManagerList()
-    }
-
-    ElMessage.warning({
-      message: `用户 ${userInfo} 已退出登录`,
-      duration: 3000,
-      showClose: true
-    })
-  } catch (error) {
-    console.error('处理退出登录消息时出错:', error)
-    ElMessage.error(`处理退出登录失败: ${error.message}`)
-  }
+  // 无法定位实例的通知不能据此删除账号配置。
 }
 
 // 监听消息推送

@@ -207,7 +207,8 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted, onUnmounted, nextTick, defineExpose, inject, watch } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, nextTick, inject, watch } from 'vue'
+import { singleFlight } from '../utils/singleFlight.mjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   isAuthorizedAuthState,
@@ -261,6 +262,8 @@ const selectedRowAuthorized = computed(() =>
 /** 避免同一端口重复启动登录轮询 */
 const loginPollingPorts = new Set()
 const loginPollTimers = new Map()
+const autoUpdateTimers = new Map()
+let disposed = false
 /** 已退出的端口：阻止进行中的登录轮询把行加回来 */
 const stoppedPorts = new Set()
 /** 自动接入后尚未写入配置的端口（用于恢复表格） */
@@ -455,7 +458,16 @@ const isWecomProcessAlive = async (port) => {
       /* ignore */
     }
   }
-  return false
+  // 端口消失不能证明企微已退出；必须核对记录的 PID。
+  const row = tableData.value.find(item => Number(item.port) === Number(port))
+  const saved = configStore.getLoginInfo().find(item => Number(item.port) === Number(port))
+  const pid = Number(row?.pid) > 0 ? row.pid : saved?.pid
+  try {
+    const state = await window.electronAPI?.getProcessState?.(pid)
+    return state !== 'exited'
+  } catch {
+    return true // 检测失败保留条目，不能当成进程退出。
+  }
 }
 
 // 启动时检查登录状态：未登录且进程已退出时才从配置移除（不主动杀仍在运行的进程）
@@ -719,7 +731,7 @@ const removeWecomFromManager = async (port, options = {}) => {
   untrackPendingPort(p)
 
   const hadRow = findRowIndexByPort(p) >= 0
-  if (window.electronAPI?.killProcessByPort) {
+  if (options.terminate === true && window.electronAPI?.killProcessByPort) {
     try {
       await window.electronAPI.killProcessByPort(p)
     } catch (error) {
@@ -735,7 +747,7 @@ const removeWecomFromManager = async (port, options = {}) => {
   }
 
   if (!options.quiet && hadRow) {
-    ElMessage.warning(`企微已退出，已结束端口 ${p} 的进程并从列表移除`)
+    ElMessage.warning(`企微已退出，已从列表移除端口 ${p}`)
   }
   return true
 }
@@ -797,7 +809,7 @@ const handleAddWechat = async () => {
 // 登录完成后写入表格与配置（按端口定位行，避免 reload 后 rowIndex 失效）
 const completePortLogin = async (port, options = {}) => {
   const p = Number(port)
-  if (Number.isNaN(p) || p <= 0 || stoppedPorts.has(p)) return false
+  if (Number.isNaN(p) || p <= 0 || stoppedPorts.has(p) || disposed) return false
 
   let rowIndex = options.rowIndex
   if (
@@ -810,6 +822,7 @@ const completePortLogin = async (port, options = {}) => {
   }
 
   const personalInfo = await VWorkApi.getPersonalInfo(p)
+  if (stoppedPorts.has(p) || disposed) return false
   const data = pickPersonalRecord(personalInfo)
   if (!data?.user_id) {
     console.warn('[企微管理] 已登录但 1002 返回结构异常，无法写配置', personalInfo)
@@ -817,6 +830,9 @@ const completePortLogin = async (port, options = {}) => {
   }
 
   const pid = await getPidByPort(p)
+  if (stoppedPorts.has(p) || disposed) return false
+  // 异步请求期间其它行可能已被移除，重新按端口定位。
+  rowIndex = ensureTableRowForPort(p)
   updateTableItem(rowIndex, {
     nick_name: data.nick_name || '-',
     user_id: data.user_id || '-',
@@ -832,7 +848,12 @@ const completePortLogin = async (port, options = {}) => {
 
   untrackPendingPort(p)
   window.electronAPI?.markWecomPortLoggedIn?.(p)
-  setTimeout(() => invokeDefaultAutoUpdateOff(p), 20000)
+  if (stoppedPorts.has(p) || disposed) return false
+  clearTimeout(autoUpdateTimers.get(p))
+  autoUpdateTimers.set(p, setTimeout(() => {
+    autoUpdateTimers.delete(p)
+    if (!disposed && !stoppedPorts.has(p)) invokeDefaultAutoUpdateOff(p)
+  }, 20000))
   return true
 }
 
@@ -854,6 +875,8 @@ const syncPortLogin = async (port) => {
 // 检查登录状态
 const stopLoginPolling = (port) => {
   const p = Number(port)
+  clearTimeout(autoUpdateTimers.get(p))
+  autoUpdateTimers.delete(p)
   const timer = loginPollTimers.get(p)
   if (timer) {
     clearInterval(timer)
@@ -865,11 +888,13 @@ const stopLoginPolling = (port) => {
 const checkLoginStatus = async (port, rowIndex) => {
   const p = Number(port)
   if (Number.isNaN(p) || p <= 0) return
+  if (disposed) return
   if (stoppedPorts.has(p)) return
   if (loginPollingPorts.has(p)) return
   loginPollingPorts.add(p)
 
   const finishPolling = () => {
+    if (loginPollTimers.get(p) !== checkInterval) return
     loginPollingPorts.delete(p)
     loginPollTimers.delete(p)
   }
@@ -882,8 +907,8 @@ const checkLoginStatus = async (port, rowIndex) => {
   let aliveExtendCount = 0
   const maxAliveExtend = 3 // 进程仍在时最多延长 3 次（共约 6 分钟）
 
-  const checkInterval = setInterval(async () => {
-    if (stoppedPorts.has(p)) {
+  const checkInterval = setInterval(singleFlight(async () => {
+    if (disposed || loginPollTimers.get(p) !== checkInterval || stoppedPorts.has(p)) {
       clearInterval(checkInterval)
       finishPolling()
       return
@@ -891,27 +916,31 @@ const checkLoginStatus = async (port, rowIndex) => {
     attempts++
 
     if (Date.now() > loginCacheExpire) {
-      if (await isWecomProcessAlive(port)) {
+      const alive = await isWecomProcessAlive(port)
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+      if (alive) {
         if (aliveExtendCount < maxAliveExtend) {
           aliveExtendCount++
           loginCacheExpire = Date.now() + 60000
           console.warn(`[登录轮询] 端口 ${port} 超时但进程仍在，延长等待 (${aliveExtendCount}/${maxAliveExtend})`)
           return
         }
+        clearInterval(checkInterval)
+        finishPolling()
+        ElMessage.warning('暂未确认登录，已暂停检测并保留企微，请登录后刷新列表')
+        return
       }
       clearInterval(checkInterval)
       finishPolling()
-      ElMessage.warning('登录超时，已关闭')
+      ElMessage.warning('进程已退出，已移除登录条目')
       deleteTableRowByPort(port)
       untrackPendingPort(port)
-      if (window.electronAPI) {
-        await window.electronAPI.killProcessByPort(port)
-      }
       return
     }
 
     try {
       const result = await VWorkApi.getLoginStatus(port)
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
       consecutiveErrors = 0
       if (result?.data) {
         const status = result.data.status
@@ -928,7 +957,9 @@ const checkLoginStatus = async (port, rowIndex) => {
       }
 
       if (attempts >= maxAttempts) {
-        if (await isWecomProcessAlive(port)) {
+        const alive = await isWecomProcessAlive(port)
+        if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+        if (alive) {
           if (aliveExtendCount < maxAliveExtend) {
             aliveExtendCount++
             attempts = 0
@@ -936,15 +967,16 @@ const checkLoginStatus = async (port, rowIndex) => {
             console.warn(`[登录轮询] 端口 ${port} 多次未登录但进程仍在，延长等待`)
             return
           }
+          clearInterval(checkInterval)
+          finishPolling()
+          ElMessage.warning('暂未确认登录，已暂停检测并保留企微，请登录后刷新列表')
+          return
         }
         clearInterval(checkInterval)
         finishPolling()
         ElMessage.warning('登录超时')
         deleteTableRowByPort(port)
         untrackPendingPort(port)
-        if (window.electronAPI) {
-          await window.electronAPI.killProcessByPort(port)
-        }
       }
     } catch (error) {
       consecutiveErrors++
@@ -955,21 +987,20 @@ const checkLoginStatus = async (port, rowIndex) => {
       if (consecutiveErrors < maxConsecutiveErrors) {
         return
       }
-      if (await isWecomProcessAlive(port)) {
+      const alive = await isWecomProcessAlive(port)
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+      if (alive) {
         consecutiveErrors = 0
         console.warn(`[登录轮询] 端口 ${port} 探测失败但进程仍在，继续等待登录`)
         return
       }
       clearInterval(checkInterval)
       finishPolling()
-      if (window.electronAPI) {
-        await window.electronAPI.killProcessByPort(port)
-      }
       deleteTableRowByPort(port)
       untrackPendingPort(port)
-      ElMessage.warning(`进程${port}登录失败，已关闭`)
+      ElMessage.warning(`企微端口 ${port} 对应进程已退出，已移除条目`)
     }
-  }, 2000)
+  }), 2000)
   loginPollTimers.set(p, checkInterval)
 }
 
@@ -1318,6 +1349,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
     const prevExpire = prevLoginInfo.expire
 
     const result = await window.electronAPI.getAuthInfo(userId, prevLoginInfo.port)
+    if (disposed || stoppedPorts.has(Number(prevLoginInfo.port))) return
     const { expire, auth_active: authActive, card_key: resolvedCardKey } =
       resolveAuthFieldsAfterAuthFetch(result, {
         expire: prevExpire,
@@ -1524,7 +1556,7 @@ const handleExitWechat = async () => {
       console.error('调用退出登录API失败:', error)
     }
 
-    await removeWecomFromManager(port, { quiet: true })
+    await removeWecomFromManager(port, { quiet: true, terminate: true })
     ElMessage.success('已退出微信')
   } catch (error) {
     if (error !== 'cancel') {
@@ -1564,6 +1596,12 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  for (const timer of loginPollTimers.values()) clearInterval(timer)
+  loginPollTimers.clear()
+  loginPollingPorts.clear()
+  for (const timer of autoUpdateTimers.values()) clearTimeout(timer)
+  autoUpdateTimers.clear()
   // 移除监听
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('contextmenu', handleClickOutside)

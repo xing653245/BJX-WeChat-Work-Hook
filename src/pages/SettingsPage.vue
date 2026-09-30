@@ -85,9 +85,6 @@
                         class="field-input-wide"
                       />
                     </div>
-                    <div class="key-row key-row-actions">
-                      <el-button @click="copyEncryptPublicKey">复制公钥</el-button>
-                    </div>
                     <p class="field-hint">须为 PKCS#1 格式（BEGIN PUBLIC KEY），内容为 Base64，密钥位数 1024 bits</p>
                   </div>
                 </template>
@@ -835,15 +832,6 @@ async function copyText(text, okMsg) {
   } catch {
     ElMessage.warning('复制失败，请手动复制')
   }
-}
-
-async function copyEncryptPublicKey() {
-  const key = String(formData.public_key || '').trim()
-  if (!key) {
-    ElMessage.warning('请先填写公钥')
-    return
-  }
-  await copyText(key, '公钥已复制')
 }
 
 function collectWecomNotifyPorts(defaultPort) {

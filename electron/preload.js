@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 进程管理
   findPidByPort: (port) => ipcRenderer.invoke('find-pid-by-port', port),
   killProcessByPort: (port) => ipcRenderer.invoke('kill-process-by-port', port),
+  getProcessState: (pid) => ipcRenderer.invoke('get-process-state', pid),
   
   readInjectSettings: () => ipcRenderer.invoke('read-inject-settings'),
 
