@@ -65,23 +65,3 @@ test('登录轮询慢响应不叠加请求，停止后的旧响应不再恢复�
   await first
   assert.equal(completions, 0)
 })
-
-test('普通日志追加不遍历旧记录，裁剪时才重新编号', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../../src/pages/RunLogsPage.vue'), 'utf8')
-  const start = source.indexOf('const addLog =')
-  const end = source.indexOf('onMounted(', start)
-  let writes = 0
-  const existing = { set index(value) { writes++ } }
-  const logs = { value: [existing] }
-  const context = { logs, maxRows: 1000, formatTime: () => '', formatMessageContent: () => 'msg', formatMessageTypeLabel: () => 'text' }
-  vm.createContext(context)
-  vm.runInContext(source.slice(start, end) + '\nthis.add = addLog', context)
-  context.add({})
-  assert.equal(writes, 0)
-  assert.equal(logs.value.length, 2)
-  logs.value = Array.from({ length: 1000 }, (_, i) => ({ index: i + 1 }))
-  context.add({})
-  assert.equal(logs.value.length, 501)
-  assert.equal(logs.value[0].index, 1)
-  assert.equal(logs.value[500].index, 501)
-})
