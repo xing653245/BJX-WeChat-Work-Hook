@@ -17,6 +17,7 @@ function runScript(scriptName, label) {
 }
 
 function main() {
+  require('./reset-pack-conf-login').disableDebug(root)
   const results = []
 
   for (const [script, label] of [

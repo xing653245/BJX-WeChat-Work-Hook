@@ -522,7 +522,7 @@ import { createFeedback } from '../utils/feedback.mjs'
 const feedback = createFeedback('pages/SettingsPage.vue')
 
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   QuestionFilled,
   Refresh,
@@ -846,64 +846,6 @@ watch(
   },
   { deep: true }
 )
-
-const decryptSampleText = `{
-  "encrypted": true,
-  "alg": "RSA-OAEP-SHA256",
-  "chunks": ["<Base64>", "<Base64>"]
-}`
-
-const NODE_DECRYPT_SNIPPET = `const crypto = require('crypto')
-
-function decryptCallback(body, privateKeyPem) {
-  const parts = body.chunks.map((chunk) =>
-    crypto.privateDecrypt(
-      {
-        key: privateKeyPem,
-        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-        oaepHash: 'sha256'
-      },
-      Buffer.from(chunk, 'base64')
-    )
-  )
-  return JSON.parse(Buffer.concat(parts).toString('utf8') || '{}')
-}`
-
-const PYTHON_DECRYPT_SNIPPET = `import json, base64
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-
-def decrypt_callback(body: dict, private_key_pem: str) -> dict:
-    private_key = serialization.load_pem_private_key(
-        private_key_pem.encode("utf-8"), password=None
-    )
-    oaep = padding.OAEP(
-        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-        algorithm=hashes.SHA256(),
-        label=None,
-    )
-    plain = b"".join(
-        private_key.decrypt(base64.b64decode(chunk), oaep)
-        for chunk in body["chunks"]
-    )
-    return json.loads(plain or b"{}")`
-
-async function copyText(text, okMsg) {
-  try {
-    await navigator.clipboard.writeText(text)
-    ElMessage.success(okMsg)
-  } catch {
-    feedback.warning('U002', '复制失败，请手动复制')
-  }
-}
-
-async function copyDecryptSnippet(kind) {
-  if (kind === 'python') {
-    await copyText(PYTHON_DECRYPT_SNIPPET, 'Python 解密示例已复制')
-    return
-  }
-  await copyText(NODE_DECRYPT_SNIPPET, 'Node 解密示例已复制')
-}
 
 /** 企微 Hook 成功时常只返回 { data }，不一定带 errno */
 function isWecomHookBodyOk(body) {

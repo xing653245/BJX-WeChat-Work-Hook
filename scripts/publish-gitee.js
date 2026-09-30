@@ -206,6 +206,7 @@ async function publishVersionOnly(version, files) {
 }
 
 async function main() {
+  require('./reset-pack-conf-login').disableDebug()
   const { owner, repo, latestTag } = parseGiteePublishConfig()
   const token = getToken()
   const files = collectReleaseFiles()

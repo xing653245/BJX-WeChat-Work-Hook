@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "2.2.2",
+  "version": "2.2.5",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -36,23 +36,22 @@
     "ini": "^4.1.2"
   },
   "devDependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
     "@vitejs/plugin-vue": "^5.0.3",
-    "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^28.1.4",
     "electron-builder": "^24.9.1",
+    "element-plus": "^2.5.6",
+    "pinia": "^2.1.7",
     "sharp": "^0.34.5",
     "to-ico": "^1.1.5",
     "vite": "^5.1.0",
-    "wait-on": "^7.2.0",
-    "@element-plus/icons-vue": "^2.3.1",
-    "element-plus": "^2.5.6",
-    "pinia": "^2.1.7",
-    "vue": "^3.4.15",
-    "vue-router": "^4.2.5"
+    "vue": "^3.4.15"
   },
   "build": {
+    "beforePack": "scripts/before-pack.js",
     "appId": "com.vwork.framework",
+    "electronLanguages": ["zh-CN", "zh-TW", "en-US"],
     "productName": "北极熊企微框架Pro",
     "artifactName": "vwork-electron-setup-${version}.${ext}",
     "icon": "build/icon.ico",
@@ -71,7 +70,6 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "node_modules/**/*",
       "!electron/tests{,/**/*}",
       "!**/*.map",
       "!**/*.{log,tmp,temp,pem,key}",

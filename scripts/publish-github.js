@@ -162,6 +162,7 @@ async function replaceReleaseAssets(owner, repo, release, uploadPlan, token) {
 }
 
 async function main() {
+  require('./reset-pack-conf-login').disableDebug()
   const { owner, repo } = parseGithubPublishConfig()
   const token = getGithubToken()
   const rawFiles = collectReleaseFiles()
