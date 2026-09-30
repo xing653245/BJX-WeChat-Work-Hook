@@ -34,8 +34,9 @@ test('配置字段正确读写，保留未编辑字段，支持恢复原始文�
   const before = fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')
   const original = readInjectSettings(dir)
   const rollback = saveInjectSettings(dir, { ...original, port: 4567, enabled: false, timeout_ms: 3000, retries: 0 })
-  assert.deepEqual(readInjectSettings(dir), { ...original, port: '4567', enabled: false, timeout_ms: 3000, retries: 0 })
+  assert.deepEqual(readInjectSettings(dir), { ...original, enabled: false, timeout_ms: 3000, retries: 0 })
   const settings = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json')))
+  assert.equal(settings.port, '8989')
   assert.equal(settings.logs, 'keep')
   assert.equal(settings.startup_mode, 'start_and_load')
   assert.equal(settings.automatic_startup, '0')
@@ -89,10 +90,10 @@ test('开启加密时拒绝带头尾或不合法的公钥', (t) => {
   assert.deepEqual(readInjectSettings(dir), original)
 })
 
-test('无效路径、端口、回调参数和损坏 JSON 均不覆盖已有文件', (t) => {
+test('无效路径、回调参数和损坏 JSON 均不覆盖已有文件', (t) => {
   const { dir } = fixture(t)
   const original = readInjectSettings(dir)
-  for (const invalid of [{ host: 'missing.exe' }, { port: 0 }, { timeout_ms: 0 }, { retries: -1 }, { enabled: 'false' }, { url: 'file:///tmp/a' }]) {
+  for (const invalid of [{ host: 'missing.exe' }, { timeout_ms: 0 }, { retries: -1 }, { enabled: 'false' }, { url: 'file:///tmp/a' }]) {
     assert.throws(() => saveInjectSettings(dir, { ...original, ...invalid }))
     assert.deepEqual(readInjectSettings(dir), original)
   }

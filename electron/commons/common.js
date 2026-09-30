@@ -6,7 +6,6 @@ const diagnostics = createDiagnostics('commons/common.js')
  */
 const path = require('path')
 const fs = require('fs')
-const axios = require('axios')
 const ini = require('ini')
 const { getInjectBinDir } = require('./resourcePaths')
 const { readInjectSettings } = require('../services/injectSettings')
@@ -275,50 +274,6 @@ function parseIniFlag(value) {
   return value === 'true' || value === true
 }
 
-/**
- * 异步发送回调
- * @param {string} url - 回调地址
- * @param {object} data - 回调数据
- * @returns {Promise<{success: boolean, message: string, data: any}>} 返回发送结果
- */
-async function sendCallback(url, data) {
-  const startTime = Date.now()
-  url = getBusinessCallbackUrl()
-  if (!url) return { success: false, message: '回调未开启或地址不可用' }
-  try {
-    const response = await axios.post(url, data, {
-      timeout: 10000
-    })
-    const duration = Date.now() - startTime
-    return {
-      success: true,
-      message: '回调发送成功',
-      data: response.data,
-      duration
-    }
-  } catch (error) {
-    const duration = Date.now() - startTime
-    let errorMessage = '回调发送失败'
-    if (error.code === 'ECONNREFUSED') {
-      errorMessage = `回调发送失败: 无法连接到 ${url} (连接被拒绝)`
-    } else if (error.code === 'ETIMEDOUT') {
-      errorMessage = `回调发送失败: 请求超时 (${url})`
-    } else if (error.response) {
-      errorMessage = `回调发送失败: HTTP ${error.response.status} - ${error.response.statusText}`
-    } else {
-      errorMessage = `回调发送失败: ${error.message}`
-    }
-    diagnostics.error('L006', `❌ ${errorMessage} (耗时: ${duration}ms)`)
-    return {
-      success: false,
-      message: errorMessage,
-      data: null,
-      duration,
-      error: error.code || error.message
-    }
-  }
-}
-
 const {
   AUTH_REASON,
   checkAuthExpire,
@@ -484,7 +439,6 @@ module.exports = {
   readTodayRunLogTail,
   writeConfigAtomic,
   readConfigTextWithBackup,
-  sendCallback,
   getBusinessCallbackUrl,
   AUTH_REASON,
   checkAuthExpire,

@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "convert-icon": "node scripts/convert-icon.js",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "node scripts/electron-dev.mjs",
     "electron:build": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "electron:build:dir": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/publish-all.js",

@@ -33,27 +33,29 @@ function response() {
   return { statusCode: 200, status(code) { this.statusCode = code; return this }, json(body) { this.body = body; return this } }
 }
 
-test('文档入口使用默认或显式企微端口，原样返回响应，不将 port 发给 Hook', async () => {
+test('文档入口要求显式企微端口，原样返回响应，不将 port 发给 Hook', async () => {
   const raw = { errno: 0, errmsg: 'OK', data: { open_id: 'wm123' } }
   const calls = []
-  const handler = createDocumentedApi({ getPort: () => 8989, call: async (...args) => { calls.push(args); return raw } })
-  for (const port of [undefined, 8990]) {
+  const handler = createDocumentedApi({  call: async (...args) => { calls.push(args); return raw } })
+  for (const port of [8989, 8990]) {
     const res = response()
     await handler({ body: { port, type: 8000, user_id: '123' }, socket: { localPort: 8868 } }, res)
     assert.deepEqual(res.body, raw)
-    assert.deepEqual(calls.at(-1), [port ?? 8989, 8000, { user_id: '123' }])
+    assert.deepEqual(calls.at(-1), [port, 8000, { user_id: '123' }])
   }
   const res = response()
   await handler({ body: { port: 8868, type: 1000 }, socket: { localPort: 8868 } }, res)
+  assert.equal(res.statusCode, 400)
+  await handler({ body: { type: 1000 } }, res)
   assert.equal(res.statusCode, 400)
   assert.equal(calls.length, 2)
 })
 
 test('文档入口保留授权失败和参数错误状态', async () => {
   for (const [code, status] of [['NO_AUTH', 403], ['INVALID_API_PARAMS', 400]]) {
-    const handler = createDocumentedApi({ getPort: () => 8989, call: async () => { throw Object.assign(new Error('test'), { code }) } })
+    const handler = createDocumentedApi({  call: async () => { throw Object.assign(new Error('test'), { code }) } })
     const res = response()
-    await handler({ body: { type: 3000 } }, res)
+    await handler({ body: { port: 8989, type: 3000 } }, res)
     assert.equal(res.statusCode, status)
     assert.deepEqual(res.body, { errno: -1, errmsg: 'test', data: null })
   }
@@ -64,7 +66,7 @@ test('HTTP 仅提供 POST /api，84 个 type 原样分发，旧分类路径不�
   const axios = require('axios')
   const calls = []
   const handler = createDocumentedApi({
-    getPort: () => 8989,
+    
     call: async (port, type, params) => {
       const checked = validateVworkRequest({ ...params, type })
       if (!checked.valid) throw Object.assign(new Error(checked.message), { code: 'INVALID_API_PARAMS' })

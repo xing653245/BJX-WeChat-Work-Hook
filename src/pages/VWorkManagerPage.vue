@@ -1429,12 +1429,10 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
       time_stamp: Math.floor(Date.now() / 1000)
     }
 
-    // 读取配置以获取日志和回调设置
+    // 读取本地日志设置，授权回调由企微原生推送
     const config = configStore.config
     const openLog = config.sys?.open_log === 'true' || config.sys?.open_log === true
     const saveLog = config.sys?.save_log === 'true' || config.sys?.save_log === true
-    const callback = config.sys?.callback || ''
-    const validAuth = isValidAuthDatetime(expire, authActive)
 
     // 如果开启了日志，保存日志到文件
     if (openLog && saveLog) {
@@ -1445,41 +1443,6 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
       }
     }
 
-    // 如果授权有效且配置了回调地址，发送回调
-    if (validAuth && callback && callback.includes('http') && callback.includes('://')) {
-      try {
-        // 构建回调数据（包含授权信息）
-        const callbackData = {
-          type: 'auth_refresh',
-          user_id: userId,
-          nick_name: nickName,
-          port: port,
-          expire: expire,
-          time_stamp: Math.floor(Date.now() / 1000)
-        }
-        
-        const callbackResult = await window.electronAPI.sendCallback(callback, callbackData)
-        
-        // 如果开启了日志且回调失败，记录回调失败日志
-        if (openLog && !callbackResult.success) {
-          const callbackLogData = {
-            content: `回调发送失败: ${callbackResult.message}`,
-            sys: true,
-            time_stamp: Math.floor(Date.now() / 1000)
-          }
-          
-          if (saveLog) {
-            try {
-              await window.electronAPI.saveLogToFile(callbackLogData)
-            } catch (error) {
-              diagnostics.error('L026', '保存回调失败日志失败:', error)
-            }
-          }
-        }
-      } catch (error) {
-        diagnostics.error('L027', '发送授权刷新回调失败:', error)
-      }
-    }
   } catch (error) {
     const prevLoginInfo =
       loginInfo ||

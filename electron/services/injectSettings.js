@@ -53,7 +53,6 @@ function readInjectSettings(dir) {
   const settings = readDocument(dir, SETTINGS_FILE).value
   return {
     host: settings.host,
-    port: settings.port,
     url: settings.url,
     enabled: parseFlag(settings.enabled),
     timeout_ms: settings.timeout_ms,
@@ -71,7 +70,6 @@ function saveInjectSettings(dir, input) {
     return n
   }
   const host = String(input.host || '').trim()
-  const port = integer(input.port, 1025, 10000, '企微监听端口')
   const timeout = integer(input.timeout_ms, 1, 2147483647, '回调超时（毫秒）')
   const retries = integer(input.retries, 0, 2147483647, '失败重试次数')
   if (!host || !fs.existsSync(host) || !fs.statSync(host).isFile()) throw new Error(`v5 客户端路径不存在: ${host}`)
@@ -100,7 +98,6 @@ function saveInjectSettings(dir, input) {
     timeout_ms: timeout,
     retries,
     host,
-    port: typeof settings.value.port === 'number' ? port : String(port),
     Message_Encryption: encrypt,
     RSA_PublicKey: public_key,
     IsDebug: is_debug

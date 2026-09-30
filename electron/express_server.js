@@ -2,13 +2,13 @@ const { createDiagnostics } = require('./commons/diagnostics.cjs')
 const diagnostics = createDiagnostics('express_server.js')
 /**
  * Express服务器 - 供Electron启动
- * 接收企微消息并转发
+ * 接收企微消息并更新本地日志
  * Node.js版本，替代Python FastAPI
  */
 const express = require('express')
 const cors = require('cors')
 const axios = require('axios')
-const { readIni, sendCallback, getBusinessCallbackUrl, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
+const { readIni, checkAuthByUserId, killProcessByPort, saveLogToFile } = require('./commons/common')
 const { enrichWecomMessage } = require('./commons/msgParser.cjs')
 const { messageServerAxiosConfig } = require('./commons/messageBridge')
 const { DEFAULT_SERVER_PORT } = require('./configs/defaults')
@@ -51,7 +51,7 @@ app.use(express.json({ limit: '35mb' }))
 const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL
 
 /**
- * 异步处理企微消息推送（日志、回调），不阻塞对注入层的 HTTP 响应
+ * 异步处理企微消息推送（本地日志），不阻塞对注入层的 HTTP 响应
  */
 async function processIncomingWecomMessage(data) {
   const ini_config = readIni()
@@ -112,32 +112,8 @@ async function processIncomingWecomMessage(data) {
     }
   }
 
-  if (valid_auth) {
-    const callbackUrl = getBusinessCallbackUrl(ini_config.callback)
-    if (callbackUrl && callbackUrl.includes('http') && callbackUrl.includes('://')) {
-      const callbackResult = await sendCallback(callbackUrl, payload)
-
-      if (ini_config.open_log && !callbackResult.success) {
-        const callbackLogData = {
-          content: callbackResult.message,
-          sys: true,
-          time_stamp: Math.floor(Date.now() / 1000)
-        }
-
-        try {
-          await axios.post(MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message', callbackLogData, messageServerAxiosConfig({ timeout: 1000 }))
-        } catch (error) {
-          diagnostics.error('L006', `推送回调日志到Electron失败: ${error.message}`)
-        }
-
-        if (ini_config.save_log) {
-          saveLogToFile(callbackLogData).catch(err => {
-            diagnostics.error('L007', `保存回调日志到文件失败: ${err.message}`)
-          })
-        }
-      }
-    }
-  } else {
+  // 外部回调由企微原生推送，此处只处理框架内部日志。
+  if (!valid_auth) {
     const error_data = {
       content: authResult.message || '当前授权已到期，请重新购买授权',
       sys: true

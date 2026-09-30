@@ -7,7 +7,6 @@ const vm = require('node:vm')
 const { once } = require('node:events')
 const { getPolarBearBaseUrl } = require('../configs/polarBearBackend')
 const { getAuthInfo, bindCard, unbindCard, convertCardByWxid } = require('../commons/polarBearClient.cjs')
-const { postToWecomPath } = require('../services/wecomApiClient')
 
 async function hookServer(t, reply) {
   const calls = []
@@ -79,28 +78,7 @@ test('不跟随企微接口重定向，不访问其他后端', async t => {
   })
   await assert.rejects(getAuthInfo('wxid', redirect.port))
   assert.equal((await bindCard({ port: redirect.port, wxid: 'wxid', card_key: 'card' })).success, false)
-  await assert.rejects(postToWecomPath(redirect.port, '/updatesettings', { Update: true }))
   assert.equal(destination.calls.length, 0)
-})
-
-test('保存设置的通知向各企微端口 POST /updatesettings，Update 为布尔 true', async t => {
-  const first = await hookServer(t)
-  const second = await hookServer(t)
-  const mainSource = fs.readFileSync(path.resolve(__dirname, '../main.js'), 'utf8')
-  const start = mainSource.indexOf('async function notifyWecomSettingsUpdated(ports)')
-  const end = mainSource.indexOf("ipcMain.handle('read-inject-settings'", start)
-  assert.ok(start >= 0 && end > start)
-  const context = { postToWecomPath }
-  vm.createContext(context)
-  vm.runInContext(mainSource.slice(start, end), context)
-  assert.equal((await context.notifyWecomSettingsUpdated([first.port, second.port])).ok, true)
-  for (const instance of [first, second]) {
-    assert.equal(instance.calls.length, 1)
-    assert.equal(instance.calls[0].method, 'POST')
-    assert.equal(instance.calls[0].url, '/updatesettings')
-    assert.deepEqual(instance.calls[0].body, { Update: true })
-  }
-  await assert.rejects(postToWecomPath('bad', '/updatesettings', { Update: true }), /企微端口/)
 })
 
 test('渲染层卡密服务传递行端口，预加载桥接传递查询端口', async () => {

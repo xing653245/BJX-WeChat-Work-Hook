@@ -78,7 +78,7 @@ export const useConfigStore = defineStore('config', () => {
       
       const result = await window.electronAPI.saveConfig(configToSave)
       if (result.success) {
-        const { injectTool: _injectTool, notifyWecomPorts: _notifyWecomPorts, ...rest } = newConfig
+        const { injectTool: _injectTool, ...rest } = newConfig
         config.value = rest
       }
       return result

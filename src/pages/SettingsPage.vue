@@ -29,22 +29,16 @@
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
                   <h2 class="section-title">连接与回调</h2>
-                  <p class="section-desc">企微监听端口与消息回调</p>
+                  <p class="section-desc">消息回调与加密配置</p>
                 </div>
               </div>
             </div>
             <div class="section-body">
               <div class="field-grid">
-                <label class="field-label" for="settings-wecom-port">企微监听端口</label>
-                <div class="field-control">
-                  <el-input id="settings-wecom-port" v-model="formData.wecom_port" placeholder="1025–10000" class="field-input" />
-                  <p class="field-hint">默认端口，范围 1025–10000。添加企微时，随机或自定义端口会覆盖本次启动值</p>
-                </div>
-
                 <label class="field-label" for="settings-push-url">原生回调地址</label>
                 <div class="field-control">
                   <el-input id="settings-push-url" v-model="formData.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
-                  <p class="field-hint">企微直接推送到此地址，不经过框架消息加密。保存后重新启动企微生效</p>
+                  <p class="field-hint">企微直接推送到此地址。保存后需退出对应企微，再从企微管理重新添加生效</p>
                 </div>
 
                 <label class="field-label" for="settings-push-enabled">开启原生回调</label>
@@ -649,7 +643,6 @@ const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
   wecom_exe_path_v5: '',
-  wecom_port: '8989',
   push_url: '',
   push_enabled: false,
   push_timeout_ms: 2000,
@@ -728,7 +721,6 @@ const injectSettingsLoaded = ref(false)
 const savedInjectSettings = ref(null)
 const applyInjectSettings = (data) => {
   formData.wecom_exe_path_v5 = data.host || ''
-  formData.wecom_port = String(data.port ?? '')
   formData.push_url = data.url || ''
   formData.push_enabled = data.enabled === true
   formData.push_timeout_ms = data.timeout_ms
@@ -837,17 +829,6 @@ async function copyText(text, okMsg) {
   } catch {
     feedback.warning('U002', '复制失败，请手动复制')
   }
-}
-
-function collectWecomNotifyPorts(defaultPort) {
-  const ports = new Set()
-  const add = (value) => {
-    const n = Number(value)
-    if (Number.isInteger(n) && n > 1024 && n <= 10000) ports.add(n)
-  }
-  add(defaultPort)
-  for (const row of wecomManagerInstances.value) add(row.port)
-  return [...ports]
 }
 
 async function copyDecryptSnippet(kind) {
@@ -1142,14 +1123,6 @@ const handleSave = async () => {
     feedback.error('U018', '注入配置尚未读取成功，请重新打开设置页')
     return
   }
-  // 验证端口
-  const port = Number(formData.wecom_port)
-  if (!Number.isInteger(port) || port <= 1024 || port > 10000) {
-    feedback.warning('U019', '企微监听端口必须为 1025–10000 的整数')
-    loadConfig() // 恢复原值
-    return
-  }
-
   const publicKey = String(formData.public_key || '').trim()
   let normalizedPublicKey = publicKey
   if (formData.encrypt || publicKey) {
@@ -1168,7 +1141,6 @@ const handleSave = async () => {
   try {
     const injectTool = {
       host: formData.wecom_exe_path_v5,
-      port: formData.wecom_port,
       url: formData.push_url,
       enabled: formData.push_enabled,
       timeout_ms: formData.push_timeout_ms,
@@ -1178,7 +1150,6 @@ const handleSave = async () => {
     }
     const newConfig = {
       injectTool,
-      notifyWecomPorts: collectWecomNotifyPorts(port),
       sys: {
         ...configStore.config.sys,
         auto_check_update: String(formData.auto_check_update),
@@ -1204,11 +1175,7 @@ const handleSave = async () => {
         refreshCloseConfirmPrefsHint()
       }
       isDirty.value = false
-      if (result.notify?.ok !== false) {
-        ElMessage.success('保存成功')
-      } else {
-        feedback.warning('U021', `保存成功，但未能通知企微刷新设置：${result.notify?.msg || '未知错误'}`)
-      }
+      ElMessage.success('配置已保存；企微相关设置需退出对应企微后重新添加生效')
     } else {
       feedback.error('U022', result.msg || '保存失败')
       loadConfig() // 恢复原值

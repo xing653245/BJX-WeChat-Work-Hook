@@ -17,6 +17,7 @@ function isAllowedCallApiUrl(rawUrl) {
     if (host !== '127.0.0.1' && host !== 'localhost') return false
     if (u.protocol !== 'http:') return false
     if (u.username || u.password) return false
+    if (/^\/updatesettings\/?$/i.test(u.pathname)) return false
     return true
   } catch {
     return false

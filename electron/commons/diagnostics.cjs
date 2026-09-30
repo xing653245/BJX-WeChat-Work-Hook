@@ -46,7 +46,7 @@ function friendlyMessage(value, fallback = '操作未完成，请稍后重试') 
 
 function createDiagnostics(source, output = console) {
   const write = (level, code, message, ...details) => {
-    const prefix = `[${new Date().toISOString()}][${source}#${code}]`
+    const prefix = `[${source}#${code}]`
     const summary = level === 'error' || level === 'warn' ? friendlyMessage(message) : redactText(message)
     const extra = summary !== String(message) ? [message, ...details] : details
     const method = output[level] || output.log

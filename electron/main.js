@@ -16,7 +16,7 @@ const {
 } = require('./services/updateService')
 const ini = require('ini')
 const axios = require('axios')
-const { saveLogToFile, getConfigPath, readIni, sendCallback, getBusinessCallbackUrl, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
+const { saveLogToFile, getConfigPath, readIni, getBusinessCallbackUrl, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
 const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
@@ -33,7 +33,7 @@ const {
 } = require('./services/wecomInject')
 const { getInjectBinDir } = require('./commons/resourcePaths')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
-const { postToVWorkApi, postToWecomPath } = require('./services/wecomApiClient')
+const { postToVWorkApi } = require('./services/wecomApiClient')
 const { callVWorkAPI } = require('./middleware/apiHandler')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
@@ -47,6 +47,7 @@ const {
 
 /** 开发模式：未打包运行（npm run electron:dev） */
 const isDev = !app.isPackaged
+const devServerUrl = process.env.VWORK_DEV_SERVER_URL || 'http://localhost:5173'
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -652,7 +653,7 @@ const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
       await runInjectForPort(robotPort, '崩溃恢复')
     } else {
       diagnostics.info('L030',
-        `[登录探测] 端口 ${robotPort} 未登录且进程已退出，不自动拉起企微；请在「企微管理」中手动添加`
+        `[登录探测] 端口 ${robotPort} 无法连接且未找到该端口的进程；企微可能仍在运行但监听端口已变化，请核对实例端口`
       )
     }
   }
@@ -884,7 +885,7 @@ function createWindow() {
       mainWindow.loadFile(distPath)
     } else {
       diagnostics.error('L046', '应用界面文件缺失，请重新安装；开发环境请先执行 npm run build')
-      mainWindow.loadURL('http://localhost:5173')
+      mainWindow.loadURL(devServerUrl)
     }
   }
 
@@ -897,10 +898,10 @@ function createWindow() {
       const http = require('http')
       diagnostics.info('L047', `正在等待开发服务就绪（第 ${retryCount + 1}/${maxRetries})`)
 
-      const req = http.get('http://localhost:5173', (res) => {
+      const req = http.get(devServerUrl, (res) => {
         if (res.statusCode === 200) {
-          diagnostics.info('L048', '正在连接本地开发界面 http://localhost:5173')
-          mainWindow.loadURL('http://localhost:5173')
+          diagnostics.info('L048', `正在连接本地开发界面 ${devServerUrl}`)
+          mainWindow.loadURL(devServerUrl)
         } else {
           retryCount++
           if (retryCount < maxRetries) {
@@ -955,7 +956,7 @@ function createWindow() {
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (isDev && url.startsWith('http://localhost:5173')) return
+    if (isDev && new URL(url).origin === new URL(devServerUrl).origin) return
     if (url.startsWith('file://')) return
     event.preventDefault()
     if (isAllowedExternalUrl(url)) {
@@ -1245,49 +1246,6 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
 const injectSettingsDir = getInjectBinDir
 
-function collectSettingsNotifyPorts(config, merged) {
-  const ports = new Set()
-  const add = (value) => {
-    const n = Number(value)
-    if (Number.isInteger(n) && n > 1024 && n <= 10000) ports.add(n)
-  }
-  if (Array.isArray(config?.notifyWecomPorts)) {
-    for (const port of config.notifyWecomPorts) add(port)
-  }
-  add(config?.injectTool?.port)
-  let loginInfo = merged?.custom?.login_info
-  if (typeof loginInfo === 'string') {
-    try {
-      loginInfo = JSON.parse(loginInfo)
-    } catch {
-      loginInfo = []
-    }
-  }
-  if (Array.isArray(loginInfo)) {
-    for (const item of loginInfo) add(item?.port)
-  }
-  return [...ports]
-}
-
-async function notifyWecomSettingsUpdated(ports) {
-  if (!ports.length) {
-    return { ok: false, msg: '没有可通知的企微端口' }
-  }
-  const results = await Promise.all(ports.map(async (n) => {
-    try {
-      await postToWecomPath(n, '/updatesettings', { Update: true })
-      return { port: n, ok: true }
-    } catch (error) {
-      return { port: n, ok: false, msg: error.message }
-    }
-  }))
-  if (results.some((item) => item.ok)) return { ok: true }
-  return {
-    ok: false,
-    msg: results.map((item) => `${item.port}: ${item.msg || '失败'}`).join('；')
-  }
-}
-
 ipcMain.handle('read-inject-settings', (event) => {
   assertMainWindow(event, mainWindow)
   try { return { success: true, data: readInjectSettings(injectSettingsDir()) } }
@@ -1325,15 +1283,7 @@ ipcMain.handle('save-config', async (event, config) => {
     const result = saveConfig(applyListenPortChangeToConfig(prev, merged))
     if (!result.success && rollback) rollback()
     if (!result.success) return result
-    if (!config.injectTool) return result
-    // 文件已提交；通知失败只报告状态，不回滚已保存的配置。
-    rollback = undefined
-    try {
-      const notify = await notifyWecomSettingsUpdated(collectSettingsNotifyPorts(config, merged))
-      return { ...result, notify }
-    } catch (error) {
-      return { ...result, notify: { ok: false, msg: error.message } }
-    }
+    return result
   } catch (error) {
     if (rollback) rollback()
     return { success: false, msg: error.message }
@@ -1353,13 +1303,8 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     const frameworkPorts = new Set([frameworkPort, ...collectHookCompatListenPorts(apiConfig, frameworkPort)])
     const urlPort = directWecomMatch ? Number(directWecomMatch[1]) : null
     const directWecomPort = urlPort && !frameworkPorts.has(urlPort) ? urlPort : null
-    const wecomUpdateMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/updatesettings\/?$/i)
-    const wecomUpdatePort = wecomUpdateMatch ? parseInt(wecomUpdateMatch[1], 10) : null
-
     let responseData
-    if (wecomUpdatePort && method === 'POST') {
-      responseData = await postToWecomPath(wecomUpdatePort, '/updatesettings', data || { Update: true })
-    } else if (directWecomPort && method === 'POST' && data) {
+    if (directWecomPort && method === 'POST' && data) {
       const { type, port: _routingPort, ...params } = data
       responseData = await callVWorkAPI(directWecomPort, type, params)
     } else {
@@ -1379,7 +1324,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
 
     const logPort = directWecomPort || (data && data.port != null ? parseInt(data.port, 10) : null)
 
-    // 如果成功获取响应，记录日志并发送回调
+    // 如果成功获取响应，仅记录本地日志；业务回调由企微原生推送
     if (logPort && responseData) {
       try {
         // 读取配置
@@ -1545,16 +1490,6 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           sys: false
         }
         
-        // 构建用于回调的完整数据（包含详细请求和响应）
-        const callbackLogData = {
-          type: 'api_call',
-          api_name: apiName,
-          port: logPort,
-          user_id: user_id,
-          response_data: responseDataForLog,
-          time_stamp: displayLogData.time_stamp
-        }
-        
         // 如果应该记录日志，推送消息到Electron主进程
         if (shouldLog) {
           try {
@@ -1580,40 +1515,6 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           }
         }
         
-        // 判断是否应该发送回调：
-        // 1. 登录相关的API（1000, 1002）无论授权状态如何都发送回调
-        // 2. 其他API需要授权有效才发送回调
-        const shouldSendCallback = LOGIN_RELATED_API_TYPES.has(apiType) || valid_auth
-        
-        if (shouldSendCallback) {
-          const callbackUrl = getBusinessCallbackUrl(ini_config.callback)
-          if (callbackUrl && callbackUrl.includes('http') && callbackUrl.includes('://')) {
-            const callbackResult = await sendCallback(callbackUrl, callbackLogData)
-            
-            // 如果开启了日志且回调失败，将回调失败信息推送到前端
-            if (ini_config.open_log && !callbackResult.success) {
-              const callbackErrorLogData = {
-                content: callbackResult.message,
-                sys: true,
-                time_stamp: Math.floor(Date.now() / 1000)
-              }
-              
-              try {
-                const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
-                await axios.post(MESSAGE_SERVER_URL, callbackErrorLogData, messageServerAxiosConfig({ timeout: 1000 }))
-              } catch (error) {
-                diagnostics.error('L057', `推送回调日志到Electron失败: ${error.message}`)
-              }
-              
-              // 如果开启了保存日志功能，保存回调日志到文件
-              if (ini_config.save_log) {
-                saveLogToFile(callbackErrorLogData).catch(err => {
-                  diagnostics.error('L058', `保存回调日志到文件失败: ${err.message}`)
-                })
-              }
-            }
-          }
-        }
       } catch (logError) {
         // 日志记录失败不影响API调用结果
         diagnostics.error('L059', `记录API调用日志失败: ${logError.message}`)
@@ -1885,17 +1786,6 @@ ipcMain.handle('save-log-to-file', async (event, data) => {
     return { success: result }
   } catch (error) {
     diagnostics.error('L062', '保存日志失败:', error)
-    return { success: false, message: error.message }
-  }
-})
-
-// 发送回调
-ipcMain.handle('send-callback', async (event, { url, data }) => {
-  try {
-    const result = await sendCallback(getBusinessCallbackUrl(url), data)
-    return result
-  } catch (error) {
-    diagnostics.error('L063', '发送回调失败:', error)
     return { success: false, message: error.message }
   }
 })
