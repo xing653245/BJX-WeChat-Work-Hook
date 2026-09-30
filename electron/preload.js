@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   killProcessByPort: (port) => ipcRenderer.invoke('kill-process-by-port', port),
   getProcessState: (pid) => ipcRenderer.invoke('get-process-state', pid),
   
+  listCallbackInstances: () => ipcRenderer.invoke('list-callback-instances'),
+  updateInstanceCallback: (payload) => ipcRenderer.invoke('update-instance-callback', payload),
+  saveInjectHost: (host) => ipcRenderer.invoke('save-inject-host', host),
   readInjectSettings: () => ipcRenderer.invoke('read-inject-settings'),
 
   // 注入工具

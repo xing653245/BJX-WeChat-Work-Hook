@@ -35,12 +35,12 @@ test('明文对象、字符串和未开启加密的消息保持原样', () => {
   assert.throws(() => decodeCallback(encrypt('hello'), null), error => error.status === 503)
 })
 
-test('读取带注释和 BOM 的 bin 配置，不写回文件', t => {
-  const file = path.join(tempDir(t), 'settings.json')
-  const text = '\uFEFF{\n// callback\n"url":"http://127.0.0.1:8002/msg"\n}'
-  fs.writeFileSync(file, text)
-  assert.deepEqual(readCallbackTarget(file), { url: 'http://127.0.0.1:8002/msg', host: '127.0.0.1', port: 8002, pathname: '/msg' })
-  assert.equal(fs.readFileSync(file, 'utf8'), text)
+test('从命令行回调地址解析监听主机、端口和路径', () => {
+  assert.deepEqual(readCallbackTarget('http://127.0.0.1:8002/msg'), { url: 'http://127.0.0.1:8002/msg', host: '127.0.0.1', port: 8002, pathname: '/msg' })
+  assert.deepEqual(readCallbackTarget('  https://localhost/hook/  '), { url: 'https://localhost/hook/', host: 'localhost', port: 443, pathname: '/hook/' })
+  assert.throws(() => readCallbackTarget(''), /请传入回调地址/)
+  assert.throws(() => readCallbackTarget('not-a-url'), /不是有效地址/)
+  assert.throws(() => readCallbackTarget('ftp://127.0.0.1/msg'), /必须是 HTTP\/HTTPS/)
 })
 
 test('私钥支持 PKCS#1/PKCS#8 PEM，拒绝公钥和错误位数，不支持算法时提前报错', t => {
@@ -107,7 +107,6 @@ test('HTTP 明文可用，未配置私钥的密文返回 503，健康检查与�
   assert.equal((await fetch(`${base}/health`)).status, 200)
   assert.equal((await fetch(`${base}/unknown`)).status, 404)
 })
-
 test('HTTP 密文输出还原后的 JSON，损坏密文返回失败且不记录部分明文', rsaTest, async t => {
   const { logs, post } = await startApp(t, pair.privateKey)
   const original = { msg_type: 1, text: '企微回调😀'.repeat(50) }
@@ -121,3 +120,4 @@ test('HTTP 密文输出还原后的 JSON，损坏密文返回失败且不记录�
   assert.equal((await failed.json()).success, false)
   assert.equal(logs.length, before)
 })
+

@@ -9,6 +9,6 @@
   "automatic_startup": "1",
   "startup_mode": "start_and_load",
   "Message_Encryption": true,
-  "RSA_PublicKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDDAU5NGobAE/Ymy/HPQMveiPDJOf3bbcqsvouP8T4Lwkx/dcoLgPTxbzCRTj9O6CP223V4hGb1rcXqnx4dPpzDXPDSUqBOw4N+Nmi918UhlZVP2Tev8KP4awKlUsPA/IR9wUtitA7R9lExPevTYF6+OyZUK6HTTP1OYc8QB76uyQIDAQAB",
+  "RSA_PublicKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC1tVePZpiLM3Qo4dTnmVO+yThb7K6BDYhFevKWsUjBO1+ZwMVuiwEvSLsktO8jD7kTjM3MekbpuHcDJ5HM6feRgb1nDqZ5918iPsupWZGDWXPEiUtltfNUnUviot+aW+SygDr/imW0Tb+f1RTF1RVawcea2bYsGVzcwzuC4pR9KwIDAQAB",
   "IsDebug": true
 }

@@ -55,6 +55,12 @@ let tray = null
 /** 为 true 时允许主窗口真正关闭（避免关闭确认与再次拦截） */
 let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
+const instanceCallbacks = require('./services/instanceCallbacks').createInstanceCallbacks({
+  getSettingsFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
+  onMessage: (port, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastapi-message', { ...data, port })
+  }
+})
 let loginStatusCheckInterval = null // 定时检查登录状态
 let wecomCrashDialogInterval = null // Windows：监视企微「错误报告」崩溃窗口
 /** 同一端口注入互斥：避免定时检查、崩溃恢复、手动添加并发 it.exe */
@@ -602,7 +608,9 @@ const runInjectForPort = async (robotPort, reason) => {
     if (!safety.allowed) {
       return { success: false, output: safety.reason, blocked: true }
     }
-    const result = await runInjectToolService({ port: robotPort })
+    const callbackUrl = await instanceCallbacks.prepare(robotPort, readInjectSettings(getInjectBinDir()))
+    const result = await runInjectToolService({ port: robotPort, callbackUrl })
+    if (!result.success) await instanceCallbacks.remove(robotPort)
     const ok = result.success === true
     recordInjectAttempt(robotPort, ok)
     diagnostics.info('L027',
@@ -1211,6 +1219,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  void instanceCallbacks.close()
   destroyTray()
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
@@ -1245,6 +1254,45 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
 const injectSettingsDir = getInjectBinDir
+
+async function listCallbackInstances() {
+  const rows = new Map(instanceCallbacks.ports().map(port => [port, { port }]))
+  for (const row of readIni().login_info || []) rows.set(Number(row.port), row)
+  const result = []
+  for (const [port, row] of rows) {
+    if (!Number.isInteger(port) || port <= 1024 || port > 10000) continue
+    const pid = await findPidByPort(port)
+    if (pid <= 0 || (row.pid && Number(row.pid) !== pid)) continue
+    const userId = row.user_id == null || row.user_id === '-' ? '' : String(row.user_id).trim()
+    let restored
+    try { restored = instanceCallbacks.get(port, userId) }
+    catch (error) { diagnostics.error('C005', '读取账号回调配置失败', error); restored = { storageWarning: '读取 callbackSetting.json 失败，请检查文件格式或读取权限' } }
+    result.push({ port, pid, user_id: userId, nick_name: row.nick_name || '', ...restored })
+  }
+  return result
+}
+ipcMain.handle('list-callback-instances', async event => {
+  assertMainWindow(event, mainWindow)
+  return listCallbackInstances()
+})
+ipcMain.handle('update-instance-callback', async (event, { port, settings, pid, user_id }) => {
+  assertMainWindow(event, mainWindow)
+  try {
+    const rows = await listCallbackInstances()
+    const row = rows.find(row => row.port === Number(port) && row.pid === Number(pid) && row.user_id && row.user_id === user_id)
+    if (!row) throw new Error('无法确认当前企微账号，请登录企微并刷新实例列表后重试')
+    const updated = await instanceCallbacks.update(port, settings, row.user_id)
+    return { success: true, settings: updated, warning: instanceCallbacks.get(port)?.storageWarning || '' }
+  } catch (error) {
+    diagnostics.error('C001', '更新企微实例回调配置失败', error)
+    return { success: false, msg: error.response?.data?.msg || error.message }
+  }
+})
+ipcMain.handle('save-inject-host', (event, host) => {
+  assertMainWindow(event, mainWindow)
+  try { saveInjectSettings(injectSettingsDir(), { host }); return { success: true } }
+  catch (error) { return { success: false, msg: error.message } }
+})
 
 ipcMain.handle('read-inject-settings', (event) => {
   assertMainWindow(event, mainWindow)
@@ -1537,7 +1585,7 @@ ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
   return findAvailablePortForInject(startPort, endPort)
 })
 
-// 注入只接收端口；宿主路径和回调配置由 bin/settings.json 提供。
+// 注入分配独立回调接收端口；宿主路径由 bin/settings.json 提供。
 ipcMain.handle('run-inject-tool', async (event, { port }) => {
   assertMainWindow(event, mainWindow)
   resetCrashRecoveryProtection()
@@ -1789,4 +1837,3 @@ ipcMain.handle('save-log-to-file', async (event, data) => {
     return { success: false, message: error.message }
   }
 })
-

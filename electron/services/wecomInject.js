@@ -80,8 +80,8 @@ function evaluateInjectResult(code, output) {
   }
 }
 
-function buildInjectArgs({ port }) {
-  return ['--port', String(port)]
+function buildInjectArgs({ port, callbackUrl }) {
+  return ['--port', String(port), '--callbackurl', callbackUrl]
 }
 
 /** 将 it.exe 原始输出转为更易懂的提示 */
@@ -107,10 +107,11 @@ function formatInjectErrorHint(output) {
  * @param {number|string} options.port - 企微 HTTP 端口
  * @returns {Promise<{ success: boolean, output: string, injectToolPath?: string }>}
  */
-function runInjectTool({ port }) {
+function runInjectTool({ port, callbackUrl }) {
   if (!Number.isInteger(Number(port)) || Number(port) < WECOM_HTTP_PORT_MIN || Number(port) > WECOM_HTTP_PORT_MAX) {
     return Promise.resolve({ success: false, output: '企微端口必须为 1025–10000 的整数' })
   }
+  if (!/^http:\/\/127\.0\.0\.1:\d+\/msg$/.test(callbackUrl || '')) return Promise.resolve({ success: false, output: '未分配有效的本地回调地址' })
   const injectToolPath = getInjectToolPath()
   if (!fs.existsSync(injectToolPath)) {
     return Promise.resolve({
@@ -120,8 +121,8 @@ function runInjectTool({ port }) {
   }
 
   const injectBinDir = path.dirname(injectToolPath)
-  // 配套配置由注入工具自行读取，框架只传入端口。
-  const spawnArgs = buildInjectArgs({ port })
+  // 配套配置由注入工具自行读取，框架传入实例端口和独立的本地回调地址。
+  const spawnArgs = buildInjectArgs({ port, callbackUrl })
 
   return new Promise((resolve) => {
     let finished = false

@@ -36,7 +36,7 @@ function loadService(spawn) {
   return module.exports
 }
 
-test('新工具仅接收所选端口，在工具目录运行，无需旧 DLL 或路径配置', async () => {
+test('注入传入实例端口和随机回调地址，在工具目录运行', async () => {
   const calls = []
   const service = loadService((...args) => {
     calls.push(args)
@@ -49,12 +49,12 @@ test('新工具仅接收所选端口，在工具目录运行，无需旧 DLL 或
 
   for (const port of [8990, 4567]) {
     const result = await service.runInjectTool({
-      port, serverPort: 8002, key: 'legacy-key', wecomVersion: 'v5'
+      port, callbackUrl: 'http://127.0.0.1:54321/msg', serverPort: 8002, key: 'legacy-key', wecomVersion: 'v5'
     })
     assert.equal(result.success, true)
     const [exe, args, options] = calls.at(-1)
     assert.equal(exe, path.resolve(__dirname, '../../bin/it.exe'))
-    assert.deepEqual(Array.from(args), ['--port', String(port)])
+    assert.deepEqual(Array.from(args), ['--port', String(port), '--callbackurl', 'http://127.0.0.1:54321/msg'])
     assert.equal(options.cwd, path.dirname(exe))
     assert.equal(options.shell, false)
   }
@@ -89,7 +89,7 @@ test('UTF-8 中文跨数据块及交错标准错误输出保持完整，并提�
     })
     return child
   })
-  const result = await service.runInjectTool({ port: 2370, wecomVersion: 'v5' })
+  const result = await service.runInjectTool({ port: 2370, callbackUrl: 'http://127.0.0.1:54322/msg', wecomVersion: 'v5' })
   assert.equal(result.success, false)
   assert.ok(result.output.startsWith(stdout + stderr))
   assert.match(result.output, /settings\.json 的 host/)

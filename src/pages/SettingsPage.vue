@@ -28,62 +28,71 @@
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
-                  <h2 class="section-title">连接与回调</h2>
-                  <p class="section-desc">消息回调与加密配置</p>
+                  <h2 class="section-title">连接、回调与加密</h2>
+                  <p class="section-desc">先选择企微，再设置消息推送与加密方式</p>
                 </div>
               </div>
             </div>
             <div class="section-body">
+              <div class="instance-toolbar">
+                <div class="instance-picker">
+                <label for="callback-instance">当前企微实例</label>
+                <el-select v-model="selectedCallbackPort" placeholder="请选择运行中的企微 HTTP 端口" :disabled="updatingInstance" id="callback-instance" class="instance-select">
+                  <el-option v-for="row in callbackInstances" :key="row.port" :value="String(row.port)" :label="'HTTP ' + row.port + (row.nick_name ? ' · ' + row.nick_name : '') + (row.user_id ? ' · ID ' + row.user_id : ' · 未登录')" />
+                </el-select>
+                </div>
+                <el-button :loading="loadingInstances" :disabled="updatingInstance" @click="refreshCallbackInstances">刷新列表</el-button>
+              </div>
+              <p class="instance-status" role="status">{{ instanceStatus }}</p>
               <div class="field-grid">
                 <label class="field-label" for="settings-push-url">原生回调地址</label>
                 <div class="field-control">
-                  <el-input id="settings-push-url" v-model="formData.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
-                  <p class="field-hint">企微直接推送到此地址。保存后需退出对应企微，再从企微管理重新添加生效</p>
+                  <el-input :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-url" v-model="instanceForm.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
+                  <p class="field-hint">企微向此地址推送后续回调；更新只影响当前选择的实例</p>
                 </div>
 
                 <label class="field-label" for="settings-push-enabled">开启原生回调</label>
                 <div class="field-control control-inline">
-                  <el-switch id="settings-push-enabled" v-model="formData.push_enabled" />
-                  <span class="field-hint inline-hint">{{ formData.push_enabled ? '已开启消息推送' : '暂不推送消息' }}</span>
+                  <el-switch :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-enabled" v-model="instanceForm.push_enabled" />
+                  <span class="field-hint inline-hint">{{ instanceForm.push_enabled ? '更新后开启推送' : '更新后关闭推送' }}</span>
                 </div>
                 <label class="field-label">回调策略</label>
                 <div class="field-control callback-options">
                   <div class="compact-field">
                     <label for="settings-push-timeout">超时时间 <span>毫秒</span></label>
-                    <el-input-number id="settings-push-timeout" v-model="formData.push_timeout_ms" :min="1" :max="2147483647" :precision="0" controls-position="right" />
+                    <el-input-number :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-timeout" v-model="instanceForm.push_timeout_ms" :min="1" :max="2147483647" :precision="0" controls-position="right" />
                   </div>
                   <div class="compact-field">
                     <label for="settings-push-retries">失败重试 <span>次</span></label>
-                    <el-input-number id="settings-push-retries" v-model="formData.push_retries" :min="0" :max="2147483647" :precision="0" controls-position="right" />
+                    <el-input-number :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-retries" v-model="instanceForm.push_retries" :min="0" :max="2147483647" :precision="0" controls-position="right" />
                   </div>
                 </div>
-              </div>
-              <details class="advanced-settings">
-                <summary>高级设置 · 消息加密</summary>
-                <div class="field-grid advanced-body">
                 <label class="field-label" for="settings-callback-encrypt">消息加密</label>
                 <div class="field-control">
-                  <el-switch id="settings-callback-encrypt" v-model="formData.encrypt" />
+                  <el-switch :disabled="!selectedCallbackRow || updatingInstance" id="settings-callback-encrypt" v-model="instanceForm.encrypt" />
                 </div>
 
-                <template v-if="formData.encrypt">
+                <template v-if="instanceForm.encrypt">
                   <label class="field-label" for="settings-callback-encrypt-public-key">加密公钥</label>
                   <div class="field-control">
                     <div class="key-row">
-                      <el-input
+                      <el-input :disabled="!selectedCallbackRow || updatingInstance"
                         id="settings-callback-encrypt-public-key"
-                        v-model="formData.public_key"
+                        v-model="instanceForm.public_key"
                         type="textarea"
                         :rows="4"
                         placeholder="PKCS#1 RSA 1024 bits 公钥，内容为 Base64"
                         class="field-input-wide"
                       />
                     </div>
-                    <p class="field-hint">须为 PKCS#1 格式（BEGIN PUBLIC KEY），内容为 Base64，密钥位数 1024 bits</p>
+                    <p class="field-hint">填写 RSA 1024 位公钥的 Base64 内容；私钥由回调接收端保管</p>
                   </div>
                 </template>
-                </div>
-              </details>
+              </div>
+            </div>
+            <div class="card-actions">
+              <p class="card-note">{{ selectedCallbackRow ? '仅应用于 HTTP ' + selectedCallbackRow.port + '，其他企微不受影响' : '添加企微后，即可设置回调与加密' }}</p>
+              <el-button type="primary" :loading="updatingInstance" :disabled="!selectedCallbackRow?.user_id" @click="updateCallbackInstance">更新当前企微</el-button>
             </div>
           </div>
         </section>
@@ -96,7 +105,7 @@
                 <span class="section-icon accent"><el-icon><ChatLineRound /></el-icon></span>
                 <div>
                   <h2 class="section-title">企微版本</h2>
-                  <p class="section-desc">注入工具与客户端安装路径</p>
+                  <p class="section-desc">配置用于启动企微的客户端路径</p>
                 </div>
               </div>
             </div>
@@ -117,6 +126,24 @@
 
               </div>
             </div>
+            <footer class="card-actions" :class="{ 'is-dirty': isDirty, 'is-saving': saving }">
+              <p class="card-status" role="status" aria-live="polite">
+                <span v-if="!injectSettingsLoaded">客户端路径尚未读取</span>
+                <span v-else-if="saving">正在保存…</span>
+                <span v-else-if="isDirty">客户端路径有未保存的更改</span>
+                <span v-else class="card-status-ok">客户端路径已保存</span>
+              </p>
+              <el-button
+                type="primary"
+                size="default"
+                class="save-btn"
+                @click="handleSave"
+                :loading="saving"
+                :disabled="!injectSettingsLoaded || !isDirty"
+              >
+                保存修改
+              </el-button>
+            </footer>
           </div>
         </section>
 
@@ -133,12 +160,12 @@
                 <span class="section-icon accent"><el-icon><Promotion /></el-icon></span>
                 <div>
                   <h2 class="section-title">接口调试 · 文本消息</h2>
-                  <p class="section-desc">POST /api · type 3000</p>
+                  <p class="section-desc">选择企微与接收方，发送一条测试消息</p>
                 </div>
               </div>
               <div class="section-head-right">
                 <el-tooltip
-                  content="发往本框架：POST http://127.0.0.1:{监听端口}/api。请求 JSON 包含 type: 3000、port（企微实例 HTTP 端口）、user_id、msg。"
+                  content="发往所选企微实例：POST http://127.0.0.1:{HTTP端口}/api。请求 JSON 包含 type: 3000、user_id、msg。"
                   placement="top"
                 >
                   <span class="help-btn" @click.stop><el-icon><QuestionFilled /></el-icon></span>
@@ -252,7 +279,7 @@
                 <span class="section-icon"><el-icon><Sunny /></el-icon></span>
                 <div>
                   <h2 class="section-title">外观</h2>
-                  <p class="section-desc">界面明暗主题</p>
+                  <p class="section-desc">选择适合你的显示方式，立即生效</p>
                 </div>
               </div>
             </div>
@@ -307,7 +334,7 @@
                 <span class="section-icon"><el-icon><Monitor /></el-icon></span>
                 <div>
                   <h2 class="section-title">窗口与关闭</h2>
-                  <p class="section-desc">点击右上角关闭按钮时的行为</p>
+                  <p class="section-desc">选择关闭方式后自动保存</p>
                 </div>
               </div>
             </div>
@@ -317,7 +344,7 @@
                   type="button"
                   class="option-card"
                   :class="{ selected: formData.window_close_action === 'ask' }"
-                  @click="formData.window_close_action = 'ask'"
+                  @click="savePreference('window_close_action', 'ask')" :disabled="savingPreference"
                 >
                   <span class="option-card-radio" aria-hidden="true" />
                   <span class="option-card-content">
@@ -329,7 +356,7 @@
                   type="button"
                   class="option-card"
                   :class="{ selected: formData.window_close_action === 'tray' }"
-                  @click="formData.window_close_action = 'tray'"
+                  @click="savePreference('window_close_action', 'tray')" :disabled="savingPreference"
                 >
                   <span class="option-card-radio" aria-hidden="true" />
                   <span class="option-card-content">
@@ -341,7 +368,7 @@
                   type="button"
                   class="option-card"
                   :class="{ selected: formData.window_close_action === 'quit' }"
-                  @click="formData.window_close_action = 'quit'"
+                  @click="savePreference('window_close_action', 'quit')" :disabled="savingPreference"
                 >
                   <span class="option-card-radio" aria-hidden="true" />
                   <span class="option-card-content">
@@ -353,7 +380,7 @@
               <Transition name="fade">
                 <div v-if="hasStoredCloseConfirmPrefs" class="close-prefs-hint-box">
                   <p class="close-prefs-hint-text">
-                    检测到上次关窗时勾选了「不再提醒」，将一直按记忆中的操作执行。若要改回弹框或切换行为，可清除记忆，或选上方选项后保存。
+                    检测到上次关窗时勾选了「不再提醒」，将一直按记忆中的操作执行。若要改回弹框或切换行为，可清除记忆，或重新选择上方关闭方式。
                   </p>
                   <el-button type="warning" plain size="small" @click="clearStoredCloseConfirm">
                     清除「不再提醒」记忆
@@ -396,8 +423,9 @@
               <div class="auto-update-row">
                 <el-switch
                   v-model="formData.auto_check_update"
+                  @change="value => savePreference('auto_check_update', value)"
                   active-text="启动时自动检查更新"
-                  :disabled="!isElectronAvailable"
+                  :disabled="!isElectronAvailable || savingPreference"
                 />
                 <el-tooltip content="开启后，应用启动时会自动检查是否有新版本" placement="top">
                   <el-icon class="inline-help"><QuestionFilled /></el-icon>
@@ -483,22 +511,6 @@
       </main>
     </div>
 
-    <footer class="settings-footer" :class="{ 'is-dirty': isDirty, 'is-saving': saving }">
-      <p class="footer-status" role="status" aria-live="polite">
-        <span v-if="saving">正在保存…</span>
-        <span v-else-if="isDirty">有未保存的更改</span>
-        <span v-else class="footer-status-ok">所有更改已保存</span>
-      </p>
-      <el-button
-        type="primary"
-        size="large"
-        class="save-btn"
-        @click="handleSave"
-        :loading="saving"
-      >
-        保存修改
-      </el-button>
-    </footer>
   </div>
 </template>
 
@@ -532,7 +544,6 @@ import { useConfigStore } from '../stores/config'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
 import { getStoredThemeMode } from '../utils/theme'
-import { validatePkcs1Rsa1024PublicKey } from '../utils/pkcs1PublicKey'
 
 const configStore = useConfigStore()
 const setThemeModeGlobal = inject('setThemeMode', null)
@@ -544,7 +555,7 @@ const mainScrollRef = ref(null)
 const sectionExpanded = reactive({ api: true })
 const themeMode = ref(getStoredThemeMode())
 const navSections = [
-  { id: 'http', label: '连接与回调', icon: Connection },
+  { id: 'http', label: '回调与加密', icon: Connection },
   { id: 'wecom', label: '企微版本', icon: ChatLineRound },
   { id: 'api', label: '接口调试', icon: Promotion },
   { id: 'appearance', label: '外观', icon: Sunny },
@@ -643,35 +654,106 @@ const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
   wecom_exe_path_v5: '',
-  push_url: '',
-  push_enabled: false,
-  push_timeout_ms: 2000,
-  push_retries: 2,
-  encrypt: false,
-  public_key: '',
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
   auto_check_update: true,
   /** ask | tray | quit，写入 ini sys.window_close_action */
   window_close_action: 'ask'
 })
 
-/** 展示即将/实际请求的 URL 与 Body（与实际发送一致时需 port / user_id 已合法填写） */
-const textTestRequestPreview = computed(() => {
-  const listenPort = parseInt(String(formData.server_port ?? '').trim(), 10)
-  const listenOk =
-    !Number.isNaN(listenPort) && listenPort > 1024 && listenPort <= 10000
-  const url = listenOk
-    ? `http://127.0.0.1:${listenPort}/api`
-    : '（框架监听端口配置无效）'
+// 持久配置按账号 ID 匹配；页面草稿按运行实例及账号隔离，不冒充企微实际配置。
+const callbackInstances = ref([])
+const selectedCallbackPort = ref('')
+const loadingInstances = ref(false)
+const updatingInstance = ref(false)
+let callbackRefreshPending = false
+const instanceDrafts = reactive({})
+const selectedCallbackRow = computed(() => callbackInstances.value.find(row => String(row.port) === selectedCallbackPort.value))
+const emptyInstanceForm = () => ({ push_enabled: false, push_url: '', push_timeout_ms: 2000, push_retries: 2, encrypt: false, public_key: '' })
+const blankInstanceForm = reactive(emptyInstanceForm())
+const instanceForm = computed(() => {
+  const row = selectedCallbackRow.value
+  if (!row) return blankInstanceForm
+  return instanceDrafts[row.port + ':' + row.pid + ':' + row.user_id]?.form || blankInstanceForm
+})
+const instanceStatus = computed(() => {
+  const row = selectedCallbackRow.value
+  if (!row) return '没有选中的运行实例；请先添加企微，或刷新列表。'
+  const draft = instanceDrafts[row.port + ':' + row.pid + ':' + row.user_id]
+  if (!row.user_id) return '尚未取得账号 ID，请先登录企微，再刷新列表以匹配已保存的配置。'
+  if (draft?.storageWarning) return draft.storageWarning
+  if (draft?.restored) return '已按账号 ID 匹配上次保存的回调与加密设置；点击更新应用到当前企微。'
+  return draft?.confirmed ? '已向该实例成功提交配置；继续编辑后需再次点击更新。' : '以下为本地初始值或草稿，尚未确认企微实际配置。请核对后点击更新。'
+})
+async function refreshCallbackInstances() {
+  if (loadingInstances.value || updatingInstance.value) {
+    callbackRefreshPending = true
+    return
+  }
+  callbackRefreshPending = false
+  loadingInstances.value = true
+  try {
+    const rows = await window.electronAPI.listCallbackInstances()
+    for (const row of rows) {
+      const key = row.port + ':' + row.pid + ':' + row.user_id
+      if (!instanceDrafts[key]) {
+        const cfg = row.settings
+        instanceDrafts[key] = { confirmed: row.confirmed === true, restored: row.restored === true, storageWarning: row.storageWarning || '', form: cfg ? {
+          push_enabled: cfg.enabled, push_url: cfg.url, push_timeout_ms: cfg.timeout_ms,
+          push_retries: cfg.retries, encrypt: cfg.Message_Encryption, public_key: cfg.RSA_PublicKey
+        } : emptyInstanceForm() }
+      }
+    }
+    const activeKeys = new Set(rows.map(row => row.port + ':' + row.pid + ':' + row.user_id))
+    for (const key of Object.keys(instanceDrafts)) {
+      if (!activeKeys.has(key)) delete instanceDrafts[key]
+    }
+    callbackInstances.value = rows
+    if (!rows.some(row => String(row.port) === selectedCallbackPort.value)) selectedCallbackPort.value = rows.length ? String(rows[0].port) : ''
+  } catch (error) { feedback.error('C002', '读取企微实例失败：' + error.message) }
+  finally {
+    loadingInstances.value = false
+    if (callbackRefreshPending) void refreshCallbackInstances()
+  }
+}
+watch(() => JSON.stringify(wecomManagerInstances.value.map(row => [row.port, row.user_id])), refreshCallbackInstances)
 
+async function updateCallbackInstance() {
+  const row = selectedCallbackRow.value
+  if (!row || updatingInstance.value) return
+  const draft = instanceDrafts[row.port + ':' + row.pid + ':' + row.user_id]
+  const form = { ...draft.form }
+  updatingInstance.value = true
+  try {
+    const result = await window.electronAPI.updateInstanceCallback({ port: row.port, pid: row.pid, user_id: row.user_id, settings: {
+      enabled: form.push_enabled, url: form.push_url, timeout_ms: form.push_timeout_ms,
+      retries: form.push_retries, Message_Encryption: form.encrypt, RSA_PublicKey: form.public_key
+    } })
+    if (!result.success) throw new Error(result.msg)
+    draft.confirmed = true
+    draft.restored = false
+    draft.storageWarning = result.warning || ''
+    if (result.warning) { ElMessage.warning(result.warning); return }
+    ElMessage.success('当前企微已更新，配置已按账号 ID 保存')
+  } catch (error) { feedback.error('C003', error.message || '更新失败') }
+  finally {
+    updatingInstance.value = false
+    if (callbackRefreshPending) void refreshCallbackInstances()
+  }
+}
+
+/** 展示即将/实际请求的 URL 与 Body（与实际发送一致时需 HTTP 端口 / user_id 已合法填写） */
+const textTestRequestPreview = computed(() => {
   const wPortParsed = parseInt(String(textTestWecomPort.value || '').trim(), 10)
   const portOk =
     !Number.isNaN(wPortParsed) && wPortParsed >= 1 && wPortParsed <= 65535
+  const url = portOk
+    ? `http://127.0.0.1:${wPortParsed}/api`
+    : '（请选择 HTTP 端口）'
+
   const uid = String(textTestUserId.value || '').trim()
 
   const payload = {
     type: 3000,
-    port: portOk ? wPortParsed : '（请选择企微 HTTP 端口）',
     user_id: uid || '（请填写接收方 user_id）',
     msg: TEXT_MSG_TEST_BODY
   }
@@ -697,14 +779,6 @@ const isUpdateInProgress = computed(() => {
   return checkingUpdate.value || downloadingUpdate.value || installingUpdate.value
 })
 
-/** 用于与 ini.window_close_action 对比 */
-function normalizeIniCloseAction(raw) {
-  const wca = String(raw || 'ask').trim().toLowerCase()
-  if (wca === 'quit' || wca === 'exit') return 'quit'
-  if (wca === 'tray' || wca === 'minimize_tray') return 'tray'
-  return 'ask'
-}
-
 function refreshCloseConfirmPrefsHint() {
   hasStoredCloseConfirmPrefs.value = getCloseConfirmAutoAction() !== null
 }
@@ -719,15 +793,7 @@ function clearStoredCloseConfirm() {
 // 加载配置
 const injectSettingsLoaded = ref(false)
 const savedInjectSettings = ref(null)
-const applyInjectSettings = (data) => {
-  formData.wecom_exe_path_v5 = data.host || ''
-  formData.push_url = data.url || ''
-  formData.push_enabled = data.enabled === true
-  formData.push_timeout_ms = data.timeout_ms
-  formData.push_retries = data.retries
-  formData.encrypt = data.encrypt === true
-  formData.public_key = String(data.public_key || '').replace(/-----BEGIN [^-]+-----/g, '').replace(/-----END [^-]+-----/g, '').replace(/\s+/g, '')
-}
+const applyInjectSettings = (data) => { formData.wecom_exe_path_v5 = data.host || '' }
 const loadInjectSettings = async () => {
   const result = await window.electronAPI?.readInjectSettings()
   if (!result?.success) {
@@ -773,10 +839,10 @@ const loadConfig = () => {
 }
 
 watch(
-  formData,
+  () => formData.wecom_exe_path_v5,
   () => {
     if (skipDirtyWatch.value) return
-    isDirty.value = true
+    isDirty.value = formData.wecom_exe_path_v5 !== (savedInjectSettings.value?.host || '')
   },
   { deep: true }
 )
@@ -863,25 +929,19 @@ async function handleTestMessageText() {
   }
   const wPort = parseInt(String(textTestWecomPort.value || '').trim(), 10)
   if (Number.isNaN(wPort) || wPort < 1 || wPort > 65535) {
-    feedback.warning('U005', '请填写有效的企微 HTTP 端口（请求体里的 port，1～65535）')
-    return
-  }
-  const listenPort = parseInt(String(formData.server_port || '').trim(), 10)
-  if (Number.isNaN(listenPort) || listenPort <= 1024 || listenPort > 10000) {
-    feedback.warning('U006', '框架监听端口配置无效，请检查配置文件')
+    feedback.warning('U005', '请选择有效的 HTTP 端口（1～65535）')
     return
   }
 
   testingTextMsg.value = true
   textTestResponseRaw.value = ''
-  const url = `http://127.0.0.1:${listenPort}/api`
+  const url = `http://127.0.0.1:${wPort}/api`
   try {
     const result = await window.electronAPI.callAPI({
       url,
       method: 'POST',
       data: {
         type: 3000,
-        port: wPort,
         user_id: uid,
         msg: TEXT_MSG_TEST_BODY
       }
@@ -1117,75 +1177,36 @@ const setupUpdateListeners = () => {
   })
 }
 
+const savingPreference = ref(false)
+async function savePreference(key, value) {
+  if (savingPreference.value) return
+  const previous = configStore.config.sys?.[key]
+  savingPreference.value = true
+  try {
+    const result = await window.electronAPI.saveConfig({ sys: { [key]: String(value) } })
+    if (!result.success) throw new Error(result.msg)
+    configStore.config.sys = { ...configStore.config.sys, [key]: String(value) }
+    formData[key] = value
+    if (key === 'window_close_action') { clearCloseConfirmPrefs(); refreshCloseConfirmPrefsHint() }
+    ElMessage.success('偏好已保存')
+  } catch (error) {
+    formData[key] = key === 'auto_check_update' ? previous == null || previous === true || previous === 'true' : previous || 'ask'
+    feedback.error('P001', error.message || '保存偏好失败，请重试')
+  } finally { savingPreference.value = false }
+}
+
 // 保存配置
 const handleSave = async () => {
-  if (!injectSettingsLoaded.value) {
-    feedback.error('U018', '注入配置尚未读取成功，请重新打开设置页')
-    return
-  }
-  const publicKey = String(formData.public_key || '').trim()
-  let normalizedPublicKey = publicKey
-  if (formData.encrypt || publicKey) {
-    const keyCheck = validatePkcs1Rsa1024PublicKey(publicKey)
-    if (!keyCheck.ok) {
-      feedback.warning('U020', keyCheck.message)
-      return
-    }
-    normalizedPublicKey = keyCheck.body
-    formData.public_key = normalizedPublicKey
-  }
-
+  if (!injectSettingsLoaded.value) return feedback.error('U018', '请先读取客户端路径配置')
   saving.value = true
-  const prevCloseIni = normalizeIniCloseAction(configStore.config.sys?.window_close_action)
-  const nextClose = formData.window_close_action || 'ask'
   try {
-    const injectTool = {
-      host: formData.wecom_exe_path_v5,
-      url: formData.push_url,
-      enabled: formData.push_enabled,
-      timeout_ms: formData.push_timeout_ms,
-      retries: formData.push_retries,
-      encrypt: formData.encrypt === true,
-      public_key: normalizedPublicKey
-    }
-    const newConfig = {
-      injectTool,
-      sys: {
-        ...configStore.config.sys,
-        auto_check_update: String(formData.auto_check_update),
-        window_close_action: formData.window_close_action || 'ask'
-      },
-      custom: {
-        login_info: configStore.getLoginInfo()
-      }
-    }
-
-    const result = await configStore.saveConfig(newConfig)
-    
-    if (result.success) {
-      savedInjectSettings.value = { ...injectTool }
-      applyInjectSettings(injectTool)
-      // 直接退出：与本地「一直最小化」记忆冲突，保存后顺带清除记忆
-      if (nextClose === 'quit') {
-        clearCloseConfirmPrefs()
-        refreshCloseConfirmPrefsHint()
-      } else if (prevCloseIni !== 'ask' && nextClose === 'ask') {
-        // 从「托盘 / 退出」改回询问时，清空记忆以免仍按旧习惯自动最小化
-        clearCloseConfirmPrefs()
-        refreshCloseConfirmPrefsHint()
-      }
-      isDirty.value = false
-      ElMessage.success('配置已保存；企微相关设置需退出对应企微后重新添加生效')
-    } else {
-      feedback.error('U022', result.msg || '保存失败')
-      loadConfig() // 恢复原值
-    }
-  } catch (error) {
-    feedback.error('U023', '保存失败: ' + error.message)
-    loadConfig() // 恢复原值
-  } finally {
-    saving.value = false
-  }
+    const result = await window.electronAPI.saveInjectHost(formData.wecom_exe_path_v5)
+    if (!result.success) throw new Error(result.msg)
+    savedInjectSettings.value = { host: formData.wecom_exe_path_v5 }
+    isDirty.value = false
+    ElMessage.success('客户端路径已保存；实例回调和加密配置请使用上方更新按钮')
+  } catch (error) { feedback.error('U023', error.message || '保存失败') }
+  finally { saving.value = false }
 }
 
 // 仅在没有未保存草稿时回填；编辑中不读盘、不写 bin，避免和文件来回同步
@@ -1199,6 +1220,7 @@ watch(
 )
 
 onMounted(async () => {
+  await refreshCallbackInstances()
   const hasLoaded =
     configStore.config.sys?.server_port &&
     configStore.config.sys?.callback !== undefined
@@ -1225,6 +1247,20 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.instance-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; padding: 16px; background: var(--sp-subtle-bg); border: 1px solid var(--sp-border); border-radius: 10px; }
+.instance-picker { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px; }
+.instance-picker label { font-size: 13px; font-weight: 600; }
+.instance-select { width: 100%; }
+.instance-status { font-size: 12px; line-height: 1.7; color: var(--sp-muted); margin: 12px 0 24px; }
+.card-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-top: 1px solid var(--sp-border); background: var(--sp-subtle-bg); }
+.card-actions :deep(.el-button) { flex-shrink: 0; min-width: 124px; margin: 0; }
+.card-note, .card-status { margin: 0; font-size: 12px; line-height: 1.6; color: var(--sp-muted); }
+.card-status { display: flex; align-items: center; gap: 8px; }
+.card-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--el-color-success); flex-shrink: 0; }
+.is-dirty .card-status::before { background: var(--el-color-warning); }
+.is-saving .card-status::before { background: var(--sp-accent); }
+.option-card:disabled { cursor: wait; opacity: .65; }
+.option-card:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
 .settings-page {
   display: flex;
   flex-direction: column;
@@ -1312,15 +1348,15 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 24px 32px 32px;
+  padding: 24px clamp(16px, 3vw, 36px) 40px;
   scrollbar-gutter: stable;
   scroll-behavior: smooth;
 }
 
 .settings-section {
   scroll-margin-top: 12px;
-  margin: 0 auto 20px;
-  max-width: 1040px;
+  margin: 0 auto 24px;
+  max-width: 1000px;
 }
 
 .settings-section-last {
@@ -1409,7 +1445,7 @@ onUnmounted(() => {
 
 .section-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.35;
 }
@@ -1491,7 +1527,7 @@ onUnmounted(() => {
 .field-grid {
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
-  gap: 24px 20px;
+  gap: 22px 24px;
   align-items: start;
 }
 
@@ -1514,7 +1550,7 @@ onUnmounted(() => {
 
 .field-input-wide {
   width: 100%;
-  max-width: 620px;
+  max-width: 100%;
 }
 
 .field-hint {
@@ -1814,40 +1850,6 @@ onUnmounted(() => {
   border-top: 1px solid var(--sp-border);
 }
 
-.settings-footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 28px;
-  border-top: 1px solid var(--sp-border);
-  background: var(--sp-footer-bg);
-  backdrop-filter: blur(8px);
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-.settings-footer.is-dirty {
-  border-top-color: var(--el-color-warning-light-5);
-  box-shadow: 0 -4px 20px rgba(245, 158, 11, 0.08);
-}
-
-.footer-status {
-  margin: 0;
-  font-size: 13px;
-  color: var(--sp-muted);
-}
-
-.footer-status-ok {
-  color: #67c23a;
-}
-
-.save-btn {
-  min-width: 128px;
-  border-radius: 8px;
-}
-
-/* API test (preserved layout) */
 .api-test-split {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(260px, 1.08fr);
@@ -2090,19 +2092,10 @@ onUnmounted(() => {
 .compact-field label { font-size: 12px; color: var(--sp-text); }
 .compact-field label span { margin-left: 6px; color: var(--sp-muted); }
 .compact-field :deep(.el-input-number) { width: 100%; }
-.advanced-settings { margin-top: 24px; border-top: 1px solid var(--sp-border); }
-.advanced-settings summary { padding: 18px 0 0; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--sp-text); }
-.advanced-settings summary span { display: inline-block; margin-left: 12px; font-size: 12px; font-weight: 400; color: var(--sp-muted); }
-.advanced-body { padding-top: 24px; }
 .settings-page :deep(.el-input__wrapper), .settings-page :deep(.el-select__wrapper) { min-height: 36px; border-radius: 7px; }
 .settings-page :deep(.el-textarea__inner) { border-radius: 7px; }
-.settings-page button:focus-visible, .advanced-settings summary:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
+.settings-page button:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
 .section-desc, .field-hint, .option-card-desc { line-height: 1.65; overflow-wrap: anywhere; }
-.footer-status { display: flex; align-items: center; gap: 8px; }
-.footer-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--el-color-success); flex-shrink: 0; }
-.is-dirty .footer-status::before { background: var(--el-color-warning); }
-.is-saving .footer-status::before { background: var(--sp-accent); }
-
 @media (max-width: 960px) {
   .settings-body {
     flex-direction: column;
@@ -2157,21 +2150,23 @@ onUnmounted(() => {
   .section-head, .section-body { padding: 18px 16px; }
   .option-cards { grid-template-columns: 1fr; }
   .settings-main { padding-top: 16px; }
+  .instance-toolbar { align-items: stretch; }
+  .instance-picker { flex-basis: 100%; min-width: 0; }
+  .card-actions { text-align: left; }
   .field-input, .field-input-wide { max-width: 100%; }
-  .advanced-settings summary span { display: block; margin: 6px 0 0; }
   .settings-main,
-  .settings-footer {
+  .card-actions {
     padding-left: 16px;
     padding-right: 16px;
   }
 
-  .settings-footer {
+  .card-actions {
     flex-direction: column;
     align-items: stretch;
     text-align: center;
   }
 
-  .save-btn {
+  .card-actions :deep(.el-button) {
     width: 100%;
   }
 
@@ -2188,4 +2183,3 @@ onUnmounted(() => {
   .settings-page *, .settings-page *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 </style>
-

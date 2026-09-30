@@ -1,7 +1,6 @@
 const fs = require('fs')
 const path = require('path')
 const { writeTextAtomic } = require('../commons/atomicFile')
-const { validatePkcs1Rsa1024PublicKey } = require('../commons/pkcs1PublicKey.cjs')
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -64,49 +63,11 @@ function readInjectSettings(dir) {
 }
 
 function saveInjectSettings(dir, input) {
-  const integer = (value, min, max, label) => {
-    const n = Number(value)
-    if (String(value).trim() === '' || !Number.isInteger(n) || n < min || n > max) throw new Error(`${label}范围为 ${min}–${max} 的整数`)
-    return n
-  }
   const host = String(input.host || '').trim()
-  const timeout = integer(input.timeout_ms, 1, 2147483647, '回调超时（毫秒）')
-  const retries = integer(input.retries, 0, 2147483647, '失败重试次数')
-  if (!host || !fs.existsSync(host) || !fs.statSync(host).isFile()) throw new Error(`v5 客户端路径不存在: ${host}`)
-  if (typeof input.enabled !== 'boolean') throw new Error('回调开关必须为布尔值')
-  const url = String(input.url || '').trim()
-  if (url || input.enabled) {
-    let parsed
-    try { parsed = new URL(url) } catch { throw new Error('回调地址必须为有效的 HTTP/HTTPS 地址') }
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('回调地址必须使用 HTTP/HTTPS')
-  }
-  const encrypt = parseFlag(input.encrypt)
-  let public_key = String(input.public_key || '').trim()
-  if (encrypt || public_key) {
-    const keyCheck = validatePkcs1Rsa1024PublicKey(public_key)
-    if (!keyCheck.ok) throw new Error(keyCheck.message)
-    public_key = keyCheck.body
-  }
+  if (!host || !fs.existsSync(host) || !fs.statSync(host).isFile()) throw new Error('v5 客户端路径不存在')
   const settings = readDocument(dir, SETTINGS_FILE)
-  const is_debug = Object.prototype.hasOwnProperty.call(input, 'is_debug')
-    ? parseFlag(input.is_debug)
-    : parseFlag(pickFirst(settings.value, ['IsDebug'], false))
-  const next = {
-    ...settings.value,
-    enabled: input.enabled,
-    url,
-    timeout_ms: timeout,
-    retries,
-    host,
-    Message_Encryption: encrypt,
-    RSA_PublicKey: public_key,
-    IsDebug: is_debug
-  }
-  delete next.encrypt
-  delete next.public_key
-
-  if (JSON.stringify(settings.value) === JSON.stringify(next)) return () => {}
-  writeTextAtomic(settings.filePath, JSON.stringify(next, null, 2) + '\n')
+  if (settings.value.host === host) return () => {}
+  writeTextAtomic(settings.filePath, JSON.stringify({ ...settings.value, host }, null, 2) + '\n')
   let rolledBack = false
   return () => {
     if (rolledBack) return

@@ -2,37 +2,32 @@ const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
 const diagnostics = createDiagnostics('callback_server.js')
 /**
  * 回调服务器示例
- * 监听地址和路径从 bin/settings.json 的 url 读取
+ * 监听地址和路径从命令行回调地址读取，不读配置文件。
  *
  * 启动方式：
- * node scripts/callback_server.js
+ * node scripts/callback_server.js http://127.0.0.1:8002/msg
  * 加密回调：先设置 CALLBACK_PRIVATE_KEY_FILE 为配对的 PEM 私钥文件路径。
  * 详见 docs/callback-server.md。
  */
 const fs = require('fs')
-const path = require('path')
 const express = require('express')
 const cors = require('cors')
 const crypto = require('crypto')
 const { TextDecoder } = require('util')
-const { parseJsonDocument } = require('../electron/services/injectSettings')
 
-const SETTINGS_PATH = path.join(__dirname, '..', 'bin', 'settings.json')
-
-function readCallbackTarget(settingsPath = SETTINGS_PATH) {
-  const settings = parseJsonDocument(fs.readFileSync(settingsPath, 'utf8'))
-  const url = String(settings.url || '').trim()
+function readCallbackTarget(callbackUrl) {
+  const url = String(callbackUrl || '').trim()
   if (!url) {
-    throw new Error(`${settingsPath} 未配置 url`)
+    throw new Error('请传入回调地址，例如: node scripts/callback_server.js http://127.0.0.1:8002/msg')
   }
   let parsed
   try {
     parsed = new URL(url)
   } catch {
-    throw new Error(`settings.json url 不是有效地址: ${url}`)
+    throw new Error(`回调地址不是有效地址: ${url}`)
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error(`settings.json url 必须是 HTTP/HTTPS: ${url}`)
+    throw new Error(`回调地址必须是 HTTP/HTTPS: ${url}`)
   }
   const port = parsed.port
     ? Number(parsed.port)
@@ -170,12 +165,12 @@ function createCallbackApp(target, { privateKey = null, logger = console } = {})
   return app
 }
 
-function startServer() {
-  const target = readCallbackTarget()
+function startServer(callbackUrl = process.argv[2]) {
+  const target = readCallbackTarget(callbackUrl)
   const privateKey = loadPrivateKey(process.env.CALLBACK_PRIVATE_KEY_FILE)
   const app = createCallbackApp(target, { privateKey })
   const server = app.listen(target.port, target.host, () => {
-    diagnostics.info('L001', `📄 配置文件: ${SETTINGS_PATH}`)
+    diagnostics.info('L001', `📥 命令行回调地址: ${target.url}`)
     diagnostics.info('L002', `📡 监听地址: http://${target.host}:${target.port}`)
     diagnostics.info('L003', `📥 回调接口: ${target.url}`)
     diagnostics.info('L004', `🔑 RSA 解密: ${privateKey ? '已配置（1024 bits / PKCS#1 v1.5）' : '未配置私钥，仍可接收明文'}`)
