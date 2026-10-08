@@ -23,8 +23,13 @@
       <main ref="mainScrollRef" class="settings-main" tabindex="0" aria-label="设置内容">
         <!-- HTTP -->
         <section :id="sectionDomId('http')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.http }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.http"
+              @click="toggleSection('http')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
@@ -32,7 +37,10 @@
                   <p class="section-desc">先选择企微，再设置消息推送与加密方式</p>
                 </div>
               </div>
-            </div>
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.http }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.http">
             <div class="section-body">
               <div class="instance-toolbar">
                 <div class="instance-picker">
@@ -94,13 +102,20 @@
               <p class="card-note">{{ selectedCallbackRow ? '仅应用于 HTTP ' + selectedCallbackRow.port + '，其他企微不受影响' : '添加企微后，即可设置回调与加密' }}</p>
               <el-button type="primary" :loading="updatingInstance" :disabled="!selectedCallbackRow?.user_id" @click="updateCallbackInstance">更新当前企微</el-button>
             </div>
+              </div>
+            </Transition>
           </div>
         </section>
 
         <!-- WeCom Version -->
         <section :id="sectionDomId('wecom')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.wecom }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.wecom"
+              @click="toggleSection('wecom')"
+            >
               <div class="section-head-left">
                 <span class="section-icon accent"><el-icon><ChatLineRound /></el-icon></span>
                 <div>
@@ -108,7 +123,10 @@
                   <p class="section-desc">配置用于启动企微的客户端路径</p>
                 </div>
               </div>
-            </div>
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.wecom }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.wecom">
             <div class="section-body">
               <div class="field-grid">
 
@@ -144,6 +162,8 @@
                 保存修改
               </el-button>
             </footer>
+              </div>
+            </Transition>
           </div>
         </section>
 
@@ -273,8 +293,13 @@
 
         <!-- Appearance -->
         <section :id="sectionDomId('appearance')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.appearance }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.appearance"
+              @click="toggleSection('appearance')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Sunny /></el-icon></span>
                 <div>
@@ -282,8 +307,10 @@
                   <p class="section-desc">选择适合你的显示方式，立即生效</p>
                 </div>
               </div>
-            </div>
-            <div class="section-body">
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.appearance }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.appearance" class="section-body">
               <div class="option-cards theme-cards">
                 <button
                   type="button"
@@ -322,14 +349,20 @@
                   </span>
                 </button>
               </div>
-            </div>
+              </div>
+            </Transition>
           </div>
         </section>
 
         <!-- Window -->
         <section :id="sectionDomId('window')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.window }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.window"
+              @click="toggleSection('window')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Monitor /></el-icon></span>
                 <div>
@@ -337,8 +370,10 @@
                   <p class="section-desc">选择关闭方式后自动保存</p>
                 </div>
               </div>
-            </div>
-            <div class="section-body">
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.window }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.window" class="section-body">
               <div class="option-cards">
                 <button
                   type="button"
@@ -387,14 +422,20 @@
                   </el-button>
                 </div>
               </Transition>
-            </div>
+              </div>
+            </Transition>
           </div>
         </section>
 
         <!-- Update -->
         <section :id="sectionDomId('update')" class="settings-section settings-section-last">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.update }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.update"
+              @click="toggleSection('update')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Refresh /></el-icon></span>
                 <div>
@@ -402,8 +443,10 @@
                   <p class="section-desc">版本检查与自动更新</p>
                 </div>
               </div>
-            </div>
-            <div class="section-body">
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.update }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.update" class="section-body">
               <div class="version-bar">
                 <div class="version-chip">
                   <span class="version-chip-label">当前版本</span>
@@ -505,7 +548,8 @@
                   </div>
                 </div>
               </Transition>
-            </div>
+              </div>
+            </Transition>
           </div>
         </section>
       </main>
@@ -553,7 +597,14 @@ const isDirty = ref(false)
 const skipDirtyWatch = ref(false)
 const activeSection = ref('http')
 const mainScrollRef = ref(null)
-const sectionExpanded = reactive({ api: true })
+const sectionExpanded = reactive({
+  http: false,
+  wecom: false,
+  api: false,
+  appearance: false,
+  window: false,
+  update: false
+})
 const themeMode = ref(getStoredThemeMode())
 const navSections = [
   { id: 'http', label: '回调与加密', icon: Connection },
@@ -570,13 +621,27 @@ function sectionDomId(id) {
   return `settings-section-${id}`
 }
 
+function expandOnly(id) {
+  for (const key of Object.keys(sectionExpanded)) {
+    sectionExpanded[key] = key === id
+  }
+  activeSection.value = id
+}
+
 function scrollToSection(id) {
   activeSection.value = id
-  document.getElementById(sectionDomId(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  expandOnly(id)
+  nextTick(() => {
+    document.getElementById(sectionDomId(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
 }
 
 function toggleSection(id) {
-  sectionExpanded[id] = !sectionExpanded[id]
+  if (sectionExpanded[id]) {
+    sectionExpanded[id] = false
+    return
+  }
+  expandOnly(id)
 }
 
 function setLocalTheme(mode) {
@@ -603,6 +668,7 @@ function setupSectionObserver() {
   const root = mainScrollRef.value || null
   sectionObserver = new IntersectionObserver(
     (entries) => {
+      if (Object.values(sectionExpanded).some(Boolean)) return
       const top = entries
         .filter((e) => e.isIntersecting)
         .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
@@ -1347,6 +1413,15 @@ onUnmounted(() => {
 
 .section-head-toggle:hover {
   background: rgba(64, 158, 255, 0.04);
+}
+
+.section-head-toggle:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: -2px;
+}
+
+.section-card.is-collapsed .section-head {
+  border-bottom-color: transparent;
 }
 
 .section-head-left {
