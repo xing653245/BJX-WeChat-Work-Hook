@@ -32,6 +32,7 @@ const {
   runInjectTool: runInjectToolService
 } = require('./services/wecomInject')
 const { getInjectBinDir } = require('./commons/resourcePaths')
+const { discoverWecom } = require('./services/wecomDiscovery')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { callVWorkAPI } = require('./middleware/apiHandler')
@@ -80,7 +81,8 @@ let crashRecoveryAutoInjectSuspended = false
 /** 单实例：避免多开导致端口冲突 */
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
-  app.quit()
+  console.error('[启动] 框架已有实例运行，已请求显示现有窗口。如需启动开发版，请先从系统托盘退出已有框架。')
+  app.exit(23)
 }
 
 function focusMainWindow() {
@@ -604,6 +606,10 @@ const runInjectForPort = async (robotPort, reason) => {
   // 必须在首次 await 前占用端口锁，避免两个调用同时通过前置检查。
   injectInProgressPorts.add(robotPort)
   try {
+    const running = await discoverWecom()
+    if (running.unmanagedPids.length) {
+      return { success: false, blocked: true, output: '检测到已运行但尚未接入框架的企微，请从企微托盘菜单完全退出后，再在框架中添加；框架不会自动结束您的企微。' }
+    }
     const safety = await canInjectPort(robotPort, { reason })
     if (!safety.allowed) {
       return { success: false, output: safety.reason, blocked: true }
@@ -1264,6 +1270,15 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
 const injectSettingsDir = getInjectBinDir
+
+ipcMain.handle('discover-running-wecom', async event => {
+  assertMainWindow(event, mainWindow)
+  try { return { success: true, ...await discoverWecom() } }
+  catch (error) {
+    diagnostics.warn('C006', '检测已运行企微失败', error)
+    return { success: false, message: '无法检测正在运行的企微，请稍后点击重新检测；请勿重复启动同一账号。' }
+  }
+})
 
 async function listCallbackInstances() {
   const rows = new Map(instanceCallbacks.ports().map(port => [port, { port }]))

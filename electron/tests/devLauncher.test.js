@@ -8,6 +8,7 @@ const { EventEmitter } = require('node:events')
 // 模拟 Electron 子进程，验证启动器生命周期，不启动真实企微或占用业务端口。
 async function launch({ listenError = false } = {}) {
   let closed = 0, spawned = 0, options
+  const messages = []
   const process = Object.assign(new EventEmitter(), { env: { ELECTRON_RUN_AS_NODE: '1' }, exit() {} })
   const child = Object.assign(new EventEmitter(), {
     exitCode: null, signalCode: null,
@@ -22,12 +23,12 @@ async function launch({ listenError = false } = {}) {
     .replace(/^import .*$/gm, '')
     .replace("const root = fileURLToPath(new URL('../', import.meta.url))", "const root = 'project'")
   await vm.runInNewContext(`(async () => {${script}\n})()`, {
-    process, console: { log() {}, error() {} },
+    process, console: { log: text => messages.push(text), error: text => messages.push(text) },
     setTimeout: () => ({ unref() {} }), electron: 'electron',
     createServer: async () => server,
     spawn: (exe, args, opts) => { spawned++; options = opts; return child }
   })
-  return { process, child, get closed() { return closed }, get spawned() { return spawned }, options }
+  return { process, child, messages, get closed() { return closed }, get spawned() { return spawned }, options }
 }
 
 test('开发启动器把实际端口传给 Electron，Electron 退出时关闭 Vite', async () => {
@@ -53,4 +54,17 @@ test('开发服务启动失败不启动 Electron，取消启动只清理一次',
   await new Promise(setImmediate)
   assert.equal(run.child.signalCode, 'SIGTERM')
   assert.equal(run.closed, 1)
+})
+
+test('重复实例和异常退出均给出明确原因并清理开发服务', async () => {
+  for (const [code, signal, expected] of [[23, null, /已有框架正在运行/], [1, null, /退出码 1/], [null, 'SIGTERM', /信号 SIGTERM/]]) {
+    const run = await launch()
+    run.child.exitCode = code
+    run.child.signalCode = signal
+    run.child.emit('exit', code, signal)
+    await new Promise(setImmediate)
+    assert.ok(run.messages.some(text => expected.test(text)))
+    assert.equal(run.closed, 1)
+    assert.equal(run.process.exitCode, code ?? 1)
+  }
 })

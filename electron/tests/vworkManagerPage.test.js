@@ -23,3 +23,17 @@ test('企微管理页仍保留已登录账号的管理操作', () => {
   assert.match(source, /设置标签/u)
   assert.match(source, /退出微信/u)
 })
+
+test('退出登录调用 type 1003，不把账号 ID 当作接口 type', () => {
+  const source = readFileSync(pagePath, 'utf8')
+
+  assert.match(source, /await VWorkApi\.logout\(port\)/u)
+  assert.doesNotMatch(source, /VWorkApi\.logout\([^)]*user_id/u)
+})
+
+test('关闭自动更新按 Hook 响应判断，加密成功包不记为失败', () => {
+  const source = readFileSync(pagePath, 'utf8')
+
+  assert.match(source, /isWecomHookBodyOk\(body\)/u)
+  assert.doesNotMatch(source, /result\.data\?\.errno !== 0/u)
+})

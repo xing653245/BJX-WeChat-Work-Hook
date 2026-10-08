@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProcessState: (pid) => ipcRenderer.invoke('get-process-state', pid),
   
   listCallbackInstances: () => ipcRenderer.invoke('list-callback-instances'),
+  discoverRunningWecom: () => ipcRenderer.invoke('discover-running-wecom'),
   updateInstanceCallback: (payload) => ipcRenderer.invoke('update-instance-callback', payload),
   saveInjectHost: (host) => ipcRenderer.invoke('save-inject-host', host),
   readInjectSettings: () => ipcRenderer.invoke('read-inject-settings'),

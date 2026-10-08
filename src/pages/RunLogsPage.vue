@@ -256,7 +256,7 @@ async function exportReport() {
   try {
     const result = await window.electronAPI?.exportDiagnosticReport?.()
     if (result?.canceled) return
-    if (result?.success) ElMessage.success('故障报告已加密导出，请将文件发送给技术支持')
+    if (result?.success) ElMessage.success('故障报告已导出，请将文件发送给技术支持')
     else feedback.error('U009', result?.message || '导出失败，请重启应用后重试')
   } catch (error) { feedback.error('U010', error) }
   finally { exportingReport.value = false }

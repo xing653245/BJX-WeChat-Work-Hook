@@ -34,7 +34,14 @@ try {
       delete env.ELECTRON_RUN_AS_NODE
       // Electron 是用户操作的桌面窗口，不能作为隐藏的后台辅助进程启动。
       child = spawn(electron, ['.'], { cwd: root, env, stdio: 'inherit', windowsHide: false })
-      child.once('exit', code => void stop(code ?? 0))
+      child.once('exit', (code, signal) => {
+        if (!stopping) {
+          if (code === 23) console.error('[开发启动] 已有框架正在运行（可能是安装版或托盘中的窗口）。请从框架托盘菜单退出，再重新运行 npm run electron:dev。')
+          else if (signal || code !== 0) console.error(`[开发启动] Electron 异常退出（${signal ? `信号 ${signal}` : `退出码 ${code}`}），请查看上方错误信息。`)
+          else console.log('[开发启动] Electron 已退出，开发服务已停止。')
+        }
+        void stop(code ?? (signal ? 1 : 0))
+      })
       child.once('error', error => {
         console.error('[开发启动] Electron 启动失败：', error.message)
         void stop(1)

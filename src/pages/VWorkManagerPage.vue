@@ -8,8 +8,13 @@
         <div class="login-notice" role="status">
           <div class="login-notice-copy">
             <strong>右键添加企微后登录</strong>
-            <span>在表格空白处或行上右键，选择随机端口或指定端口启动注入。登录成功后账号会显示在这里。</span>
+            <span>检测运行中的企微，恢复可接入的账号；普通方式启动的企微需完全退出后，由框架添加启动。</span>
+            <div v-if="discoveryNotice || unmanagedPids.length" class="unmanaged-wecom-alert" role="alert">
+              <p v-if="discoveryNotice">{{ discoveryNotice }}</p>
+              <p v-if="unmanagedPids.length">已发现 {{ unmanagedPids.length }} 个尚未接入的企微进程，PID：{{ unmanagedPids.join('、') }}。重新检测不会对这些进程执行注入。</p>
+            </div>
           </div>
+          <el-button size="small" :loading="discovering" @click="discoverRunningWecom">重新检测</el-button>
         </div>
         <div class="table-wrap">
           <el-table
@@ -23,8 +28,8 @@
           >
             <template #empty>
               <div class="login-empty">
-                <strong>尚未添加企微</strong>
-                <span>在页面空白处右键，选择「添加企微」。</span>
+                <strong>{{ unmanagedPids.length ? '已发现企微进程，尚未接入' : '尚未添加企微' }}</strong>
+                <span>{{ unmanagedPids.length ? '请在企微托盘菜单中选择退出，再在本页右键添加企微。' : '在页面空白处右键，选择「添加企微」。' }}</span>
               </div>
             </template>
             <el-table-column prop="nick_name" label="昵称" width="150" align="center" />
@@ -250,11 +255,15 @@ import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { confirmLoggedIn } from '../utils/loginStatusRetry'
 import { pickPersonalRecord } from '../utils/personalInfo'
+import { isWecomHookBodyOk } from '../utils/wecomHookBody.mjs'
 
 const configStore = useConfigStore()
 /** 来自 App.vue：企微注入成功后的端口队列 */
 const wecomApiInjectPorts = inject('wecomApiInjectPorts', ref([]))
 const tableData = ref([])
+const discovering = ref(false)
+const discoveryNotice = ref('')
+const unmanagedPids = ref([])
 const selectedRow = ref(null)
 const showAddDialog = ref(false)
 const customPort = ref('')
@@ -404,10 +413,15 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
         type: 7000
       }
     })
-    if (!result?.success || result.data?.errno !== 0) {
-      diagnostics.warn('L005', '[auto-update] 调用失败:', result?.data?.errmsg || result?.msg || result)
+    const body = result?.data
+    if (!result?.success || !isWecomHookBodyOk(body)) {
+      diagnostics.warn('L005', '[auto-update] 调用失败:', body?.errmsg || result?.msg || result)
     } else {
-      diagnostics.info('L006', '[auto-update] 已请求关闭企微自动更新（成功）', { listenPort: sp, wecomPort: p, response: result?.data })
+      diagnostics.info('L006', '[auto-update] 已请求关闭企微自动更新（成功）', {
+        listenPort: sp,
+        wecomPort: p,
+        response: body?.encrypted === true ? { encrypted: true } : body
+      })
     }
   } catch (e) {
     diagnostics.warn('L007', '[auto-update] 调用异常:', e?.message || e)
@@ -775,7 +789,16 @@ const removeWecomFromManager = async (port, options = {}) => {
   return true
 }
 
-const executeAddWechat = async (portType, customPortValue) => {
+const executeAddWechat = singleFlight(async (portType, customPortValue) => {
+  const discovery = await discoverRunningWecom()
+  if (!discovery.success || discovery.unmanagedPids.length) {
+    feedback.warning('U036', discoveryNotice.value)
+    return
+  }
+  if (discovery.recovered > 0) {
+    ElMessage.success('已找到并接入正在运行的企微，请使用列表中的账号；如需新账号，请再次添加')
+    return
+  }
   let port
   if (portType === 'random') {
     if (!window.electronAPI) {
@@ -810,7 +833,7 @@ const executeAddWechat = async (portType, customPortValue) => {
       ElMessage.success('企微启动成功，正在登录...')
       stoppedPorts.delete(port)
       trackPendingPort(port)
-      const rowIndex = addTableItem({ nick_name: '登录中', port: String(port) })
+      const rowIndex = ensureTableRowForPort(port)
       checkLoginStatus(port, rowIndex)
     } else {
       feedback.error('U006', {
@@ -822,7 +845,7 @@ const executeAddWechat = async (portType, customPortValue) => {
   } catch (error) {
     feedback.error('U007', '启动失败: ' + error.message)
   }
-}
+})
 
 const handleAddWechat = async () => {
   await executeAddWechat('custom', customPort.value)
@@ -1070,6 +1093,40 @@ const resumePendingLoginPolling = async () => {
     checkLoginStatus(port, i)
   }
 }
+
+/** 从操作系统发现实例，不依赖上一次保存的端口或登录回调。 */
+const discoverRunningWecom = singleFlight(async () => {
+  discovering.value = true
+  let recovered = 0
+  try {
+    const result = await window.electronAPI?.discoverRunningWecom?.()
+    if (!result?.success) throw new Error(result?.message || '无法检测正在运行的企微，请稍后点击重新检测')
+    if (disposed) return { success: false, unmanagedPids: [] }
+    unmanagedPids.value = result.unmanagedPids
+    discoveryNotice.value = result.unmanagedPids.length
+      ? '检测到尚未接入框架的企微。请从企微托盘菜单完全退出（仅关闭窗口不够），然后在框架中添加，避免账号重复登录。'
+      : ''
+    for (const item of result.instances) {
+      if (disposed) break
+      const existing = tableData.value.find(row => Number(row.port) === item.port)
+      if (existing && Number(existing.pid) === item.pid && existing.user_id && existing.user_id !== '-') continue
+      stoppedPorts.delete(item.port)
+      const index = ensureTableRowForPort(item.port, { pid: String(item.pid) })
+      trackPendingPort(item.port)
+      recovered++
+      let complete = false
+      if (item.loggedIn) {
+        try { complete = await completePortLogin(item.port, { rowIndex: index }) }
+        catch (error) { diagnostics.warn('L038', '恢复运行中的企微账号失败，将继续检测', error) }
+      }
+      if (!complete) checkLoginStatus(item.port, index)
+    }
+    return { ...result, recovered }
+  } catch (error) {
+    discoveryNotice.value = error.message || '检测企微失败，请稍后重试'
+    return { success: false, unmanagedPids: [], recovered }
+  } finally { discovering.value = false }
+})
 
 /** 已登录但表格缺失时恢复（配置/session 中的端口） */
 const recoverOrphanedLoggedInPorts = async () => {
@@ -1536,7 +1593,7 @@ const handleExitWechat = async () => {
 
     try {
       if (row.user_id && row.user_id !== '-') {
-        await VWorkApi.logout(port, row.user_id)
+        await VWorkApi.logout(port)
       }
     } catch (error) {
       diagnostics.error('L028', '调用退出登录API失败:', error)
@@ -1558,6 +1615,8 @@ onMounted(async () => {
   }
 
   await loadLoginInfo()
+
+  await discoverRunningWecom()
 
   // 先恢复「登录中」/pending 端口，再启动清理，避免与自动登录竞态。
   if (wecomApiInjectPorts.value.length) {
@@ -1599,6 +1658,7 @@ const refreshList = async () => {
   await configStore.loadConfig()
   // 从配置中加载登录信息
   await loadLoginInfo()
+  await discoverRunningWecom()
   
   // 验证表格中的进程是否还在运行，移除已退出的进程
   if (window.electronAPI) {
@@ -1734,6 +1794,14 @@ defineExpose({
   background: linear-gradient(135deg, var(--sp-accent-soft), var(--sp-surface));
 }
 
+.login-notice:has(.unmanaged-wecom-alert) {
+  align-items: flex-start;
+}
+
+.login-notice:has(.unmanaged-wecom-alert) :deep(.el-button) {
+  margin-top: 8px;
+}
+
 .login-notice-icon {
   display: grid;
   place-items: center;
@@ -1763,6 +1831,30 @@ defineExpose({
   color: var(--sp-text);
   font-size: 15px;
   font-weight: 700;
+}
+
+.unmanaged-wecom-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--sp-warning-border);
+  border-left: 3px solid #d97706;
+  border-radius: 8px;
+  background: var(--sp-warning-bg);
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.unmanaged-wecom-alert p {
+  margin: 0;
+}
+
+:global(html.dark) .unmanaged-wecom-alert {
+  color: var(--sp-warning-text);
+  border-left-color: #fbbf24;
 }
 
 .service-status {

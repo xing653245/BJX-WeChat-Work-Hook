@@ -10,9 +10,6 @@
         </div>
 
         <div class="hero-actions">
-          <el-button type="primary" size="large" class="hero-btn" @click="openDocs">
-            开发文档
-          </el-button>
           <el-button type="success" size="large" class="hero-btn" @click="showWechatPay">
             购买 / 续费授权
           </el-button>
@@ -61,14 +58,6 @@ const loadAppVersion = async () => {
 onMounted(() => {
   loadAppVersion()
 })
-
-const openDocs = async () => {
-  if (window.electronAPI) {
-    await window.electronAPI.openExternal('https://23t2z5j37i.apifox.cn')
-  } else {
-    window.open('https://23t2z5j37i.apifox.cn', '_blank')
-  }
-}
 
 const showWechatPay = () => {
   showPayDialog.value = true
