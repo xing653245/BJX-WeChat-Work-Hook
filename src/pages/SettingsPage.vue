@@ -842,10 +842,6 @@ const isElectronAvailable = computed(() => {
   return !!window.electronAPI
 })
 
-const isUpdateInProgress = computed(() => {
-  return checkingUpdate.value || downloadingUpdate.value || installingUpdate.value
-})
-
 function refreshCloseConfirmPrefsHint() {
   hasStoredCloseConfirmPrefs.value = getCloseConfirmAutoAction() !== null
 }
