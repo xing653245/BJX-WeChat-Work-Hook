@@ -1037,7 +1037,7 @@ const handleApiInjectPort = (port) => {
   checkLoginStatus(p, rowIndex)
 }
 
-/** 挂载后：Hook 已就绪但未登录的端口（如崩溃恢复注入）补开登录轮询 */
+/** 挂载后：Hook 已就绪但未登录的端口补开登录轮询 */
 const resumePendingLoginPolling = async () => {
   for (let i = 0; i < tableData.value.length; i++) {
     const row = tableData.value[i]

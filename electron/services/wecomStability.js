@@ -11,8 +11,6 @@ const STABILIZING_AFTER_INJECT_MS = 45000
 const PROTECTION_AFTER_LOGIN_MS = 25000
 /** 账号切换期间保护 */
 const PROTECTION_ACCOUNT_SWITCH_MS = 15000
-/** 自动注入（崩溃恢复）同端口最短间隔 */
-const AUTO_INJECT_COOLDOWN_MS = 120000
 /** 手动注入失败后最短重试间隔（防连点） */
 const MANUAL_INJECT_RETRY_MS = 15000
 
@@ -124,18 +122,16 @@ function heavyApiDeferMs(port, type) {
 /**
  * 注入前安全检查
  * @param {number} port
- * @param {{ reason?: string }} [options] reason: 手动 | 崩溃恢复
  */
-async function canInjectPort(port, options = {}) {
+async function canInjectPort(port) {
   const p = Number(port)
-  const reason = options.reason || '手动'
   if (Number.isNaN(p) || p <= 0) {
     return { allowed: false, reason: '端口无效' }
   }
 
   const key = portKey(p)
   const stabilizingUntil = portStabilizingUntil.get(key) || 0
-  if (stabilizingUntil > Date.now() && reason !== '崩溃恢复') {
+  if (stabilizingUntil > Date.now()) {
     const sec = Math.ceil((stabilizingUntil - Date.now()) / 1000)
     return {
       allowed: false,
@@ -144,13 +140,10 @@ async function canInjectPort(port, options = {}) {
   }
 
   const lastAttempt = lastInjectAttemptAt.get(key) || 0
-  const cooldown =
-    reason === '崩溃恢复' || reason === '定时检查'
-      ? AUTO_INJECT_COOLDOWN_MS
-      : MANUAL_INJECT_RETRY_MS
+  const cooldown = MANUAL_INJECT_RETRY_MS
   const lastSuccess = lastInjectSuccessAt.get(key) || 0
   const cooldownBase =
-    reason === '手动' && lastSuccess === 0 ? lastAttempt : Math.max(lastAttempt, lastSuccess)
+    lastSuccess === 0 ? lastAttempt : Math.max(lastAttempt, lastSuccess)
   if (Date.now() - cooldownBase < cooldown) {
     const sec = Math.ceil((cooldown - (Date.now() - cooldownBase)) / 1000)
     return {
@@ -170,9 +163,6 @@ async function canInjectPort(port, options = {}) {
   }
 
   if (pid > 0) {
-    if (reason === '崩溃恢复') {
-      return { allowed: false, reason: `端口 ${p} 进程仍在（PID ${pid}），跳过崩溃恢复注入` }
-    }
     return {
       allowed: false,
       reason: `端口 ${p} 已被占用（PID ${pid}），请先结束 WXWork.exe 或更换端口`
@@ -215,16 +205,6 @@ async function isWecomInstanceStillAlive(port) {
   return { alive: false, loggedIn: false }
 }
 
-/** 崩溃恢复前：确认进程与 Hook 均已不可用 */
-async function isPortSafeForCrashRecoveryInject(port) {
-  const p = Number(port)
-  if (Number.isNaN(p) || p <= 0) return false
-  const pid = await findPidByPort(p)
-  if (pid > 0) return false
-  const hookUp = await probeHookReachable(p)
-  return !hookUp
-}
-
 module.exports = {
   markPortStabilizing,
   markPortLoggedIn,
@@ -232,7 +212,6 @@ module.exports = {
   recordInjectAttempt,
   heavyApiDeferMs,
   canInjectPort,
-  isPortSafeForCrashRecoveryInject,
   isWecomInstanceStillAlive,
   findPidByPort
 }

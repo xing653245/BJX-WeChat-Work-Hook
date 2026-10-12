@@ -33,18 +33,15 @@ const {
 } = require('./services/wecomInject')
 const { getInjectBinDir } = require('./commons/resourcePaths')
 const { discoverWecom } = require('./services/wecomDiscovery')
-const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { callFrameworkWecomApi } = require('./services/frameworkWecomApi')
 const { FRAMEWORK_API_NAMES } = require('./configs/frameworkWecomApi')
-const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
   canInjectPort,
   markPortStabilizing,
   markPortLoggedIn,
   markPortAccountSwitch,
-  recordInjectAttempt,
-  isPortSafeForCrashRecoveryInject
+  recordInjectAttempt
 } = require('./services/wecomStability')
 
 /** 开发模式：未打包运行（npm run electron:dev） */
@@ -64,21 +61,9 @@ const instanceCallbacks = require('./services/instanceCallbacks').createInstance
   }
 })
 let loginStatusCheckInterval = null // 定时检查登录状态
-let wecomCrashDialogInterval = null // Windows：监视企微「错误报告」崩溃窗口
-/** 同一端口注入互斥：避免定时检查、崩溃恢复、手动添加并发 it.exe */
+/** 同一端口注入互斥：避免手动添加并发执行 it.exe */
 const injectInProgressPorts = new Set()
 const TIMED_CHECK_INTERVAL_MS = 30000 // 定时登录探测间隔 30 秒
-/** 崩溃恢复退避：60s → 120s → 300s */
-const CRASH_RECOVERY_DELAYS_MS = [60000, 120000, 300000, 300000]
-let crashRecoveryBackoffLevel = 0
-let crashRecoveryTimer = null
-/** 崩溃恢复倒计时期间暂停定时探测，避免与退避恢复叠加注入 */
-let timedCheckPausedUntil = 0
-/** 连续崩溃恢复后仍未登录则暂停自动注入，避免无限拉起 */
-const MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN = 3
-let crashRecoveryCyclesWithoutLogin = 0
-let crashRecoveryAutoInjectSuspended = false
-
 /** 单实例：避免多开导致端口冲突 */
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
@@ -127,71 +112,6 @@ function notifyPortError({ port, service, detail }) {
       buttons: ['知道了']
     })
     .catch(() => {})
-}
-
-const isAutoInjectReason = (reason) => reason === '崩溃恢复' || reason === '定时检查'
-
-const resetCrashRecoveryProtection = () => {
-  crashRecoveryCyclesWithoutLogin = 0
-  crashRecoveryAutoInjectSuspended = false
-  crashRecoveryBackoffLevel = 0
-}
-
-const notifyCrashRecoverySuspended = () => {
-  const ports = getTimedCheckPorts()
-  const portHint = ports.length ? ports.join(', ') : '（无配置端口）'
-  const detail =
-    `已连续 ${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次崩溃恢复仍未登录。\n` +
-    `已暂停自动注入（端口：${portHint}）。\n\n` +
-    `请关闭异常的企微窗口，确认客户端版本符合要求后，在「企微管理」中重新添加；如持续失败，请联系技术支持。`
-  diagnostics.warn('L002', '[企微崩溃] 自动恢复已暂停:', detail.replace(/\n/g, ' '))
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show()
-    mainWindow.focus()
-    mainWindow.webContents.send('crash-recovery-suspended', {
-      message: detail,
-      ports,
-      cycles: crashRecoveryCyclesWithoutLogin
-    })
-  }
-  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-  dialog
-    .showMessageBox(parent, {
-      type: 'warning',
-      title: '企微崩溃恢复已暂停',
-      message: '检测到企微反复崩溃，已停止自动重新注入。',
-      detail,
-      buttons: ['我知道了']
-    })
-    .catch(() => {})
-}
-
-const recordCrashRecoveryCycleResult = async () => {
-  const ports = getTimedCheckPorts()
-  if (ports.length === 0) return
-
-  for (const robotPort of ports) {
-    if (await probeLoggedIn(robotPort)) {
-      resetCrashRecoveryProtection()
-      return
-    }
-  }
-
-  crashRecoveryCyclesWithoutLogin++
-  diagnostics.info('L003',
-    `[企微崩溃] 本轮恢复后仍未登录（连续 ${crashRecoveryCyclesWithoutLogin}/${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次）`
-  )
-  if (
-    crashRecoveryCyclesWithoutLogin >= MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN &&
-    !crashRecoveryAutoInjectSuspended
-  ) {
-    crashRecoveryAutoInjectSuspended = true
-    if (crashRecoveryTimer) {
-      clearTimeout(crashRecoveryTimer)
-      crashRecoveryTimer = null
-    }
-    notifyCrashRecoverySuspended()
-  }
 }
 
 // 更新配置：优先 Gitee，失败后回退 GitHub（见 electron/configs/updateFeeds.js）
@@ -561,16 +481,6 @@ const getTimedCheckPorts = () => {
   }
 }
 
-/** 企微 Hook HTTP 是否可访问（不要求已登录） */
-const isWecomHookReachable = async (robotPort) => {
-  try {
-    const data = await postToVWorkApi(robotPort, { type: 1000 }, { timeout: 5000 })
-    return data != null
-  } catch {
-    return false
-  }
-}
-
 /** 重试探测是否已登录（status === 1） */
 const probeLoggedIn = async (robotPort) => {
   const attempts = 3
@@ -595,10 +505,6 @@ const probeLoggedIn = async (robotPort) => {
  * @returns {Promise<boolean>} 是否已发起注入
  */
 const runInjectForPort = async (robotPort, reason) => {
-  if (isAutoInjectReason(reason) && crashRecoveryAutoInjectSuspended) {
-    diagnostics.info('L025', `[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
-    return { success: false, output: '自动恢复已暂停', blocked: true }
-  }
   if (injectInProgressPorts.has(robotPort)) {
     diagnostics.info('L026', `[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
     return { success: false, output: '该端口注入进行中', blocked: true }
@@ -611,7 +517,7 @@ const runInjectForPort = async (robotPort, reason) => {
     if (running.unmanagedPids.length) {
       return { success: false, blocked: true, output: '检测到已运行但尚未接入框架的企微，请从企微托盘菜单完全退出后，再在框架中添加；框架不会自动结束您的企微。' }
     }
-    const safety = await canInjectPort(robotPort, { reason })
+    const safety = await canInjectPort(robotPort)
     if (!safety.allowed) {
       return { success: false, output: safety.reason, blocked: true }
     }
@@ -627,9 +533,6 @@ const runInjectForPort = async (robotPort, reason) => {
     else diagnostics.error('L027', summary, '\n' + (result.output || '注入工具未提供错误详情'))
     if (ok) {
       markPortStabilizing(robotPort)
-      if (isAutoInjectReason(reason)) {
-        notifyWecomInjectStarted(robotPort, reason)
-      }
     }
     return { success: ok, output: result.output || '' }
   } catch (e) {
@@ -641,37 +544,12 @@ const runInjectForPort = async (robotPort, reason) => {
   }
 }
 
-/**
- * 单次执行：对配置中的每个企微端口检查登录状态；
- * 仅在「未登录且进程/Hook 均已不可用」时才注入，避免误判重复启动。
- */
+/** 定时探测只记录状态，不结束进程或自动注入。 */
 const { singleFlight } = require('./commons/singleFlight.cjs')
-const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
-  const ports = getTimedCheckPorts()
-  if (ports.length === 0) return
-
-  for (const robotPort of ports) {
-    const loggedIn = await probeLoggedIn(robotPort)
-    if (loggedIn) {
-      resetCrashRecoveryProtection()
-      continue
-    }
-
-    const safeToInject = await isPortSafeForCrashRecoveryInject(robotPort)
-    if (!safeToInject) {
-      const pid = await findPidByPort(robotPort)
-      diagnostics.info('L029',
-        `[登录探测] 端口 ${robotPort} 未登录但进程或 Hook 仍存活（pid=${pid}），跳过注入`
-      )
-      continue
-    }
-
-    if (fromCrashRecovery) {
-      await runInjectForPort(robotPort, '崩溃恢复')
-    } else {
-      diagnostics.info('L030',
-        `[登录探测] 端口 ${robotPort} 无法连接且未找到该端口的进程；企微可能仍在运行但监听端口已变化，请核对实例端口`
-      )
+const timedGetLoginStatus = async () => {
+  for (const robotPort of getTimedCheckPorts()) {
+    if (!(await probeLoggedIn(robotPort))) {
+      diagnostics.info('L030', `[登录探测] 端口 ${robotPort} 暂未确认登录，请在企微管理中检查`)
     }
   }
 }
@@ -685,77 +563,11 @@ const startTimedLoginStatusCheck = () => {
     loginStatusCheckInterval = null
   }
   loginStatusCheckInterval = setInterval(singleFlight(async () => {
-    if (Date.now() < timedCheckPausedUntil) {
-      return
-    }
     await timedGetLoginStatus().catch((e) => {
       diagnostics.error('L031', '定时检查登录状态异常:', e.message)
     })
   }), TIMED_CHECK_INTERVAL_MS)
   diagnostics.info('L032', `定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
-}
-
-/** 崩溃后按退避策略延迟触发注入恢复 */
-const scheduleCrashRecovery = () => {
-  if (crashRecoveryTimer) {
-    return
-  }
-  if (crashRecoveryAutoInjectSuspended) {
-    diagnostics.info('L033', '[企微崩溃] 检测到崩溃弹窗，自动恢复已暂停，仅关闭弹窗不再注入')
-    return
-  }
-  const delayMs =
-    CRASH_RECOVERY_DELAYS_MS[
-      Math.min(crashRecoveryBackoffLevel, CRASH_RECOVERY_DELAYS_MS.length - 1)
-    ]
-  timedCheckPausedUntil = Date.now() + delayMs
-  diagnostics.info('L034',
-    `[企微崩溃] 已检测到崩溃，${delayMs / 1000} 秒后尝试注入恢复（退避级别 ${crashRecoveryBackoffLevel}）`
-  )
-  crashRecoveryTimer = setTimeout(() => {
-    crashRecoveryTimer = null
-    diagnostics.info('L035', '[企微崩溃] 退避结束，开始登录探测与注入恢复')
-    timedGetLoginStatus({ fromCrashRecovery: true })
-      .catch((e) => {
-        diagnostics.error('L036', '[企微崩溃] 注入恢复检查失败:', e.message)
-      })
-      .finally(async () => {
-        await recordCrashRecoveryCycleResult()
-        if (!crashRecoveryAutoInjectSuspended) {
-          crashRecoveryBackoffLevel = Math.min(
-            crashRecoveryBackoffLevel + 1,
-            CRASH_RECOVERY_DELAYS_MS.length - 1
-          )
-        }
-      })
-  }, delayMs)
-}
-
-/**
- * Windows：周期性查找企微「错误报告」窗口并发送关闭，随后按退避策略触发注入恢复
- */
-const startWecomCrashDialogWatch = () => {
-  if (process.platform !== 'win32') return
-  if (wecomCrashDialogInterval) {
-    clearInterval(wecomCrashDialogInterval)
-    wecomCrashDialogInterval = null
-  }
-  const intervalMs = 8000
-  wecomCrashDialogInterval = setInterval(singleFlight(async () => {
-    await pollCrashDialogOnce({
-      onCrash: (closed) => {
-        diagnostics.info('L037', `[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
-        scheduleCrashRecovery()
-      }
-    })
-      .then((closed) => {
-        if (closed <= 0) return
-      })
-      .catch((e) => {
-        diagnostics.warn('L038', '[企微崩溃] 监视脚本异常:', e.message)
-      })
-  }), intervalMs)
-  diagnostics.info('L039', `企微崩溃报告窗口监视已启动，每 ${intervalMs / 1000} 秒检查一次`)
 }
 
 /** 与应用窗口相同的图标路径，供托盘等复用 */
@@ -1197,7 +1009,6 @@ app.whenReady().then(async () => {
   }
 
   startTimedLoginStatusCheck()
-  startWecomCrashDialogWatch()
 
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
@@ -1242,14 +1053,6 @@ app.on('before-quit', () => {
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
-  }
-  if (wecomCrashDialogInterval) {
-    clearInterval(wecomCrashDialogInterval)
-    wecomCrashDialogInterval = null
-  }
-  if (crashRecoveryTimer) {
-    clearTimeout(crashRecoveryTimer)
-    crashRecoveryTimer = null
   }
 })
 
@@ -1521,7 +1324,6 @@ ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
 // 注入分配独立回调接收端口；宿主路径由 bin/settings.json 提供。
 ipcMain.handle('run-inject-tool', async (event, { port }) => {
   assertMainWindow(event, mainWindow)
-  resetCrashRecoveryProtection()
   return runInjectForPort(Number(port), '手动')
 })
 
@@ -1543,11 +1345,6 @@ ipcMain.handle('mark-wecom-port-logged-in', async (event, port) => {
 
 ipcMain.handle('mark-wecom-port-account-switch', (_event, port) => {
   markPortAccountSwitch(port)
-  return { success: true }
-})
-
-ipcMain.handle('reset-crash-recovery-protection', () => {
-  resetCrashRecoveryProtection()
   return { success: true }
 })
 

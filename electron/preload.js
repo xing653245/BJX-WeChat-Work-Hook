@@ -54,14 +54,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   markWecomPortStabilizing: (port) => ipcRenderer.invoke('mark-wecom-port-stabilizing', port),
   markWecomPortLoggedIn: (port) => ipcRenderer.invoke('mark-wecom-port-logged-in', port),
   markWecomPortAccountSwitch: (port) => ipcRenderer.invoke('mark-wecom-port-account-switch', port),
-  resetCrashRecoveryProtection: () => ipcRenderer.invoke('reset-crash-recovery-protection'),
-  onCrashRecoverySuspended: (callback) => {
-    ipcRenderer.on('crash-recovery-suspended', (_event, data) => callback(data))
-  },
-  removeCrashRecoverySuspendedListener: () => {
-    ipcRenderer.removeAllListeners('crash-recovery-suspended')
-  },
-  
   // 获取授权信息
   getAuthInfo: (wxid, port) => ipcRenderer.invoke('get-auth-info', wxid, port),
 

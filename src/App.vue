@@ -33,9 +33,7 @@
 </template>
 
 <script setup>
-import { createFeedback } from './utils/feedback.mjs'
 import { userMessage } from './utils/diagnostics.mjs'
-const feedback = createFeedback('App.vue')
 
 import { ref, onMounted, onUnmounted, provide, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -176,13 +174,6 @@ onMounted(() => {
     }
     closeConfirmVisible.value = true
   })
-  window.electronAPI?.onCrashRecoverySuspended?.((data) => {
-    feedback.warning('U001', {
-      message: data?.message || '企微反复崩溃，已暂停自动重新注入，请手动处理。',
-      duration: 8000,
-      showClose: true
-    })
-  })
   window.electronAPI?.onServiceError?.((data) => {
     ElMessageBox.alert(userMessage(data?.detail || data?.message, '服务暂时不可用，请重启应用后重试'), '服务异常', {
       type: 'error',
@@ -207,7 +198,6 @@ onUnmounted(() => {
   removeFastapiLogoutListener = null
   window.electronAPI?.removeWecomSessionEndedListener?.()
   window.electronAPI?.removeCloseConfirmRequestListener?.()
-  window.electronAPI?.removeCrashRecoverySuspendedListener?.()
   window.electronAPI?.removeServiceErrorListener?.()
 })
 </script>
