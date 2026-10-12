@@ -11,6 +11,8 @@ const { execSync } = require('child_process')
 const pkg = require('../package.json')
 const DIST_DIR = path.join(__dirname, '..', 'dist-electron')
 const CHANGELOG_PATH = path.join(__dirname, '..', 'CHANGELOG.md')
+const GUIDE_FILENAME = '北极熊框架操作指南.md'
+const GUIDE_PATH = path.join(__dirname, '..', GUIDE_FILENAME)
 
 /** 与 electron-updater / 旧版客户端兼容的 ASCII 安装包名 */
 function getStandardInstallerName(version) {
@@ -51,7 +53,12 @@ function buildReleaseBody(version = pkg.version) {
   const ver = normalizeVersion(version)
   const notes = getChangelogForVersion(ver)
   const header = `北极熊企微框架Pro v${ver}`
-  const footer = `发布于 ${new Date().toLocaleString('zh-CN')}`
+  const footerLines = []
+  if (fs.existsSync(GUIDE_PATH)) {
+    footerLines.push(`操作指南见附件：${GUIDE_FILENAME}`)
+  }
+  footerLines.push(`发布于 ${new Date().toLocaleString('zh-CN')}`)
+  const footer = footerLines.join('\n')
   if (notes) {
     return `${header}\n\n${notes}\n\n---\n${footer}`
   }
@@ -154,6 +161,15 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
     const normalizedBlockmapPath = path.join(tempDir, blockmapName)
     fs.copyFileSync(blockmapSrc, normalizedBlockmapPath)
     uploadPlan.push({ localPath: normalizedBlockmapPath, uploadName: blockmapName })
+  }
+
+  if (fs.existsSync(GUIDE_PATH)) {
+    const guideDest = path.join(tempDir, GUIDE_FILENAME)
+    fs.copyFileSync(GUIDE_PATH, guideDest)
+    uploadPlan.push({ localPath: guideDest, uploadName: GUIDE_FILENAME })
+    diagnostics.info('L005', `[publish] 已加入操作指南: ${GUIDE_FILENAME}`)
+  } else {
+    diagnostics.warn('L006', `[publish] 未找到 ${GUIDE_FILENAME}，本次发布不附带操作指南`)
   }
 
   if (parsed.url !== installerName || parsed.path !== installerName) {

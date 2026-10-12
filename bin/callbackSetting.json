@@ -1,16 +1,4 @@
 {
   "version": 1,
-  "accounts": {
-    "1688855655802978": {
-      "settings": {
-        "enabled": true,
-        "url": "http://127.0.0.1:8002/msg",
-        "timeout_ms": 2000,
-        "retries": 1,
-        "Message_Encryption": true,
-        "RSA_PublicKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC1tVePZpiLM3Qo4dTnmVO+yThb7K6BDYhFevKWsUjBO1+ZwMVuiwEvSLsktO8jD7kTjM3MekbpuHcDJ5HM6feRgb1nDqZ5918iPsupWZGDWXPEiUtltfNUnUviot+aW+SygDr/imW0Tb+f1RTF1RVawcea2bYsGVzcwzuC4pR9KwIDAQAB"
-      },
-      "savedAt": "2026-10-12T02:59:03.428Z"
-    }
-  }
+  "accounts": {}
 }
