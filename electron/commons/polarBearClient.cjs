@@ -84,12 +84,12 @@ async function getAuthInfo(wxid, port) {
   const userId = String(wxid || '').trim()
   if (!userId) throw new Error('缺少 wxid，无法查询授权')
   const url = `${getPolarBearBaseUrl(port)}/polarBear/getAuthInfo?wxid=${encodeURIComponent(userId)}`
-  return enqueuePortTask(Number(port), 0, () => axios.get(url, requestOptions).then(response => response.data))
+  return enqueuePortTask(Number(port), () => axios.get(url, requestOptions).then(response => response.data))
 }
 
 async function postPolarBear(port, path, body) {
   const url = `${getPolarBearBaseUrl(port)}${path}`
-  return enqueuePortTask(Number(port), 0, () => axios.post(url, body, {
+  return enqueuePortTask(Number(port), () => axios.post(url, body, {
     ...requestOptions,
     headers: {
       'Content-Type': 'application/json'

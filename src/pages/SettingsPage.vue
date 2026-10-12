@@ -127,39 +127,75 @@
             </button>
             <Transition name="section-collapse">
               <div v-show="sectionExpanded.wecom">
-            <div class="section-body">
-              <div class="field-grid">
-
-                <label class="field-label" for="settings-wecom-exe-v5">v5 客户端路径</label>
-                <div class="field-control">
+            <div class="section-body wecom-section-body">
+              <div class="wecom-version-summary">
+                <div>
+                  <h3 class="wecom-client-title">企业微信 Windows 客户端</h3>
+                  <p class="field-hint">仅支持以下版本，请填写 WXWork.exe 的完整路径。</p>
+                </div>
+                <span class="wecom-version-badge">v5.0.3.6005</span>
+              </div>
+              <div class="wecom-path-field">
+                <label class="wecom-path-label" for="settings-wecom-exe-v5">客户端路径</label>
+                <div class="wecom-path-row">
                   <el-input
                     id="settings-wecom-exe-v5"
                     v-model="formData.wecom_exe_path_v5"
+                    :disabled="!injectSettingsLoaded || findingInstallations || saving"
+                    :aria-invalid="Boolean(pathSaveError)"
+                    aria-describedby="wecom-path-hint wecom-path-status"
                     placeholder="如 D:\WeCom5\WXWork.exe"
-                    class="field-input field-input-wide"
+                    class="wecom-path-input"
+                    @keyup.enter="handleSave()"
                   />
-                  <p class="field-hint">仅支持企微 v5.0.3.6005 版本客户端；保存后下次启动生效</p>
+                  <el-button :loading="findingInstallations" :disabled="saving || !injectSettingsLoaded" @click="autoFindWecom">
+                    <el-icon v-if="!findingInstallations"><Search /></el-icon>
+                    <span>{{ findingInstallations ? '正在查找…' : '自动查找' }}</span>
+                  </el-button>
                 </div>
-
-
+                <p id="wecom-path-hint" class="field-hint">自动查找仅在找到一个兼容客户端时保存；手动填写后请点击「保存路径」。</p>
               </div>
-            </div>
-            <footer class="card-actions" :class="{ 'is-dirty': isDirty, 'is-saving': saving }">
-              <p class="card-status" role="status" aria-live="polite">
-                <span v-if="!injectSettingsLoaded">客户端路径尚未读取</span>
-                <span v-else-if="saving">正在保存…</span>
-                <span v-else-if="isDirty">客户端路径有未保存的更改</span>
-                <span v-else class="card-status-ok">客户端路径已保存</span>
+              <div v-if="installationCandidates.length > 1" class="wecom-candidates">
+                <p class="wecom-candidates-title">找到 {{ installationCandidates.length }} 个兼容客户端，选择一个保存</p>
+                <button
+                  v-for="item in installationCandidates"
+                  :key="item.path"
+                  type="button"
+                  class="wecom-candidate"
+                  :disabled="saving || findingInstallations"
+                  @click="useInstallation(item)"
+                >
+                  <span class="wecom-candidate-detail">
+                    <span class="wecom-candidate-version">v{{ item.version }}</span>
+                    <span class="wecom-candidate-path">{{ item.path }}</span>
+                  </span>
+                  <span class="wecom-candidate-action">使用并保存 <el-icon><ArrowRight /></el-icon></span>
+                </button>
+              </div>
+              <p v-if="installationHint" class="wecom-discovery-hint" :class="'is-' + installationHintType" role="status">
+                <el-icon><WarningFilled /></el-icon>
+                <span>{{ installationHint }}</span>
               </p>
+            </div>
+            <footer class="card-actions">
+              <div id="wecom-path-status" class="wecom-path-status" :class="'is-' + pathStatus.type" role="status" aria-live="polite" aria-atomic="true">
+                <el-icon :class="{ 'is-loading': pathStatus.type === 'loading' }"><component :is="pathStatus.icon" /></el-icon>
+                <div>
+                  <p class="wecom-status-title">{{ pathStatus.title }}</p>
+                  <p class="wecom-status-detail">{{ pathStatus.detail }}</p>
+                </div>
+              </div>
+              <el-button v-if="!injectSettingsLoaded" :loading="injectSettingsLoading" @click="loadInjectSettings">重新读取</el-button>
               <el-button
+                v-else
                 type="primary"
                 size="default"
                 class="save-btn"
-                @click="handleSave"
+                @click="handleSave()"
                 :loading="saving"
-                :disabled="!injectSettingsLoaded || !isDirty"
+                :disabled="findingInstallations || !isDirty"
               >
-                保存修改
+                {{ saving ? '正在保存…' : '保存路径' }}
               </el-button>
             </footer>
               </div>
@@ -582,6 +618,8 @@ import {
   Promotion,
   Monitor,
   ArrowDown,
+  ArrowRight,
+  Search,
   Sunny
 } from '@element-plus/icons-vue'
 import { useConfigStore } from '../stores/config'
@@ -589,6 +627,7 @@ import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
 import { getStoredThemeMode } from '../utils/theme'
 import { isWecomHookBodyOk } from '../utils/wecomHookBody.mjs'
+import { VWorkApi } from '../utils/api'
 
 const configStore = useConfigStore()
 const setThemeModeGlobal = inject('setThemeMode', null)
@@ -855,20 +894,79 @@ function clearStoredCloseConfirm() {
 
 // 加载配置
 const injectSettingsLoaded = ref(false)
+const injectSettingsLoading = ref(false)
+const injectSettingsError = ref('')
 const savedInjectSettings = ref(null)
+const pathSaveError = ref('')
+const pathSaveMessage = ref('')
+const findingInstallations = ref(false)
+const installationCandidates = ref([])
+const installationHint = ref('')
+const installationHintType = ref('warning')
+const useInstallation = async item => {
+  if (saving.value || !item.supported) return
+  formData.wecom_exe_path_v5 = item.path
+  await nextTick()
+  const saved = await handleSave({ detectedVersion: item.version })
+  if (saved) {
+    installationCandidates.value = []
+    installationHint.value = ''
+  }
+}
+const autoFindWecom = async () => {
+  if (findingInstallations.value || saving.value) return
+  findingInstallations.value = true
+  installationHint.value = ''
+  installationHintType.value = 'warning'
+  installationCandidates.value = []
+  try {
+    const result = await window.electronAPI?.findWecomInstallations?.()
+    if (!result?.success) throw new Error(result?.msg || '自动查找不可用，请重启框架后重试')
+    const compatible = result.candidates.filter(item => item.supported)
+    installationCandidates.value = compatible
+    if (compatible.length === 1) await useInstallation(compatible[0])
+    else if (!compatible.length) installationHint.value = result.candidates.length
+      ? `找到企微，但版本不兼容（${[...new Set(result.candidates.map(item => item.version))].join('、')}），未修改路径。请安装支持的版本。`
+      : '未找到企微安装位置，未修改路径。可先打开企微再查找，或手动填写 WXWork.exe 的完整路径。'
+  } catch (error) {
+    installationHintType.value = 'error'
+    installationHint.value = error.message || '自动查找失败，请重试或手动填写客户端路径。'
+    feedback.error('U024', installationHint.value)
+  }
+  finally { findingInstallations.value = false }
+}
 const applyInjectSettings = (data) => { formData.wecom_exe_path_v5 = data.host || '' }
 const loadInjectSettings = async () => {
-  const result = await window.electronAPI?.readInjectSettings()
-  if (!result?.success) {
-    feedback.error('U001', result?.msg || '读取注入配置失败，请重启框架后重试')
-    return
+  if (injectSettingsLoading.value) return
+  injectSettingsLoading.value = true
+  injectSettingsError.value = ''
+  try {
+    const result = await window.electronAPI?.readInjectSettings()
+    if (!result?.success) throw new Error(result?.msg || '读取客户端路径失败，请重试')
+    savedInjectSettings.value = result.data
+    applyInjectSettings(result.data)
+    injectSettingsLoaded.value = true
+    await nextTick()
+    isDirty.value = false
+  } catch (error) {
+    injectSettingsError.value = error.message || '读取客户端路径失败，请重试'
+    feedback.error('U001', injectSettingsError.value)
+  } finally {
+    injectSettingsLoading.value = false
   }
-  savedInjectSettings.value = result.data
-  applyInjectSettings(result.data)
-  injectSettingsLoaded.value = true
-  await nextTick()
-  isDirty.value = false
 }
+
+const pathStatus = computed(() => {
+  if (injectSettingsLoading.value) return { type: 'loading', icon: Loading, title: '正在读取客户端路径', detail: '读取完成后即可编辑。' }
+  if (!injectSettingsLoaded.value) return { type: 'error', icon: WarningFilled, title: '客户端路径尚未读取', detail: injectSettingsError.value || '请点击「重新读取」加载配置。' }
+  if (saving.value) return { type: 'loading', icon: Loading, title: '正在保存客户端路径', detail: '请稍候，保存完成后将用于后续启动企微。' }
+  if (findingInstallations.value) return { type: 'loading', icon: Loading, title: '正在查找兼容客户端', detail: '找到多个客户端时，可从列表中选择。' }
+  if (pathSaveError.value) return { type: 'error', icon: WarningFilled, title: '路径保存失败', detail: pathSaveError.value }
+  if (isDirty.value) return { type: 'warning', icon: InfoFilled, title: '路径有未保存的更改', detail: '点击「保存路径」后生效。' }
+  if (pathSaveMessage.value) return { type: 'success', icon: CircleCheck, title: pathSaveMessage.value, detail: '后续启动企微将使用此路径，已运行的实例不受影响。' }
+  if (savedInjectSettings.value?.host) return { type: 'neutral', icon: CircleCheck, title: '已读取保存的客户端路径', detail: '修改路径后，请保存再启动企微。' }
+  return { type: 'neutral', icon: InfoFilled, title: '尚未配置客户端路径', detail: '自动查找兼容客户端，或手动填写完整路径。' }
+})
 
 const loadConfig = () => {
   skipDirtyWatch.value = true
@@ -905,13 +1003,15 @@ watch(
   () => formData.wecom_exe_path_v5,
   () => {
     if (skipDirtyWatch.value) return
+    pathSaveError.value = ''
+    pathSaveMessage.value = ''
     isDirty.value = formData.wecom_exe_path_v5 !== (savedInjectSettings.value?.host || '')
   },
   { deep: true }
 )
 
 async function handleTestMessageText() {
-  if (!window.electronAPI?.callAPI) {
+  if (!window.electronAPI?.callFrameworkWecom) {
     feedback.warning('U003', '当前环境无法调用 Electron 接口')
     return
   }
@@ -928,29 +1028,8 @@ async function handleTestMessageText() {
 
   testingTextMsg.value = true
   textTestResponseRaw.value = ''
-  const url = `http://127.0.0.1:${wPort}/api`
   try {
-    const result = await window.electronAPI.callAPI({
-      url,
-      method: 'POST',
-      data: {
-        type: 3000,
-        user_id: uid,
-        msg: TEXT_MSG_TEST_BODY
-      }
-    })
-
-    if (!result?.success) {
-      textTestResponseRaw.value = JSON.stringify(
-        { ipcError: result?.msg || '请求失败', detail: result },
-        null,
-        2
-      )
-      feedback.error('U007', result?.msg || '请求失败')
-      return
-    }
-
-    const body = result.data
+    const body = await VWorkApi.sendTestText(wPort, uid, TEXT_MSG_TEST_BODY)
     textTestResponseRaw.value =
       typeof body === 'string'
         ? body
@@ -1189,16 +1268,40 @@ async function savePreference(key, value) {
 }
 
 // 保存配置
-const handleSave = async () => {
-  if (!injectSettingsLoaded.value) return feedback.error('U018', '请先读取客户端路径配置')
+const handleSave = async ({ detectedVersion } = {}) => {
+  if (saving.value || !injectSettingsLoaded.value) return false
+  const host = String(formData.wecom_exe_path_v5 || '').trim()
+  pathSaveError.value = ''
+  pathSaveMessage.value = ''
+  if (!host) {
+    pathSaveError.value = '请填写 WXWork.exe 的完整路径，或点击「自动查找」。'
+    feedback.warning('U018', pathSaveError.value)
+    return false
+  }
+  if (host === (savedInjectSettings.value?.host || '') && !detectedVersion) {
+    formData.wecom_exe_path_v5 = host
+    await nextTick()
+    isDirty.value = false
+    return true
+  }
   saving.value = true
   try {
-    const result = await window.electronAPI.saveInjectHost(formData.wecom_exe_path_v5)
-    if (!result.success) throw new Error(result.msg)
-    savedInjectSettings.value = { host: formData.wecom_exe_path_v5 }
+    const result = await window.electronAPI.saveInjectHost(host)
+    if (!result?.success) throw new Error(result?.msg || '请检查路径和文件权限后重试。')
+    savedInjectSettings.value = { ...savedInjectSettings.value, host }
+    formData.wecom_exe_path_v5 = host
+    await nextTick()
     isDirty.value = false
-    ElMessage.success('客户端路径已保存；实例回调和加密配置请使用上方更新按钮')
-  } catch (error) { feedback.error('U023', error.message || '保存失败') }
+    installationHint.value = ''
+    installationCandidates.value = []
+    pathSaveMessage.value = detectedVersion ? `已找到并保存企微 v${detectedVersion} 的路径` : '客户端路径已保存'
+    ElMessage.success({ message: pathSaveMessage.value, grouping: true })
+    return true
+  } catch (error) {
+    pathSaveError.value = error.message || '请检查路径和文件权限后重试。'
+    feedback.error('U023', '客户端路径保存失败：' + pathSaveError.value)
+    return false
+  }
   finally { saving.value = false }
 }
 
@@ -1247,11 +1350,42 @@ onUnmounted(() => {
 .instance-status { font-size: 12px; line-height: 1.7; color: var(--sp-muted); margin: 12px 0 24px; }
 .card-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-top: 1px solid var(--sp-border); background: var(--sp-subtle-bg); }
 .card-actions :deep(.el-button) { flex-shrink: 0; min-width: 124px; margin: 0; }
-.card-note, .card-status { margin: 0; font-size: 12px; line-height: 1.6; color: var(--sp-muted); }
-.card-status { display: flex; align-items: center; gap: 8px; }
-.card-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--el-color-success); flex-shrink: 0; }
-.is-dirty .card-status::before { background: var(--el-color-warning); }
-.is-saving .card-status::before { background: var(--sp-accent); }
+.card-note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--sp-muted); }
+.wecom-section-body { display: flex; flex-direction: column; gap: 20px; }
+.wecom-version-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px; background: var(--sp-subtle-bg); border: 1px solid var(--sp-border); border-radius: 10px; }
+.wecom-client-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.wecom-version-summary .field-hint { margin-top: 4px; }
+.wecom-version-badge { flex-shrink: 0; padding: 5px 10px; border-radius: 6px; background: var(--sp-accent-soft); color: var(--sp-accent); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.wecom-path-field { min-width: 0; }
+.wecom-path-label { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+.wecom-path-row { display: flex; align-items: center; gap: 10px; }
+.wecom-path-input { flex: 1; min-width: 0; }
+.wecom-path-input :deep(.el-input__inner) { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.wecom-path-input :deep(.el-input__inner[aria-invalid="true"]) { color: var(--el-color-danger); }
+.wecom-path-row :deep(.el-button) { flex-shrink: 0; margin: 0; min-height: 38px; gap: 6px; }
+.wecom-path-field .field-hint { margin-top: 10px; }
+.wecom-candidates { padding: 14px; border: 1px solid var(--sp-border); border-radius: 10px; background: var(--sp-subtle-bg); }
+.wecom-candidates-title { margin: 0 0 12px; font-size: 12px; color: var(--sp-muted); line-height: 1.6; }
+.wecom-candidate { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px 14px; border: 1px solid var(--sp-border); border-radius: 8px; background: var(--sp-surface); color: var(--sp-text); font: inherit; text-align: left; cursor: pointer; transition: border-color .2s, background .2s; }
+.wecom-candidate + .wecom-candidate { margin-top: 8px; }
+.wecom-candidate:hover:not(:disabled) { border-color: var(--sp-accent); background: var(--sp-accent-soft); }
+.wecom-candidate:disabled { cursor: wait; opacity: .65; }
+.wecom-candidate-detail { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wecom-candidate-version { font-size: 12px; font-weight: 600; color: var(--sp-muted); }
+.wecom-candidate-path { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.wecom-candidate-action { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--sp-accent); font-size: 12px; font-weight: 500; }
+.wecom-discovery-hint { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 12px 14px; border: 1px solid var(--sp-warning-border); border-radius: 8px; background: var(--sp-warning-bg); color: var(--sp-warning-text); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.wecom-discovery-hint > .el-icon { flex-shrink: 0; margin-top: 3px; font-size: 14px; }
+.wecom-discovery-hint.is-error { color: var(--el-color-danger); border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.wecom-path-status { display: flex; align-items: flex-start; gap: 10px; min-width: 0; text-align: left; }
+.wecom-path-status > .el-icon { flex-shrink: 0; margin-top: 2px; font-size: 17px; color: var(--sp-muted); }
+.wecom-path-status.is-loading > .el-icon { color: var(--sp-accent); }
+.wecom-path-status.is-warning > .el-icon { color: var(--el-color-warning); }
+.wecom-path-status.is-error > .el-icon { color: var(--el-color-danger); }
+.wecom-path-status.is-success > .el-icon { color: var(--el-color-success); }
+.wecom-status-title { margin: 0; font-size: 13px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.wecom-status-detail { margin: 3px 0 0; font-size: 12px; line-height: 1.6; color: var(--sp-muted); overflow-wrap: anywhere; }
+.wecom-path-status.is-error .wecom-status-detail { color: var(--el-color-danger); }
 .option-card:disabled { cursor: wait; opacity: .65; }
 .option-card:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
 .settings-page {
@@ -1360,18 +1494,6 @@ onUnmounted(() => {
 
 .settings-section-last {
   margin-bottom: 8px;
-}
-
-.wecom-version-radio {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.wecom-version-unavailable {
-  margin-left: 4px;
-  font-size: 12px;
-  color: var(--el-color-warning);
 }
 
 .section-card {
@@ -2155,6 +2277,8 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
+  .wecom-path-row { align-items: stretch; flex-direction: column; }
+  .wecom-candidate { align-items: flex-start; flex-direction: column; gap: 10px; }
   .section-head, .section-body { padding: 18px 16px; }
   .option-cards { grid-template-columns: 1fr; }
   .settings-main { padding-top: 16px; }

@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setNativeTheme: (mode) => ipcRenderer.invoke('set-native-theme', mode),
   
   // API调用
-  callAPI: (options) => ipcRenderer.invoke('call-api', options),
+  callFrameworkWecom: (options) => ipcRenderer.invoke('call-framework-wecom', options),
   
   // 端口相关
   checkPort: (port) => ipcRenderer.invoke('check-port', port),
@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   discoverRunningWecom: () => ipcRenderer.invoke('discover-running-wecom'),
   updateInstanceCallback: (payload) => ipcRenderer.invoke('update-instance-callback', payload),
   saveInjectHost: (host) => ipcRenderer.invoke('save-inject-host', host),
+  findWecomInstallations: () => ipcRenderer.invoke('find-wecom-installations'),
   readInjectSettings: () => ipcRenderer.invoke('read-inject-settings'),
 
   // 注入工具

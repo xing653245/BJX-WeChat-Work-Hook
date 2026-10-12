@@ -7,7 +7,7 @@ const { parseNetstatListeningPids, parseNetstatLocalPids } = require('../commons
 
 /** 注入后 Hook 初始化保护（此期间写操作排队延迟） */
 const STABILIZING_AFTER_INJECT_MS = 45000
-/** 登录成功后额外保护（避免刚登录即调设置/群发压垮 Hook） */
+/** 登录成功后额外保护，避免立即发送测试消息干扰 Hook */
 const PROTECTION_AFTER_LOGIN_MS = 25000
 /** 账号切换期间保护 */
 const PROTECTION_ACCOUNT_SWITCH_MS = 15000
@@ -15,15 +15,6 @@ const PROTECTION_ACCOUNT_SWITCH_MS = 15000
 const AUTO_INJECT_COOLDOWN_MS = 120000
 /** 手动注入失败后最短重试间隔（防连点） */
 const MANUAL_INJECT_RETRY_MS = 15000
-
-/** 登录探测/读个人信息等，保护期内仍允许 */
-const READ_ONLY_TYPES = new Set([
-  1000, 1001, 1002, 1003, 1004, 1005,
-  10004, 10005
-])
-
-/** 登录后需尽快执行、且轻量，保护期内不延迟（如关闭企微自动更新） */
-const PRIORITY_DURING_PROTECTION_TYPES = new Set([7000])
 
 const portStabilizingUntil = new Map()
 const portLoggedInProtectionUntil = new Map()
@@ -80,19 +71,6 @@ async function probeHookReachable(port) {
   }
 }
 
-function shouldDeferWriteDuringProtection(type) {
-  const t = Number(type)
-  if (READ_ONLY_TYPES.has(t)) return false
-  if (PRIORITY_DURING_PROTECTION_TYPES.has(t)) return false
-  if (t >= 3000 && t <= 3015) return true
-  if (t >= 5000 && t <= 5019) return true
-  if (t >= 7001 && t <= 7003) return true
-  if (t >= 9000 && t <= 9006) return true
-  if (t === 10000 || t === 10003) return true
-  if (t >= 6000 && t <= 6007) return true
-  return false
-}
-
 function getProtectionUntil(port) {
   const key = portKey(port)
   return Math.max(
@@ -132,10 +110,10 @@ function recordInjectAttempt(port, success) {
 }
 
 /**
- * 写/重操作在保护期内需额外等待（毫秒）；读操作与登录探测返回 0
+ * 仅文本测试发送在保护期内等待；登录管理和关闭自动更新立即执行。
  */
 function heavyApiDeferMs(port, type) {
-  if (!shouldDeferWriteDuringProtection(type)) {
+  if (Number(type) !== 3000) {
     return 0
   }
   const until = getProtectionUntil(port)

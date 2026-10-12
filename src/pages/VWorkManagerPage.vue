@@ -363,67 +363,21 @@ const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT
 /** 已请求关闭自动更新的企微端口，避免 completePortLogin 重复触发时打两次 */
 const autoUpdateOffRequestedPorts = new Set()
 
-/**
- * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api，type=7000，state=0）
- */
+/** 新实例登录后直接请求该企微实例关闭自动更新。 */
 async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
-  const p = parseInt(String(wecomHttpPort), 10)
-  if (Number.isNaN(p) || p < 1) {
-    diagnostics.warn('L001', '[auto-update] 跳过：企微端口无效', { wecomHttpPort })
-    return
-  }
-  if (autoUpdateOffRequestedPorts.has(p)) {
-    return
-  }
+  const p = Number(wecomHttpPort)
+  if (!Number.isInteger(p) || p <= 1024 || p > 65535 || autoUpdateOffRequestedPorts.has(p)) return
   autoUpdateOffRequestedPorts.add(p)
-  if (!window.electronAPI?.callAPI) {
-    diagnostics.warn('L002', '[auto-update] 跳过：electronAPI.callAPI 不可用')
-    return
-  }
-
-  let sp
   try {
-    if (window.electronAPI.readConfig) {
-      const cfg = await window.electronAPI.readConfig()
-      const raw = cfg?.sys?.server_port ?? DEFAULT_SERVER_PORT_STRING
-      sp = parseInt(String(raw).trim(), 10)
+    const body = await VWorkApi.disableAutoUpdate(p)
+    if (!isWecomHookBodyOk(body)) {
+      diagnostics.warn('L005', '[auto-update] 调用失败:', body?.errmsg || body?.msg || body)
+      autoUpdateOffRequestedPorts.delete(p)
     } else {
-      sp = parseInt(String(serverPort.value || DEFAULT_SERVER_PORT_STRING).trim(), 10)
+      diagnostics.info('L006', '[auto-update] 已请求关闭企微自动更新（成功）', { wecomPort: p })
     }
   } catch (e) {
-    diagnostics.warn('L003', '[auto-update] 读取监听端口失败，使用本地缓存:', e)
-    sp = parseInt(String(serverPort.value || DEFAULT_SERVER_PORT_STRING).trim(), 10)
-  }
-
-  if (Number.isNaN(sp) || sp <= 1024 || sp > 10000) {
-    diagnostics.warn('L004', '[auto-update] 跳过：框架监听端口无效，请检查 ini 中 sys.server_port（有效区间 1025～10000）', {
-      parsed: sp
-    })
-    return
-  }
-
-  const url = `http://127.0.0.1:${sp}/api`
-  try {
-    const result = await window.electronAPI.callAPI({
-      url,
-      method: 'POST',
-      data: {
-        port: p,
-        state: 0,
-        type: 7000
-      }
-    })
-    const body = result?.data
-    if (!result?.success || !isWecomHookBodyOk(body)) {
-      diagnostics.warn('L005', '[auto-update] 调用失败:', body?.errmsg || result?.msg || result)
-    } else {
-      diagnostics.info('L006', '[auto-update] 已请求关闭企微自动更新（成功）', {
-        listenPort: sp,
-        wecomPort: p,
-        response: body?.encrypted === true ? { encrypted: true } : body
-      })
-    }
-  } catch (e) {
+    autoUpdateOffRequestedPorts.delete(p)
     diagnostics.warn('L007', '[auto-update] 调用异常:', e?.message || e)
   }
 }

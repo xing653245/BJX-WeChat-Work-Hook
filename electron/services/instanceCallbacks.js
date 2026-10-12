@@ -22,7 +22,7 @@ function validateSettings(input) {
   return { enabled: input.enabled, url, timeout_ms: timeout, retries, Message_Encryption: input.Message_Encryption, RSA_PublicKey: key }
 }
 
-function createInstanceCallbacks({ getSettingsFile, onMessage = () => {}, post = (port, body) => enqueuePortTask(port, 0, async () => {
+function createInstanceCallbacks({ getSettingsFile, onMessage = () => {}, post = (port, body) => enqueuePortTask(port, async () => {
   const response = await axios.post(`http://127.0.0.1:${port}/updatesettings`, body, { timeout: 10000, proxy: false, maxRedirects: 0 })
   return response.data
 }) } = {}) {

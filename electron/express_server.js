@@ -31,9 +31,6 @@ function resolveLogoutPort(payload, loginInfo) {
   return NaN
 }
 
-// 导入路由
-const apiRoutes = require('./routes/index')
-
 const app = express()
 
 // 添加CORS支持
@@ -44,7 +41,7 @@ app.use(cors({
   allowedHeaders: ['*']
 }))
 
-// 支持远程合同文件以 Base64 传入；仍保留明确上限，避免意外占用过多内存。
+// 仅接收企微消息日志，业务接口由用户直连企微实例。
 app.use(express.json({ limit: '35mb' }))
 
 // 消息推送地址（由环境变量设置）
@@ -150,14 +147,10 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'Express Server Running',
     endpoints: {
-      message: 'POST /msg - 接收企微消息推送',
-      api: 'POST /api - 请求体使用 type 指定企微 Hook 操作，可使用 port 选择实例'
+      message: 'POST /msg - 接收企微消息推送'
     }
   })
 })
-
-// 注册API路由
-app.use('/api', apiRoutes)
 
 /**
  * 在已有 Express app 上监听端口（不杀占用进程）

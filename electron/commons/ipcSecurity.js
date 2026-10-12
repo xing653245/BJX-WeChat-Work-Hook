@@ -8,22 +8,6 @@ function isMainWindowSender(event, mainWindow) {
   return event.sender === mainWindow.webContents
 }
 
-/** call-api 仅允许访问本机 HTTP 框架/企微接口 */
-function isAllowedCallApiUrl(rawUrl) {
-  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return false
-  try {
-    const u = new URL(rawUrl.trim())
-    const host = u.hostname.toLowerCase()
-    if (host !== '127.0.0.1' && host !== 'localhost') return false
-    if (u.protocol !== 'http:') return false
-    if (u.username || u.password) return false
-    if (/^\/updatesettings\/?$/i.test(u.pathname)) return false
-    return true
-  } catch {
-    return false
-  }
-}
-
 const EXTERNAL_URL_ALLOW = [
   /^https:\/\/23t2z5j37i\.apifox\.cn/i,
   /^https:\/\/([a-z0-9-]+\.)*apifox\.cn/i,
@@ -54,7 +38,6 @@ function assertMainWindow(event, mainWindow) {
 
 module.exports = {
   isMainWindowSender,
-  isAllowedCallApiUrl,
   isAllowedExternalUrl,
   assertMainWindow
 }

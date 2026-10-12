@@ -17,7 +17,7 @@ const {
 const ini = require('ini')
 const axios = require('axios')
 const { saveLogToFile, getConfigPath, readIni, getBusinessCallbackUrl, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
-const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
+const { assertMainWindow, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
 const { initCrashDiagnostics, attachWebContentsDiagnostics } = require('./services/crashDiagnostics')
@@ -35,7 +35,8 @@ const { getInjectBinDir } = require('./commons/resourcePaths')
 const { discoverWecom } = require('./services/wecomDiscovery')
 const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
 const { postToVWorkApi } = require('./services/wecomApiClient')
-const { callVWorkAPI } = require('./middleware/apiHandler')
+const { callFrameworkWecomApi } = require('./services/frameworkWecomApi')
+const { FRAMEWORK_API_NAMES } = require('./configs/frameworkWecomApi')
 const { notifyWecomInjectStarted } = require('./services/wecomNotify')
 const {
   canInjectPort,
@@ -1166,6 +1167,15 @@ app.whenReady().then(async () => {
     focusMainWindow()
   })
 
+  try {
+    const result = await require('./services/wecomInstallations').autoSaveWecomInstallation(getInjectBinDir())
+    diagnostics.info('C008', '启动时自动检测企微安装路径', result)
+    if (result.status === 'multiple') diagnostics.warn('C009', '找到多个兼容企微安装位置，请在设置中选择客户端路径')
+    if (result.status === 'not-found') diagnostics.warn('C010', '未找到兼容企微安装位置，已保留原客户端路径')
+  } catch (error) {
+    diagnostics.warn('C011', '启动时自动配置企微路径失败，保留原配置并继续启动', error)
+  }
+
   createWindow()
 
   startMessageServer()
@@ -1271,6 +1281,19 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
 const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
 const injectSettingsDir = getInjectBinDir
 
+ipcMain.handle('find-wecom-installations', async event => {
+  assertMainWindow(event, mainWindow)
+  try {
+    let host = ''
+    try { host = readInjectSettings(injectSettingsDir()).host || '' } catch { /* 仍可查找安装位置 */ }
+    const candidates = await require('./services/wecomInstallations').findWecomInstallations(injectSettingsDir(), host)
+    return { success: true, candidates }
+  } catch (error) {
+    diagnostics.warn('C007', '自动查找企微安装位置失败', error)
+    return { success: false, msg: '自动查找失败，请重试或手动填写企微客户端路径' }
+  }
+})
+
 ipcMain.handle('discover-running-wecom', async event => {
   assertMainWindow(event, mainWindow)
   try { return { success: true, ...await discoverWecom() } }
@@ -1363,39 +1386,21 @@ ipcMain.handle('save-config', async (event, config) => {
   }
 })
 
-ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
+// 只供框架界面调用固定操作，不接收 URL，也不经框架 HTTP 端口转发。
+ipcMain.handle('call-framework-wecom', async (event, input) => {
   assertMainWindow(event, mainWindow)
-  if (!isAllowedCallApiUrl(url)) {
-    return { success: false, msg: '仅允许访问本机 HTTP 接口 (127.0.0.1 / localhost)' }
-  }
   try {
-    // /api 以请求体 type 分发，区分企微直连端口与框架代理端口。
-    const directWecomMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/api\/?$/)
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('企微调用参数无效')
+    const { port, ...request } = input
+    const logPort = Number(port)
+    if (!/^\d+$/.test(String(port)) || !Number.isInteger(logPort) || logPort <= 1024 || logPort > 65535) {
+      throw new Error('请选择有效的企微实例 HTTP 端口')
+    }
     const apiConfig = readConfig()
     const frameworkPort = Number(apiConfig.sys?.server_port || DEFAULT_SERVER_PORT)
     const frameworkPorts = new Set([frameworkPort, ...collectHookCompatListenPorts(apiConfig, frameworkPort)])
-    const urlPort = directWecomMatch ? Number(directWecomMatch[1]) : null
-    const directWecomPort = urlPort && !frameworkPorts.has(urlPort) ? urlPort : null
-    let responseData
-    if (directWecomPort && method === 'POST' && data) {
-      const { type, port: _routingPort, ...params } = data
-      responseData = await callVWorkAPI(directWecomPort, type, params)
-    } else {
-      const apiType = Number(data?.type)
-      const frameworkTimeout = apiType === 3006 ? 180000
-        : ([4008, 4009].includes(apiType) || (apiType >= 3000 && apiType <= 3015) || (apiType >= 9000 && apiType <= 9006) ? 90000 : 35000)
-      const response = await axios({
-        method,
-        url,
-        data,
-        timeout: frameworkTimeout,
-        proxy: false,
-        family: 4
-      })
-      responseData = response.data
-    }
-
-    const logPort = directWecomPort || (data && data.port != null ? parseInt(data.port, 10) : null)
+    if (frameworkPorts.has(logPort)) throw new Error('请选择企微实例端口，不能使用框架监听端口')
+    const responseData = await callFrameworkWecomApi(logPort, request)
 
     // 如果成功获取响应，仅记录本地日志；业务回调由企微原生推送
     if (logPort && responseData) {
@@ -1414,109 +1419,9 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           }
         }
         
-        // 构建API调用日志数据（框架 REST 请求体常无 type，从 URL 推断）
-        const { resolveApiTypeForLog } = require('./configs/apiLogResolve')
-        const apiType = resolveApiTypeForLog(data)
-        // 与 electron/routes 保持一致，用于 API 调用日志展示
-        const apiTypeNames = {
-          // login
-          1000: '获取登录状态',
-          1001: '获取登录二维码',
-          1002: '获取个人信息',
-          1003: '退出登录',
-          1004: '获取个人二维码',
-          1005: '输入登录验证码',
-          // contact
-          2000: '获取联系人列表',
-          2001: '获取好友列表',
-          2002: '获取群列表',
-          2003: '获取群成员列表',
-          2004: '获取公司列表',
-          2005: '获取部门列表',
-          // message
-          3000: '发送文本消息',
-          3001: '发送图片消息',
-          3002: '发送GIF表情',
-          3003: '发送文件消息',
-          3004: '发送视频消息',
-          3005: '发送名片',
-          3006: '发送小程序',
-          3007: '发送视频号',
-          3008: '发送卡片链接',
-          3009: '发送群@消息',
-          3010: '发送位置消息',
-          3011: '发送语音消息',
-          3013: 'CDN发送图片',
-          3014: 'CDN发送视频',
-          3015: 'CDN发送文件',
-          // friend
-          4000: '添加好友',
-          4001: '删除好友',
-          4002: '同意好友请求',
-          4003: '设置好友备注',
-          4004: '设置好友描述',
-          4005: '设置好友公司',
-          4006: '设置好友手机号',
-          4007: '本地查询好友信息',
-          4008: '网络查询陌生人信息',
-          4009: '添加好友【网络查询】',
-          // group
-          5000: '创建群聊【外部】',
-          5001: '创建群聊【内部】',
-          5002: '修改群名称',
-          5003: '发送群公告',
-          5004: '邀请好友进群（40人以下）',
-          5005: '邀请好友进群（40人以上）',
-          5006: '移除群成员',
-          5007: '获取群二维码',
-          5008: '获取群信息',
-          5009: '获取欢迎语列表',
-          5010: '获取欢迎语',
-          5011: '设置欢迎语',
-          5012: '删除欢迎语',
-          5013: '添加管理员',
-          5014: '删除管理员',
-          5015: '转让群主',
-          5016: '退出群聊',
-          5017: '解散群聊',
-          5018: '允许/禁止修改群名',
-          5019: '开启/关闭邀请确认',
-          // tag
-          6000: '获取标签组列表',
-          6001: '添加标签',
-          6002: '修改标签',
-          6003: '删除标签',
-          6004: '一个好友打多个标签',
-          6005: '一个标签打多个好友',
-          6006: '获取标签下的联系人',
-          6007: '删除标签下的联系人',
-          'user-tags': '获取用户标签',
-          // settings
-          7000: '开启/关闭自动更新',
-          7001: '开启/关闭自动登录',
-          7002: '开启/关闭消息免打扰',
-          7003: '开启/关闭自动下载',
-          // id-convert
-          8000: '企业用户ID转开放平台ID',
-          8001: '企业群ID转开放平台ID',
-          8002: '开放平台ID转企业用户ID',
-          8003: '开放平台ID转企业群ID',
-          // cdn
-          9000: 'CDN上传文件',
-          9001: 'CDN下载企微图片',
-          9002: 'CDN下载视频',
-          9003: 'CDN下载文件',
-          9004: 'CDN下载个微文件',
-          9005: 'CDN上传图片',
-          9006: 'CDN上传视频',
-          // other
-          10000: '清空聊天记录',
-          10003: '语音转文字',
-          10004: '获取当前微信进程的PID',
-          10005: '获取当前聊天窗口信息'
-        }
-        const apiName = apiTypeNames[apiType] || `API调用(type:${apiType})`
-        
+        const apiType = request.type
+        const apiName = FRAMEWORK_API_NAMES[apiType]
+
         // 检查授权是否有效
         const expire = target_item ? target_item.expire : ''
         const valid_auth = validAuthDatetime(expire, target_item?.auth_active)
@@ -1596,7 +1501,7 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
     
     return { success: true, data: responseData }
   } catch (error) {
-    return { success: false, msg: error.message, data: null }
+    return { success: false, msg: error.message, code: error.code, reason: error.reason, data: null }
   }
 })
 
