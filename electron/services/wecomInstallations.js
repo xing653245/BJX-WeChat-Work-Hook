@@ -17,9 +17,11 @@ async function findWecomInstallations(binDir, currentHost = '') {
   if (process.platform !== 'win32') throw new Error('自动查找企微仅支持 Windows')
   const versions = JSON.parse(fs.readFileSync(path.join(binDir, 'versions.json'), 'utf8').replace(/^\uFEFF/, ''))
     .profiles.map(profile => profile.version)
+  // PowerShell 无法读取 app.asar 内的虚拟路径，由 Electron 读出脚本后传入。
+  const script = fs.readFileSync(path.join(__dirname, '../scripts/findWecomInstallations.ps1'), 'utf8').replace(/^\uFEFF/, '')
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
   const stdout = await new Promise((resolve, reject) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-      path.join(__dirname, '../scripts/findWecomInstallations.ps1')], {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
       windowsHide: true, timeout: 20000, encoding: 'utf8', maxBuffer: 1024 * 1024,
       env: { ...process.env, VWORK_CURRENT_HOST: currentHost }
     }, (error, output) => error ? reject(error) : resolve(output))

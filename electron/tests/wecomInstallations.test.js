@@ -7,6 +7,34 @@ const { classifyInstallations } = require('../services/wecomInstallations')
 const { autoSaveWecomInstallation } = require('../services/wecomInstallations')
 const os = require('node:os')
 
+test('打包后读取 asar 内脚本，向 PowerShell 传递内容而非虚拟文件路径', async () => {
+  const service = fs.readFileSync(path.resolve(__dirname, '../services/wecomInstallations.js'), 'utf8')
+  const script = '# 中文路径测试\nWrite-Output "[]"'
+  const module = { exports: {} }
+  let invoked = false
+  vm.runInNewContext(service, {
+    module, Buffer, __dirname: 'C:\\安装目录\\resources\\app.asar\\electron\\services',
+    process: { platform: 'win32', env: {} },
+    require(name) {
+      if (name === 'path') return path.win32
+      if (name === 'fs') return { readFileSync: file => file.endsWith('versions.json')
+        ? JSON.stringify({ profiles: [{ version: '5.0.3.6005' }] }) : script }
+      if (name === 'child_process') return { execFile(file, args, options, callback) {
+        invoked = true
+        assert.equal(file, 'powershell.exe')
+        assert.ok(!args.includes('-File'))
+        assert.equal(Buffer.from(args[args.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le'), script)
+        assert.equal(options.windowsHide, true)
+        assert.equal(options.env.VWORK_CURRENT_HOST, 'D:\\企微\\WXWork.exe')
+        callback(null, '[]')
+      } }
+      throw Error(name)
+    }
+  })
+  assert.equal((await module.exports.findWecomInstallations('C:\\bin', 'D:\\企微\\WXWork.exe')).length, 0)
+  assert.equal(invoked, true)
+})
+
 test('启动自动保存唯一路径，保留其他配置；无匹配或多义时不改写', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wecom-autopath-'))
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
