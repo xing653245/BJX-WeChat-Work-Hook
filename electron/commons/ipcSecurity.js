@@ -37,7 +37,6 @@ function assertMainWindow(event, mainWindow) {
 }
 
 module.exports = {
-  isMainWindowSender,
   isAllowedExternalUrl,
   assertMainWindow
 }

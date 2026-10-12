@@ -45,22 +45,6 @@ function isKnownMsgType(msgType) {
   return Number.isFinite(code) && Object.prototype.hasOwnProperty.call(MSG_TYPE_MAP, code)
 }
 
-function getMessageDirectionText(data) {
-  if (!data || typeof data !== 'object') return ''
-  if (data.is_self_msg === 1) return '发送'
-  if (data.msg_id) return '接收'
-  return ''
-}
-
-function formatMessageTypeLabel(data) {
-  if (data?.sys) return '系统提示'
-  if (data?.type === 'api_call') return 'API调用'
-
-  const direction = getMessageDirectionText(data)
-  const msgTypeText = getMsgTypeText(data?.msg_type)
-  return direction ? `${direction}-${msgTypeText}` : msgTypeText
-}
-
 function formatMessageContent(data) {
   if (!data || typeof data !== 'object') return ''
 
@@ -110,13 +94,7 @@ function enrichWecomMessage(data) {
 }
 
 module.exports = {
-  MSG_TYPE_MAP,
-  TEXT_MSG_TYPE,
-  UNKNOWN_MSG_LABEL,
   getMsgTypeText,
-  isKnownMsgType,
-  getMessageDirectionText,
-  formatMessageTypeLabel,
   formatMessageContent,
   enrichWecomMessage
 }

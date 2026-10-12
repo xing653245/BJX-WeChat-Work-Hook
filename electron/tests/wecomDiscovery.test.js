@@ -54,6 +54,7 @@ test('添加前发现现有企微时接入或提示，不再执行启动工具',
   const source = fs.readFileSync(path.resolve(__dirname, '../../src/pages/VWorkManagerPage.vue'), 'utf8')
   let started = 0, result
   const context = vm.createContext({
+    addingWechat: { value: false },
     singleFlight: require('../commons/singleFlight.cjs').singleFlight,
     discoverRunningWecom: async () => result,
     discoveryNotice: { value: '请先退出已运行企微' },

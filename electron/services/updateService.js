@@ -209,10 +209,8 @@ function initUpdateFeeds() {
 }
 
 module.exports = {
-  UPDATE_FEEDS,
   getActiveFeed,
   shouldSuppressErrorEvent,
-  applyFeed,
   formatUpdateError,
   checkForUpdatesWithFallback,
   initUpdateFeeds

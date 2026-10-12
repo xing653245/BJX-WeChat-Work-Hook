@@ -79,15 +79,6 @@ function validatePkcs1Rsa1024PublicKey(raw) {
   }
 }
 
-function assertPkcs1Rsa1024PublicKey(raw) {
-  const result = validatePkcs1Rsa1024PublicKey(raw)
-  if (!result.ok) throw new Error(result.message)
-  return result.body
-}
-
 module.exports = {
-  EXPECTED_BITS,
-  normalizeRsaPublicKeyBase64,
-  validatePkcs1Rsa1024PublicKey,
-  assertPkcs1Rsa1024PublicKey
+  validatePkcs1Rsa1024PublicKey
 }

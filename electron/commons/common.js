@@ -275,28 +275,11 @@ function parseIniFlag(value) {
 }
 
 const {
-  AUTH_REASON,
-  checkAuthExpire,
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime,
   isAuthorizedAuthState
 } = require('./authCheck.cjs')
-
-/**
- * 检查端口是否被占用
- */
-function isPortInUse(port) {
-  return new Promise((resolve) => {
-    const net = require('net')
-    const server = net.createServer()
-    server.listen(port, () => {
-      server.once('close', () => resolve(false))
-      server.close()
-    })
-    server.on('error', () => resolve(true))
-  })
-}
 
 /**
  * 杀死占用指定端口的进程
@@ -434,19 +417,15 @@ function readIni(configPath = null) {
 
 module.exports = {
   getConfigPath,
-  getAppRootPath,
   getRunLogDirectory,
   readTodayRunLogTail,
   writeConfigAtomic,
   readConfigTextWithBackup,
   getBusinessCallbackUrl,
-  AUTH_REASON,
-  checkAuthExpire,
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime,
   isAuthorizedAuthState,
-  isPortInUse,
   killProcessByPort,
   readIni,
   saveLogToFile

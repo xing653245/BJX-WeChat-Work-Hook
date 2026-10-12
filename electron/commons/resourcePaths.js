@@ -10,4 +10,4 @@ function getResourceRoot() {
 function getInjectBinDir() { return path.join(getResourceRoot(), 'bin') }
 function getInjectToolPath() { return path.join(getInjectBinDir(), 'it.exe') }
 
-module.exports = { getResourceRoot, getInjectBinDir, getInjectToolPath }
+module.exports = { getInjectBinDir, getInjectToolPath }

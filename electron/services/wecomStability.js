@@ -226,17 +226,13 @@ async function isPortSafeForCrashRecoveryInject(port) {
 }
 
 module.exports = {
-  STABILIZING_AFTER_INJECT_MS,
-  PROTECTION_AFTER_LOGIN_MS,
   markPortStabilizing,
   markPortLoggedIn,
   markPortAccountSwitch,
   recordInjectAttempt,
   heavyApiDeferMs,
-  getProtectionUntil,
   canInjectPort,
   isPortSafeForCrashRecoveryInject,
   isWecomInstanceStillAlive,
-  probeHookReachable,
   findPidByPort
 }

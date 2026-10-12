@@ -169,7 +169,5 @@ module.exports = {
   checkPortListenAvailable,
   findAvailablePort,
   runInjectTool,
-  evaluateInjectResult,
-  formatInjectErrorHint,
-  buildInjectArgs
+  evaluateInjectResult
 }

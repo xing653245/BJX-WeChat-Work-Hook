@@ -5,7 +5,7 @@
         <div class="nav-caption">设置分区</div>
         <nav class="nav-list">
           <button
-            v-for="item in navSections"
+            v-for="item in visibleNavSections"
             :key="item.id"
             type="button"
             class="nav-item"
@@ -203,8 +203,8 @@
           </div>
         </section>
 
-        <!-- API Debug -->
-        <section :id="sectionDomId('api')" class="settings-section">
+        <!-- API Debug：暂时隐藏，SHOW_API_DEBUG 改为 true 即可恢复 -->
+        <section v-if="SHOW_API_DEBUG" :id="sectionDomId('api')" class="settings-section">
           <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.api }">
             <button
               type="button"
@@ -645,14 +645,18 @@ const sectionExpanded = reactive({
   update: false
 })
 const themeMode = ref(getStoredThemeMode())
+/** 暂时隐藏「接口调试」分区与侧栏入口；改为 true 即可恢复 */
+const SHOW_API_DEBUG = false
+
 const navSections = [
   { id: 'http', label: '回调与加密', icon: Connection },
   { id: 'wecom', label: '企微版本', icon: ChatLineRound },
-  { id: 'api', label: '接口调试', icon: Promotion },
+  { id: 'api', label: '接口调试', icon: Promotion, hidden: !SHOW_API_DEBUG },
   { id: 'appearance', label: '外观', icon: Sunny },
   { id: 'window', label: '窗口', icon: Monitor },
   { id: 'update', label: '更新', icon: Refresh }
 ]
+const visibleNavSections = computed(() => navSections.filter((item) => !item.hidden))
 
 let sectionObserver = null
 
@@ -699,7 +703,7 @@ watch(
 
 function setupSectionObserver() {
   sectionObserver?.disconnect()
-  const elements = navSections
+  const elements = visibleNavSections.value
     .map((s) => document.getElementById(sectionDomId(s.id)))
     .filter(Boolean)
   if (!elements.length) return
@@ -712,7 +716,7 @@ function setupSectionObserver() {
         .filter((e) => e.isIntersecting)
         .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
       if (!top) return
-      const matched = navSections.find((s) => top.target.id === sectionDomId(s.id))
+      const matched = visibleNavSections.value.find((s) => top.target.id === sectionDomId(s.id))
       if (matched) activeSection.value = matched.id
     },
     { root, rootMargin: '-8% 0px -55% 0px', threshold: [0.12, 0.35, 0.6] }

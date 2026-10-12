@@ -29,7 +29,6 @@ function messageServerAxiosConfig(extra = {}) {
 }
 
 module.exports = {
-  HEADER_NAME,
   ensureMessageServerToken,
   isValidMessageServerRequest,
   messageServerAxiosConfig

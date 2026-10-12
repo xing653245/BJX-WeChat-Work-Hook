@@ -109,4 +109,4 @@ function createInstanceCallbacks({ getSettingsFile, onMessage = () => {}, post =
   }
   return { prepare, remove, get, update, ports: () => [...instances.keys()], close: () => Promise.all([...instances.keys()].map(detach)) }
 }
-module.exports = { createInstanceCallbacks, validateSettings }
+module.exports = { createInstanceCallbacks }

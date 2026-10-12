@@ -113,14 +113,7 @@ function attachWebContentsDiagnostics(webContents) {
   })
 }
 
-function getCrashLogPath() {
-  return crashLogPath
-}
-
 module.exports = {
   initCrashDiagnostics,
-  attachWebContentsDiagnostics,
-  appendCrashLog,
-  getCrashLogPath,
-  getMainWindow
+  attachWebContentsDiagnostics
 }

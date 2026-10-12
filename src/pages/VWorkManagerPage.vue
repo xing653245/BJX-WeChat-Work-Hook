@@ -14,7 +14,8 @@
               <p v-if="unmanagedPids.length">已发现 {{ unmanagedPids.length }} 个尚未接入的企微进程，PID：{{ unmanagedPids.join('、') }}。重新检测不会对这些进程执行注入。</p>
             </div>
           </div>
-          <el-button size="small" :loading="discovering" @click="discoverRunningWecom">重新检测</el-button>
+          <el-button v-if="addingWechat" size="small" loading disabled role="status">正在启动企微，请稍候…</el-button>
+          <el-button size="small" :loading="discovering" :disabled="addingWechat" @click="discoverRunningWecom">重新检测</el-button>
         </div>
         <div class="table-wrap">
           <el-table
@@ -55,7 +56,9 @@
       width="420px"
       align-center
       class="port-add-dialog"
-      :show-close="true"
+      :show-close="!addingWechat"
+      :close-on-click-modal="!addingWechat"
+      :close-on-press-escape="!addingWechat"
     >
       <template #header>
         <div class="port-add-head">
@@ -68,6 +71,7 @@
         <el-input
           id="custom-wecom-port"
           v-model="customPort"
+          :disabled="addingWechat"
           size="large"
           clearable
           placeholder="例如 6272"
@@ -77,8 +81,8 @@
       </div>
       <template #footer>
         <div class="port-add-footer">
-          <el-button @click="showAddDialog = false">取消</el-button>
-          <el-button type="primary" @click="handleAddWechat">确定</el-button>
+          <el-button :disabled="addingWechat" @click="showAddDialog = false">取消</el-button>
+          <el-button type="primary" :loading="addingWechat" @click="handleAddWechat">{{ addingWechat ? '正在启动企微…' : '确定' }}</el-button>
         </div>
       </template>
     </el-dialog>
@@ -138,7 +142,9 @@
     >
       <div
         class="context-menu-item context-menu-parent"
-        @click.stop="toggleSubMenu('add')"
+        :class="{ disabled: addingWechat }"
+        :aria-disabled="addingWechat"
+        @click.stop="!addingWechat && toggleSubMenu('add')"
       >
         添加企微
         <span class="submenu-arrow">▶</span>
@@ -149,12 +155,14 @@
         >
           <div
             class="context-menu-item"
+            :class="{ disabled: addingWechat }"
             @click="handleMenuCommand('add-random')"
           >
             随机端口
           </div>
           <div
             class="context-menu-item"
+            :class="{ disabled: addingWechat }"
             @click="handleMenuCommand('add-custom')"
           >
             指定端口
@@ -267,6 +275,7 @@ const unmanagedPids = ref([])
 const selectedRow = ref(null)
 const showAddDialog = ref(false)
 const customPort = ref('')
+const addingWechat = ref(false)
 const showTagDialog = ref(false)
 const tagValue = ref('')
 const showCardKeyDialog = ref(false)
@@ -645,6 +654,7 @@ const toggleSubMenu = (key) => {
 
 // 菜单命令处理
 const handleMenuCommand = async (command) => {
+  if (addingWechat.value && (command === 'add-random' || command === 'add-custom')) return
   contextMenuVisible.value = false
   activeSubMenu.value = null
   
@@ -744,42 +754,43 @@ const removeWecomFromManager = async (port, options = {}) => {
 }
 
 const executeAddWechat = singleFlight(async (portType, customPortValue) => {
-  const discovery = await discoverRunningWecom()
-  if (!discovery.success || discovery.unmanagedPids.length) {
-    feedback.warning('U036', discoveryNotice.value)
-    return
-  }
-  if (discovery.recovered > 0) {
-    ElMessage.success('已找到并接入正在运行的企微，请使用列表中的账号；如需新账号，请再次添加')
-    return
-  }
-  let port
-  if (portType === 'random') {
-    if (!window.electronAPI) {
-      feedback.error('U002', '应用通信尚未就绪，请重启框架后重试')
-      return
-    }
-    const result = await window.electronAPI.findAvailablePort()
-    port = result.port
-    if (!port) {
-      feedback.error('U003', '当前没有可用端口，请关闭无用实例后重试')
-      return
-    }
-  } else {
-    port = parseInt(customPortValue)
-    if (isNaN(port) || port <= 1024 || port > 10000) {
-      feedback.warning('U004', '端口可用范围(1024, 10000]')
-      return
-    }
-    const inUse = await checkPort(port)
-    if (inUse) {
-      feedback.warning('U005', `端口 ${port} 已被系统占用，请更换其他端口`)
-      return
-    }
-  }
-
-  if (!window.electronAPI) return
+  addingWechat.value = true
   try {
+    const discovery = await discoverRunningWecom()
+    if (!discovery.success || discovery.unmanagedPids.length) {
+      feedback.warning('U036', discoveryNotice.value)
+      return
+    }
+    if (discovery.recovered > 0) {
+      ElMessage.success('已找到并接入正在运行的企微，请使用列表中的账号；如需新账号，请再次添加')
+      return
+    }
+    let port
+    if (portType === 'random') {
+      if (!window.electronAPI) {
+        feedback.error('U002', '应用通信尚未就绪，请重启框架后重试')
+        return
+      }
+      const result = await window.electronAPI.findAvailablePort()
+      port = result.port
+      if (!port) {
+        feedback.error('U003', '当前没有可用端口，请关闭无用实例后重试')
+        return
+      }
+    } else {
+      port = parseInt(customPortValue)
+      if (isNaN(port) || port <= 1024 || port > 10000) {
+        feedback.warning('U004', '端口可用范围(1024, 10000]')
+        return
+      }
+      const inUse = await checkPort(port)
+      if (inUse) {
+        feedback.warning('U005', `端口 ${port} 已被系统占用，请更换其他端口`)
+        return
+      }
+    }
+
+    if (!window.electronAPI) return
     const result = await window.electronAPI.runInjectTool({
       port
     })
@@ -789,6 +800,7 @@ const executeAddWechat = singleFlight(async (portType, customPortValue) => {
       trackPendingPort(port)
       const rowIndex = ensureTableRowForPort(port)
       checkLoginStatus(port, rowIndex)
+      return true
     } else {
       feedback.error('U006', {
         message: result.output || '启动失败',
@@ -798,12 +810,15 @@ const executeAddWechat = singleFlight(async (portType, customPortValue) => {
     }
   } catch (error) {
     feedback.error('U007', '启动失败: ' + error.message)
+  } finally {
+    addingWechat.value = false
   }
 })
 
 const handleAddWechat = async () => {
-  await executeAddWechat('custom', customPort.value)
-  showAddDialog.value = false
+  if (addingWechat.value) return
+  const success = await executeAddWechat('custom', customPort.value)
+  if (success) showAddDialog.value = false
 }
 
 // 登录完成后写入表格与配置（按端口定位行，避免 reload 后 rowIndex 失效）

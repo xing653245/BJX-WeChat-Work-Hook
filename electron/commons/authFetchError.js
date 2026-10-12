@@ -68,6 +68,5 @@ const AUTH_FETCH_FAILED_EXPIRE = '查询失败'
 
 module.exports = {
   AUTH_FETCH_FAILED_EXPIRE,
-  formatAuthFetchError,
-  isAuthNetworkError
+  formatAuthFetchError
 }

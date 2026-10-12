@@ -50,4 +50,4 @@ async function pollCrashDialogOnce({ closeDialogs = tryCloseWecomCrashDialogs, o
   return closed
 }
 
-module.exports = { tryCloseWecomCrashDialogs, pollCrashDialogOnce }
+module.exports = { pollCrashDialogOnce }
