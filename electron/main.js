@@ -428,7 +428,7 @@ const startExpressServer = async (port) => {
   try {
     const server = await runServer(p)
     expressServers.push(server)
-    diagnostics.info('L019', `Express服务器启动成功，监听端口 ${p}`)
+    diagnostics.important('L019', `[Express服务] 启动成功，端口 ${p}`)
   } catch (error) {
     const msg = error.message || String(error)
     diagnostics.error('L020', '启动Express服务器失败:', msg)
@@ -620,9 +620,11 @@ const runInjectForPort = async (robotPort, reason) => {
     if (!result.success) await instanceCallbacks.remove(robotPort)
     const ok = result.success === true
     recordInjectAttempt(robotPort, ok)
-    diagnostics.info('L027',
-      `[注入] 端口 ${robotPort} 已执行注入（${reason}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
-    )
+    const summary = require('./commons/injectConsole.cjs').formatInjectSummary({
+      port: robotPort, reason, success: ok, callbackUrl
+    })
+    if (ok) diagnostics.important('L027', summary)
+    else diagnostics.error('L027', summary, '\n' + (result.output || '注入工具未提供错误详情'))
     if (ok) {
       markPortStabilizing(robotPort)
       if (isAutoInjectReason(reason)) {
@@ -1312,6 +1314,7 @@ async function listCallbackInstances() {
     const pid = await findPidByPort(port)
     if (pid <= 0 || (row.pid && Number(row.pid) !== pid)) continue
     const userId = row.user_id == null || row.user_id === '-' ? '' : String(row.user_id).trim()
+    if (userId) await instanceCallbacks.applySaved(port, userId)
     let restored
     try { restored = instanceCallbacks.get(port, userId) }
     catch (error) { diagnostics.error('C005', '读取账号回调配置失败', error); restored = { storageWarning: '读取 callbackSetting.json 失败，请检查文件格式或读取权限' } }
@@ -1527,8 +1530,14 @@ ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {
   return { success: true }
 })
 
-ipcMain.handle('mark-wecom-port-logged-in', (_event, port) => {
+ipcMain.handle('mark-wecom-port-logged-in', async (event, port) => {
+  assertMainWindow(event, mainWindow)
   markPortLoggedIn(port)
+  const row = (readIni().login_info || []).find(item => Number(item.port) === Number(port))
+  if (row?.user_id && row.user_id !== '-') {
+    const result = await instanceCallbacks.applySaved(port, String(row.user_id))
+    return { success: true, ...result }
+  }
   return { success: true }
 })
 

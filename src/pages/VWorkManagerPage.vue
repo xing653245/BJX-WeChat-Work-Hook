@@ -862,7 +862,8 @@ const completePortLogin = async (port, options = {}) => {
   })
 
   untrackPendingPort(p)
-  window.electronAPI?.markWecomPortLoggedIn?.(p)
+  const callbackResult = await window.electronAPI?.markWecomPortLoggedIn?.(p)
+  if (callbackResult?.warning) ElMessage.warning(callbackResult.warning)
   if (stoppedPorts.has(p) || disposed) return false
   clearTimeout(autoUpdateTimers.get(p))
   autoUpdateTimers.set(p, setTimeout(() => {

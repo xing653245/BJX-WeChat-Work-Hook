@@ -3,6 +3,71 @@ const assert = require('node:assert/strict')
 const { createInstanceCallbacks } = require('../services/instanceCallbacks')
 const settings = { enabled: true, url: 'http://127.0.0.1:8002/msg', timeout_ms: 2000, retries: 2, Message_Encryption: false, RSA_PublicKey: '' }
 
+test('注入后按账号自动应用历史设置一次，并发刷新不重复提交，不改写历史文件', async t => {
+  const { file, fs } = cacheFixture(t)
+  const contents = JSON.stringify({ version: 1, accounts: { demo: { settings, savedAt: 'saved' } } })
+  fs.writeFileSync(file, contents)
+  let calls = 0
+  const service = createInstanceCallbacks({ getSettingsFile: () => file, post: async (port, body) => {
+    calls++; assert.equal(port, 7217); assert.deepEqual(body, settings); return { errno: 0 }
+  } })
+  t.after(() => service.close())
+  await service.prepare(7217)
+  await Promise.all([service.applySaved(7217, 'demo'), service.applySaved(7217, 'demo')])
+  await service.applySaved(7217, 'demo')
+  assert.equal(calls, 1)
+  assert.equal(service.get(7217, 'demo').confirmed, true)
+  assert.equal(service.get(7217, 'demo').restored, false)
+  assert.equal(service.get(7217, 'demo').settings.url, settings.url)
+  assert.equal(fs.readFileSync(file, 'utf8'), contents)
+  await service.prepare(7217)
+  await service.applySaved(7217, 'demo')
+  assert.equal(calls, 2, '重新注入后应再次应用')
+})
+
+test('无账号配置时保留随机回调，失败不标记成功，手动更新可重试', async t => {
+  const { file, fs } = cacheFixture(t)
+  let calls = 0, fail = true
+  const service = createInstanceCallbacks({ getSettingsFile: () => file, post: async () => {
+    calls++; return { errno: fail ? -1 : 0 }
+  } })
+  t.after(() => service.close())
+  const url = await service.prepare(7217)
+  await service.applySaved(7217, 'unknown')
+  assert.equal(calls, 0)
+  assert.equal(service.get(7217).settings.url, url)
+  fs.writeFileSync(file, JSON.stringify({ version: 1, accounts: { demo: { settings } } }))
+  assert.match((await service.applySaved(7217, 'demo')).warning, /失败/)
+  await service.applySaved(7217, 'demo')
+  assert.equal(calls, 1)
+  assert.equal(service.get(7217).settings.url, url)
+  assert.equal(service.get(7217, 'demo').confirmed, false)
+  fail = false
+  await service.update(7217, settings, 'demo')
+  assert.equal(service.get(7217, 'demo').confirmed, true)
+})
+
+test('手动更新等待自动更新完成，以用户最新配置为准', async t => {
+  const { file, fs } = cacheFixture(t)
+  fs.writeFileSync(file, JSON.stringify({ version: 1, accounts: { demo: { settings } } }))
+  let release
+  const calls = []
+  const service = createInstanceCallbacks({ getSettingsFile: () => file, post: async (port, body) => {
+    calls.push(body.url)
+    if (calls.length === 1) await new Promise(resolve => { release = resolve })
+    return { errno: 0 }
+  } })
+  t.after(() => service.close())
+  await service.prepare(7217)
+  const auto = service.applySaved(7217, 'demo')
+  await new Promise(setImmediate)
+  const manual = service.update(7217, { ...settings, url: 'http://127.0.0.1:8003/msg' }, 'demo')
+  assert.equal(calls.length, 1)
+  release()
+  await Promise.all([auto, manual])
+  assert.equal(service.get(7217, 'demo').settings.url, 'http://127.0.0.1:8003/msg')
+})
+
 function cacheFixture(t) {
   const fs = require('node:fs'), os = require('node:os'), path = require('node:path')
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'callback-cache-'))

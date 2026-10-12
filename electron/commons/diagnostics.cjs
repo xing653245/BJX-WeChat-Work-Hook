@@ -46,11 +46,15 @@ function friendlyMessage(value, fallback = '操作未完成，请稍后重试') 
 
 function createDiagnostics(source, output = console) {
   const write = (level, code, message, ...details) => {
+    const important = level === 'important'
+    if (important) level = 'info'
     const prefix = `[${source}#${code}]`
     const summary = level === 'error' || level === 'warn' ? friendlyMessage(message) : redactText(message)
     const extra = summary !== String(message) ? [message, ...details] : details
     const method = output[level] || output.log
-    if (consoleDiagnosticsEnabled) method.call(output, `${prefix} ${summary}`, ...extra.map(value => safeDetail(value)))
+    if (consoleDiagnosticsEnabled && (important || level === 'warn' || level === 'error')) {
+      method.call(output, important ? summary : `${prefix} ${summary}`, ...extra.map(value => safeDetail(value)))
+    }
     if (level === 'warn' || level === 'error') {
       const record = { source, code, level, message: summary, details: extra.map(value => safeDetail(value)) }
       try {
@@ -59,7 +63,7 @@ function createDiagnostics(source, output = console) {
       } catch { /* 诊断记录失败不影响业务 */ }
     }
   }
-  return Object.fromEntries(['info', 'warn', 'error', 'debug'].map(level => [level, (...args) => write(level, ...args)]))
+  return Object.fromEntries(['important', 'info', 'warn', 'error', 'debug'].map(level => [level, (...args) => write(level, ...args)]))
 }
 
 /** 用户界面只展示处理建议，不回显开发诊断、路径和堆栈。 */

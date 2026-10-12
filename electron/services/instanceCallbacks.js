@@ -1,4 +1,5 @@
 const http = require('http')
+const diagnostics = require('../commons/diagnostics.cjs').createDiagnostics('services/instanceCallbacks.js')
 const axios = require('axios')
 const { enqueuePortTask } = require('./wecomApiClient')
 const { validatePkcs1Rsa1024PublicKey } = require('../commons/pkcs1PublicKey.cjs')
@@ -79,21 +80,55 @@ function createInstanceCallbacks({ getSettingsFile, onMessage = () => {}, post =
     const item = instances.get(Number(port))
     if (userId && item?.userId !== userId) {
       const saved = store.get(userId)
-      if (saved) return { settings: validateSettings(saved.settings), savedAt: saved.savedAt, restored: true, confirmed: false }
+      if (saved) return { settings: validateSettings(saved.settings), savedAt: saved.savedAt, restored: true, confirmed: false, storageWarning: item?.restoreWarning || '' }
       // 切换到其他账号时，不沿用上一个账号的运行配置。
       if (item?.userId) return null
     }
     return item ? { settings: { ...item.settings }, confirmed: item.confirmed, callbackUrl: item.callbackUrl, restored: false, savedAt: item.savedAt, storageWarning: item.storageWarning } : null
+  }
+  // 同一次注入、同一账号仅自动应用一次；并发登录通知和列表刷新共用结果。
+  function applySaved(port, userId) {
+    port = Number(port)
+    const item = instances.get(port)
+    if (!item?.server) return Promise.resolve({ applied: false })
+    userId = normalizeAccountId(userId)
+    if (item.userId === userId && item.confirmed) return Promise.resolve({ applied: false })
+    if (!item.restoreTasks) item.restoreTasks = new Map()
+    if (item.restoreTasks.has(userId)) return item.restoreTasks.get(userId)
+    const task = Promise.resolve().then(async () => {
+      const saved = store.get(userId)
+      if (!saved) {
+        diagnostics.important('C001', `[回调] 企微 ${port} 使用默认地址 ${item.settings.url}${item.settings.enabled ? '' : '（推送关闭）'}`)
+        return { applied: false }
+      }
+      const settings = validateSettings(saved.settings)
+      if (instances.get(port) !== item) return { applied: false }
+      const result = await post(port, settings)
+      if (result?.errno !== 0) throw new Error('企微未确认回调配置更新成功')
+      if (instances.get(port) !== item) return { applied: false }
+      Object.assign(item, { settings, userId, confirmed: true, savedAt: saved.savedAt, restoreWarning: '' })
+      diagnostics.important('C002', `[回调] 企微 ${port} 已更新为 ${settings.url}${settings.enabled ? '' : '（推送关闭）'}`)
+      return { applied: true }
+    }).catch(error => {
+      diagnostics.warn('C003', `[回调配置] 自动更新失败，尚未确认生效\n  企微端口：${port}\n  处理方式：请在设置中点击“更新当前企微”重试`, error)
+      const warning = '自动应用已保存的回调配置失败，尚未确认生效，请点击更新当前企微重试'
+      if (instances.get(port) === item) item.restoreWarning = warning
+      return { applied: false, warning }
+    })
+    item.restoreTasks.set(userId, task)
+    return task
   }
   async function update(port, input, userId) {
     port = Number(port)
     if (!Number.isInteger(port) || port <= 1024 || port > 10000) throw new Error('企微端口无效')
     userId = normalizeAccountId(userId)
     const settings = validateSettings(input)
+    // 手动更新排在正在进行的自动恢复之后，确保用户最新修改最终生效。
+    await Promise.all(instances.get(port)?.restoreTasks?.values() || [])
     const result = await post(port, settings)
     if (result?.errno !== 0) throw new Error(result?.errno === -1 ? (result.msg || '企微拒绝更新配置') : '企微未确认更新成功（返回缺少有效 errno）')
     const item = instances.get(port)
-    if (item) { item.settings = settings; item.confirmed = true }
+    if (item) { item.settings = settings; item.confirmed = true; item.restoreWarning = '' }
     else instances.set(port, { server: null, settings, confirmed: true })
     const updated = instances.get(port)
     updated.userId = userId
@@ -107,6 +142,6 @@ function createInstanceCallbacks({ getSettingsFile, onMessage = () => {}, post =
     }
     return settings
   }
-  return { prepare, remove, get, update, ports: () => [...instances.keys()], close: () => Promise.all([...instances.keys()].map(detach)) }
+  return { prepare, remove, get, update, applySaved, ports: () => [...instances.keys()], close: () => Promise.all([...instances.keys()].map(detach)) }
 }
 module.exports = { createInstanceCallbacks }

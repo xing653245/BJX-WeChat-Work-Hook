@@ -132,7 +132,7 @@ function runInjectTool({ port, callbackUrl }) {
       resolve({ ...payload, injectToolPath })
     }
 
-    diagnostics.info('L001', `[注入工具] exe=${injectToolPath} cwd=${injectBinDir} port=${port}`)
+    diagnostics.info('L001', `[企微启动] 正在执行注入工具\n  企微端口：${port}\n  工具路径：${injectToolPath}`)
 
     const child = spawn(injectToolPath, spawnArgs, {
       cwd: injectBinDir,
