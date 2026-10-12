@@ -215,17 +215,11 @@
               <div class="section-head-left">
                 <span class="section-icon accent"><el-icon><Promotion /></el-icon></span>
                 <div>
-                  <h2 class="section-title">接口调试 · 文本消息</h2>
+                  <h2 class="section-title">接口调试</h2>
                   <p class="section-desc">选择企微与接收方，发送一条测试消息</p>
                 </div>
               </div>
               <div class="section-head-right">
-                <el-tooltip
-                  content="发往所选企微实例：POST http://127.0.0.1:{HTTP端口}/api。请求 JSON 包含 type: 3000、user_id、msg。"
-                  placement="top"
-                >
-                  <span class="help-btn" @click.stop><el-icon><QuestionFilled /></el-icon></span>
-                </el-tooltip>
                 <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.api }"><ArrowDown /></el-icon>
               </div>
             </button>
@@ -646,7 +640,7 @@ const sectionExpanded = reactive({
 })
 const themeMode = ref(getStoredThemeMode())
 /** 暂时隐藏「接口调试」分区与侧栏入口；改为 true 即可恢复 */
-const SHOW_API_DEBUG = false
+const SHOW_API_DEBUG = true
 
 const navSections = [
   { id: 'http', label: '回调与加密', icon: Connection },
