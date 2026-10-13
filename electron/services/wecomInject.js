@@ -1,35 +1,14 @@
+const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('services/wecomInject.js')
 /**
- * 企微注入工具：查找可用端口、执行 it.exe start（供主进程 IPC 与 Express API 共用）
+ * 企微注入工具：查找可用端口、执行 it.exe --port <端口>（供主进程 IPC 与 Express API 共用）
  */
 const path = require('path')
 const fs = require('fs')
-const { spawn, execSync } = require('child_process')
+const { spawn } = require('child_process')
 const net = require('net')
-const ini = require('ini')
-const iconv = require('iconv-lite')
-const { getConfigPath } = require('../commons/common')
-const { DEFAULT_SERVER_PORT, DEFAULT_INJECT_KEY } = require('../configs/defaults')
-const {
-  DEFAULT_WECOM_VERSION,
-  normalizeWecomVersion,
-  resolveInjectToolPath,
-  resolveInjectDllPath
-} = require('../configs/wecomVersion')
-
-/**
- * 与主进程 getAppPath 一致：开发为项目根，打包为 resources
- */
-function getAppPathForResources() {
-  try {
-    const { app } = require('electron')
-    if (app && app.isPackaged) {
-      return process.resourcesPath
-    }
-  } catch (e) {
-    /* 非 Electron 环境 */
-  }
-  return path.join(__dirname, '..', '..')
-}
+const { StringDecoder } = require('string_decoder')
+const { getInjectToolPath } = require('../commons/resourcePaths')
 
 /**
  * 本机端口是否可 bind（与主进程 check-port 语义一致：可绑定则未占用）
@@ -61,57 +40,24 @@ async function findAvailablePort(startPort = WECOM_HTTP_PORT_MIN, endPort = WECO
   if (minPort > maxPort) {
     return { port: null }
   }
-  const maxAttempts = 1000
-
-  const isPortAvailable = (p) => {
-    return new Promise((resolve) => {
-      const server = net.createServer()
-      server.listen(p, () => {
-        server.once('close', () => resolve(true))
-        server.close()
-      })
-      server.on('error', () => resolve(false))
-    })
+  // 随机起点后遍历一次，避免在端口紧张时重复探测同一端口。
+  const count = maxPort - minPort + 1
+  const offset = Math.floor(Math.random() * count)
+  for (let i = 0; i < count; i++) {
+    const port = minPort + (offset + i) % count
+    if (!(await checkPortListenAvailable(port)).inUse) return { port }
   }
-
-  const generateRandomPort = () => {
-    return Math.floor(Math.random() * (maxPort - minPort + 1)) + minPort
-  }
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const p = generateRandomPort()
-    if (await isPortAvailable(p)) {
-      return { port: p }
-    }
-  }
-
-  for (let p = minPort; p <= maxPort; p++) {
-    if (await isPortAvailable(p)) {
-      return { port: p }
-    }
-  }
-
   return { port: null }
-}
-
-/**
- * 子进程控制台在中文 Windows 下多为 GBK，默认 toString() 按 UTF-8 会乱码
- */
-function decodeInjectStdoutChunk(chunk) {
-  if (!Buffer.isBuffer(chunk)) {
-    chunk = Buffer.from(chunk)
-  }
-  if (process.platform === 'win32') {
-    return iconv.decode(chunk, 'gbk')
-  }
-  return chunk.toString('utf8')
 }
 
 const INJECT_FAIL_OUTPUT_PATTERNS = [
   /文件不存在/,
   /参数错误/,
   /注入失败/,
+  /无法启动企业微信/,
+  /宿主文件校验失败|设置目标环境失败|加载日志 DLL 失败/,
   /找不到/,
+  /未能找到路径/,
   /not found/i
 ]
 
@@ -123,12 +69,9 @@ function evaluateInjectResult(code, output) {
     return { success: false, output: text || '注入失败' }
   }
 
-  if (text.includes('注入成功')) {
-    return { success: true, output: text }
-  }
-
-  if (code === 0 && !text) {
-    return { success: false, output: '注入工具无输出，可能未启动企微' }
+  // 新工具的命令行模式可能静默退出，不再依赖旧版“注入成功”文案。
+  if (code === 0) {
+    return { success: true, output: text || '注入工具执行完成' }
   }
 
   return {
@@ -137,126 +80,23 @@ function evaluateInjectResult(code, output) {
   }
 }
 
-/** v5 注入工具加载 device.dll；旧包可能只有 vworkApi.dll */
-function ensureInjectDllReady(injectBinDir, version) {
-  const dllInfo = resolveInjectDllPath(injectBinDir, version)
-  if (!dllInfo.source) {
-    const expected = dllInfo.dllName
-    return {
-      ok: false,
-      output: `注入库不存在: ${path.join(injectBinDir, expected)}（当前企微版本: ${version}）`
-    }
-  }
-  if (dllInfo.source === dllInfo.dllName) {
-    return { ok: true, dllPath: dllInfo.dllPath }
-  }
-  try {
-    fs.copyFileSync(dllInfo.aliasPath, dllInfo.dllPath)
-    console.log(`[注入工具] 已将 ${dllInfo.source} 复制为 ${dllInfo.dllName}`)
-    return { ok: true, dllPath: dllInfo.dllPath, copiedFrom: dllInfo.source }
-  } catch (err) {
-    return {
-      ok: false,
-      output: `无法准备 ${dllInfo.dllName}: ${err.message}`
-    }
-  }
-}
-
-/** 从注册表或默认目录解析本机企微可执行文件路径 */
-function readWecomRegistryInfo() {
-  if (process.platform !== 'win32') {
-    return { executable: '', version: '' }
-  }
-  try {
-    const out = execSync('reg query "HKCU\\Software\\Tencent\\WXWork"', {
-      encoding: 'utf8'
-    })
-    const execMatch = out.match(/Executable\s+REG_\w+\s+(.+)/i)
-    const verMatch = out.match(/Version\s+REG_\w+\s+(.+)/i)
-    return {
-      executable: execMatch?.[1]?.trim() || '',
-      version: verMatch?.[1]?.trim() || ''
-    }
-  } catch {
-    return { executable: '', version: '' }
-  }
-}
-
-function getWecomExePathConfigKey() {
-  return 'wecom_exe_path_v5'
-}
-
-/** 注册表/文件版本号是否为当前支持的企微客户端 */
-function isClientVersionMatching(_wecomVersion, clientVersion) {
-  const major = parseInt(String(clientVersion || '').split('.')[0], 10)
-  if (Number.isNaN(major)) return false
-  return major >= 5
-}
-
-/**
- * @returns {{ path: string, error?: string, source?: string }}
- */
-function resolveWecomExePath(conf, wecomVersion) {
-  const version = normalizeWecomVersion(wecomVersion) || DEFAULT_WECOM_VERSION
-  const configKey = getWecomExePathConfigKey(version)
-  const configured = String(conf?.sys?.[configKey] || '').trim()
-  const legacyConfigured = String(conf?.sys?.wecom_exe_path || '').trim()
-
-  for (const candidate of [configured, legacyConfigured]) {
-    if (!candidate) continue
-    if (fs.existsSync(candidate)) {
-      return { path: candidate, source: configKey }
-    }
-    return { path: '', error: `配置的企微路径不存在: ${candidate}` }
-  }
-
-  const reg = readWecomRegistryInfo()
-  if (reg.executable && fs.existsSync(reg.executable)) {
-    if (isClientVersionMatching(version, reg.version)) {
-      return { path: reg.executable, source: 'registry' }
-    }
-    return {
-      path: '',
-      error: `注册表当前指向 ${reg.version || '未知版本'} 客户端（${reg.executable}），与当前企微接口不一致。`
-    }
-  }
-
-  const localExe = path.join(process.env.LOCALAPPDATA || '', 'WXWork', 'WXWork.exe')
-  if (localExe && fs.existsSync(localExe) && (!reg.version || isClientVersionMatching(version, reg.version))) {
-    return { path: localExe, source: 'localappdata' }
-  }
-
-  return {
-    path: '',
-    error: '未找到当前企微客户端路径。'
-  }
-}
-
-function buildInjectArgs({ port, serverPort, injectKey, wecomExePath }) {
-  const args = [
-    'start',
-    String(port),
-    `--my_port=${serverPort}`,
-    `--key=${injectKey}`
-  ]
-  if (wecomExePath) {
-    args.push(`--exe_path=${wecomExePath}`)
-  }
-  return args
+function buildInjectArgs({ port, callbackUrl }) {
+  return ['--port', String(port), '--callbackurl', callbackUrl]
 }
 
 /** 将 it.exe 原始输出转为更易懂的提示 */
-function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
+function formatInjectErrorHint(output) {
   const text = String(output || '').trim()
+  if (/未能找到路径/.test(text)) {
+    return `${text}。请检查注入工具目录下 settings.json 的 host 是否指向本机实际存在的 WXWork.exe。`
+  }
   if (/文件不存在|找不到/.test(text)) {
     let hint = `${text}。请确认本机已安装当前企微客户端。`
-    if (wecomExePath) {
-      hint += ` 当前企微路径: ${wecomExePath}`
-    }
+
     return hint
   }
   if (/参数错误/.test(text)) {
-    return `${text}。请检查框架监听端口与注入 key 配置。`
+    return `${text}。请检查 --port 指定的企微端口。`
   }
   return text || '注入失败'
 }
@@ -265,127 +105,69 @@ function formatInjectErrorHint(output, wecomVersion, wecomExePath) {
  * 执行注入工具启动企微
  * @param {object} options
  * @param {number|string} options.port - 企微 HTTP 端口
- * @param {number|string} options.serverPort - 框架监听端口
- * @param {string} [options.key] - 注入 key
- * @param {string} [options.wecomVersion] - 内部兼容参数，正常启动不再由客户选择
- * @returns {Promise<{ success: boolean, output: string, wecomVersion?: string }>}
+ * @returns {Promise<{ success: boolean, output: string, injectToolPath?: string }>}
  */
-function runInjectTool({ port, serverPort, key, wecomVersion }) {
-  const appRoot = getAppPathForResources()
-  let version = normalizeWecomVersion(wecomVersion)
-
-  if (!version) {
-    try {
-      const content = fs.readFileSync(getConfigPath(), 'utf-8')
-      const conf = ini.parse(content)
-      version = normalizeWecomVersion(conf.sys?.wecom_version)
-    } catch {
-      /* ignore */
-    }
+function runInjectTool({ port, callbackUrl }) {
+  if (!Number.isInteger(Number(port)) || Number(port) < WECOM_HTTP_PORT_MIN || Number(port) > WECOM_HTTP_PORT_MAX) {
+    return Promise.resolve({ success: false, output: '企微端口必须为 1025–10000 的整数' })
   }
-
-  version = version || DEFAULT_WECOM_VERSION
-  const { injectToolPath } = resolveInjectToolPath(appRoot, version)
-
+  if (!/^http:\/\/127\.0\.0\.1:\d+\/msg$/.test(callbackUrl || '')) return Promise.resolve({ success: false, output: '未分配有效的本地回调地址' })
+  const injectToolPath = getInjectToolPath()
   if (!fs.existsSync(injectToolPath)) {
     return Promise.resolve({
       success: false,
-      wecomVersion: version,
-      output: `注入工具不存在: ${injectToolPath}（当前企微版本: ${version}）`
+      output: `注入工具不存在: ${injectToolPath}`
     })
   }
 
   const injectBinDir = path.dirname(injectToolPath)
-  const dllReady = ensureInjectDllReady(injectBinDir, version)
-  if (!dllReady.ok) {
-    return Promise.resolve({
-      success: false,
-      wecomVersion: version,
-      output: dllReady.output
-    })
-  }
-
-  let conf = {}
-  try {
-    const content = fs.readFileSync(getConfigPath(), 'utf-8')
-    conf = ini.parse(content)
-  } catch {
-    /* ignore */
-  }
-
-  const injectKey = key || conf.sys?.inject_key || DEFAULT_INJECT_KEY
-  const exeResolve = resolveWecomExePath(conf, version)
-  if (!exeResolve.path) {
-    return Promise.resolve({
-      success: false,
-      wecomVersion: version,
-      output: exeResolve.error || '未找到企微客户端路径'
-    })
-  }
-  const wecomExePath = exeResolve.path
-  const spawnArgs = buildInjectArgs({ port, serverPort, injectKey, wecomExePath })
+  // 配套配置由注入工具自行读取，框架传入实例端口和独立的本地回调地址。
+  const spawnArgs = buildInjectArgs({ port, callbackUrl })
 
   return new Promise((resolve) => {
     let finished = false
     const finish = (payload) => {
       if (finished) return
       finished = true
-      resolve({ ...payload, wecomVersion: version, injectToolPath })
+      resolve({ ...payload, injectToolPath })
     }
 
-    console.log(`[注入工具] version=${version} exe=${injectToolPath} cwd=${injectBinDir} port=${port} serverPort=${serverPort}${wecomExePath ? ` wecomExe=${wecomExePath}` : ''}`)
+    diagnostics.info('L001', `[企微启动] 正在执行注入工具\n  企微端口：${port}\n  工具路径：${injectToolPath}`)
 
     const child = spawn(injectToolPath, spawnArgs, {
-      cwd: injectBinDir
+      cwd: injectBinDir,
+      windowsHide: true,
+      shell: false
     })
 
     let output = ''
+    // 新工具重定向输出为 UTF-8；两个流分别保留跨数据块的多字节字符。
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
     child.stdout.on('data', (data) => {
-      output += decodeInjectStdoutChunk(data)
+      output += stdoutDecoder.write(data)
     })
     child.stderr.on('data', (data) => {
-      output += decodeInjectStdoutChunk(data)
+      output += stderrDecoder.write(data)
     })
 
     child.on('error', (err) => {
       finish({ success: false, output: err.message })
     })
     child.on('close', (code) => {
+      output += stdoutDecoder.end() + stderrDecoder.end()
       const evaluated = evaluateInjectResult(code, output)
       if (!evaluated.success) {
-        evaluated.output = formatInjectErrorHint(evaluated.output, version, wecomExePath)
+        evaluated.output = formatInjectErrorHint(evaluated.output)
       }
       finish(evaluated)
     })
   })
 }
 
-/**
- * 从 conf.ini 读取框架监听端口、注入 key、企微版本
- */
-function readInjectConfig() {
-  try {
-    const content = fs.readFileSync(getConfigPath(), 'utf-8')
-    const conf = ini.parse(content)
-    const serverPort = parseInt(conf.sys?.server_port || DEFAULT_SERVER_PORT, 10) || DEFAULT_SERVER_PORT
-    const key = conf.sys?.inject_key || DEFAULT_INJECT_KEY
-    const wecomVersion = normalizeWecomVersion(conf.sys?.wecom_version) || DEFAULT_WECOM_VERSION
-    return { serverPort, key, wecomVersion }
-  } catch (e) {
-    return { serverPort: DEFAULT_SERVER_PORT, key: DEFAULT_INJECT_KEY, wecomVersion: DEFAULT_WECOM_VERSION }
-  }
-}
-
 module.exports = {
-  getAppPathForResources,
   checkPortListenAvailable,
   findAvailablePort,
   runInjectTool,
-  readInjectConfig,
-  evaluateInjectResult,
-  formatInjectErrorHint,
-  ensureInjectDllReady,
-  resolveWecomExePath,
-  readWecomRegistryInfo,
-  buildInjectArgs
+  evaluateInjectResult
 }

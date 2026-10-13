@@ -58,23 +58,23 @@
         z-index: 9999;
       }
       
-      /* 隐藏滚动条但保持功能 */
+      /* 内容区保留必要的滚动条；页面主滚动条由 shell-theme 隐藏。 */
       ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
       }
       
       ::-webkit-scrollbar-track {
-        background: #f1f1f1;
+        background: transparent;
       }
       
       ::-webkit-scrollbar-thumb {
-        background: #888;
+        background: var(--sp-control-border, #c0c4cc);
         border-radius: 4px;
       }
       
       ::-webkit-scrollbar-thumb:hover {
-        background: #555;
+        background: var(--sp-muted, #647086);
       }
     </style>
   </head>

@@ -99,7 +99,7 @@ function handleClosed() {
   font-size: 15px;
   font-weight: 600;
   line-height: 1.5;
-  color: #303133;
+  color: var(--sp-text);
   letter-spacing: 0.01em;
 }
 
@@ -135,8 +135,8 @@ function handleClosed() {
   flex: 1;
   min-width: 0;
   font-size: 14px;
-  color: #606266;
-  --el-checkbox-checked-text-color: #606266;
+  color: var(--el-text-color-regular);
+  --el-checkbox-checked-text-color: var(--el-text-color-regular);
 }
 
 .ccd-actions {
@@ -150,16 +150,16 @@ function handleClosed() {
   min-width: 72px;
   padding: 8px 18px;
   font-size: 14px;
-  color: #606266;
-  background: #fff;
-  border: 1px solid #dcdfe6;
+  color: var(--el-text-color-regular);
+  background: var(--sp-surface);
+  border: 1px solid var(--sp-border);
   border-radius: 6px;
 }
 
 .ccd-btn-cancel:hover {
-  color: #303133;
-  border-color: #c0c4cc;
-  background: #f5f7fa;
+  color: var(--sp-text);
+  border-color: var(--sp-control-border);
+  background: var(--sp-subtle-bg);
 }
 
 .ccd-btn-confirm {
@@ -177,20 +177,22 @@ function handleClosed() {
   border-color: #7a66d5;
 }
 
-.ccd-btn-confirm:focus {
-  outline: none;
+.ccd-btn-confirm:focus-visible,
+.ccd-btn-cancel:focus-visible {
+  outline: 2px solid var(--ccd-purple);
+  outline-offset: 3px;
 }
 </style>
 
 <style>
-/* 与参考图一致的紫色单选、圆角白底卡片 */
+/* 紫色选态，卡片和文字跟随全局主题。 */
 .close-confirm-dialog.el-dialog {
   --ccd-purple: #8a76e5;
   --ccd-purple-hover: #7a66d5;
   padding: 0;
   border-radius: 8px;
   overflow: hidden;
-  background: #fff;
+  background: var(--sp-surface);
   box-shadow:
     0 12px 32px rgba(15, 23, 42, 0.12),
     0 2px 8px rgba(15, 23, 42, 0.06);
@@ -211,12 +213,12 @@ function handleClosed() {
 }
 
 .close-confirm-dialog .el-dialog__headerbtn .el-dialog__close {
-  color: #909399;
+  color: var(--sp-muted);
   font-size: 16px;
 }
 
 .close-confirm-dialog .el-dialog__headerbtn:hover {
-  background: #f5f7fa;
+  background: var(--sp-subtle-bg);
 }
 
 .close-confirm-dialog .el-dialog__body {
@@ -226,7 +228,7 @@ function handleClosed() {
 .close-confirm-dialog .el-dialog__footer {
   padding: 16px 26px 22px;
   border-top: none;
-  background: #fff;
+  background: var(--sp-surface);
 }
 
 /* 单选：紫色选态 */
@@ -236,7 +238,7 @@ function handleClosed() {
 
 .close-confirm-dialog .ccd-radio-item .el-radio__label {
   font-size: 14px;
-  color: #303133;
+  color: var(--sp-text);
   line-height: 22px;
   padding-left: 10px;
 }
@@ -245,7 +247,7 @@ function handleClosed() {
   width: 18px;
   height: 18px;
   border-width: 2px;
-  border-color: #dcdfe6;
+  border-color: var(--sp-control-border);
 }
 
 .close-confirm-dialog .ccd-radio-item .el-radio__input.is-checked .el-radio__inner {
@@ -263,7 +265,7 @@ function handleClosed() {
 }
 
 .close-confirm-dialog .ccd-radio-item .el-radio__input.is-checked + .el-radio__label {
-  color: #303133;
+  color: var(--sp-text);
 }
 
 /* 不再提醒：圆角勾选框 + 紫色选态 */
@@ -273,7 +275,7 @@ function handleClosed() {
 
 .close-confirm-dialog .ccd-dont-remind .el-checkbox__label {
   font-size: 14px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   padding-left: 8px;
 }
 
@@ -282,7 +284,7 @@ function handleClosed() {
   height: 16px;
   border-radius: 50%;
   border-width: 2px;
-  border-color: #dcdfe6;
+  border-color: var(--sp-control-border);
 }
 
 .close-confirm-dialog .ccd-dont-remind .el-checkbox__input.is-checked .el-checkbox__inner {
@@ -299,6 +301,6 @@ function handleClosed() {
 }
 
 .close-confirm-dialog .ccd-dont-remind .el-checkbox__input.is-checked + .el-checkbox__label {
-  color: #606266;
+  color: var(--el-text-color-regular);
 }
 </style>

@@ -15,19 +15,22 @@ function ensureFastapiMessageIpcWired() {
       try {
         cb(data)
       } catch (e) {
-        console.error('[fastapi-message] subscriber error:', e)
+        ipcRenderer.send('write-diagnostic', { source: 'preload', code: 'L001', level: 'error', message: '消息处理失败', details: String(e?.stack || e?.message || '').slice(0, 6000) })
       }
     })
   })
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  writeDiagnostic: (record) => ipcRenderer.send('write-diagnostic', record),
+  exportDiagnosticReport: () => ipcRenderer.invoke('export-diagnostic-report'),
   // 配置相关
   readConfig: () => ipcRenderer.invoke('read-config'),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
+  setNativeTheme: (mode) => ipcRenderer.invoke('set-native-theme', mode),
   
   // API调用
-  callAPI: (options) => ipcRenderer.invoke('call-api', options),
+  callFrameworkWecom: (options) => ipcRenderer.invoke('call-framework-wecom', options),
   
   // 端口相关
   checkPort: (port) => ipcRenderer.invoke('check-port', port),
@@ -37,22 +40,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 进程管理
   findPidByPort: (port) => ipcRenderer.invoke('find-pid-by-port', port),
   killProcessByPort: (port) => ipcRenderer.invoke('kill-process-by-port', port),
+  getProcessState: (pid) => ipcRenderer.invoke('get-process-state', pid),
   
+  listCallbackInstances: () => ipcRenderer.invoke('list-callback-instances'),
+  discoverRunningWecom: () => ipcRenderer.invoke('discover-running-wecom'),
+  updateInstanceCallback: (payload) => ipcRenderer.invoke('update-instance-callback', payload),
+  saveInjectHost: (host) => ipcRenderer.invoke('save-inject-host', host),
+  findWecomInstallations: () => ipcRenderer.invoke('find-wecom-installations'),
+  readInjectSettings: () => ipcRenderer.invoke('read-inject-settings'),
+
   // 注入工具
   runInjectTool: (options) => ipcRenderer.invoke('run-inject-tool', options),
   markWecomPortStabilizing: (port) => ipcRenderer.invoke('mark-wecom-port-stabilizing', port),
   markWecomPortLoggedIn: (port) => ipcRenderer.invoke('mark-wecom-port-logged-in', port),
   markWecomPortAccountSwitch: (port) => ipcRenderer.invoke('mark-wecom-port-account-switch', port),
-  resetCrashRecoveryProtection: () => ipcRenderer.invoke('reset-crash-recovery-protection'),
-  onCrashRecoverySuspended: (callback) => {
-    ipcRenderer.on('crash-recovery-suspended', (_event, data) => callback(data))
-  },
-  removeCrashRecoverySuspendedListener: () => {
-    ipcRenderer.removeAllListeners('crash-recovery-suspended')
-  },
-  
   // 获取授权信息
-  getAuthInfo: (wxid) => ipcRenderer.invoke('get-auth-info', wxid),
+  getAuthInfo: (wxid, port) => ipcRenderer.invoke('get-auth-info', wxid, port),
 
   // 卡密绑定 / 解绑
   bindCard: (payload) => ipcRenderer.invoke('card-bind', payload),
@@ -80,12 +83,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fastapiMessageCallbacks.clear()
   },
 
-  // HTTP /api/other/start-wecom 启动企微成功后，主进程转发，用于企微管理表格与登录轮询
+  // 启动企微成功后，主进程转发，用于企微管理表格与登录轮询
   onWecomInjectStarted: (callback) => {
     ipcRenderer.on('wecom-inject-started', (event, data) => callback(data))
   },
   removeWecomInjectStartedListener: () => {
     ipcRenderer.removeAllListeners('wecom-inject-started')
+  },
+  onWecomSessionEnded: (callback) => {
+    ipcRenderer.on('wecom-session-ended', (_event, data) => callback(data))
+  },
+  removeWecomSessionEndedListener: () => {
+    ipcRenderer.removeAllListeners('wecom-session-ended')
   },
   
   // 更新相关
@@ -110,7 +119,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 日志和回调相关
   saveLogToFile: (data) => ipcRenderer.invoke('save-log-to-file', data),
-  sendCallback: (url, data) => ipcRenderer.invoke('send-callback', { url, data }),
 
   // 关闭主窗口前：主进程通知渲染层展示自定义确认框，渲染层应答
   onCloseConfirmRequest: (callback) => {

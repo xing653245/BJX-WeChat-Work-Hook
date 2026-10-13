@@ -1,14 +1,27 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('publish-utils.js')
 /**
  * 发布脚本共用工具
  */
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const crypto = require('crypto')
 const { execSync } = require('child_process')
 
 const pkg = require('../package.json')
 const DIST_DIR = path.join(__dirname, '..', 'dist-electron')
 const CHANGELOG_PATH = path.join(__dirname, '..', 'CHANGELOG.md')
+const GUIDE_FILENAME = '北极熊框架操作指南.md'
+const GUIDE_PATH = path.join(__dirname, '..', GUIDE_FILENAME)
+
+// 按 100 MiB 检查，在修改远端 Release 前拒绝超限附件。
+function assertGiteeAssetSizes(files, limit = 100 * 1024 * 1024) {
+  for (const file of files) {
+    const size = fs.statSync(file).size
+    if (size >= limit) throw new Error(`Gitee 附件超限：${path.basename(file)} 为 ${(size / 1024 / 1024).toFixed(2)} MiB，必须小于 ${(limit / 1024 / 1024).toFixed(0)} MiB；请重新使用精简打包配置构建`)
+  }
+}
 
 /** 与 electron-updater / 旧版客户端兼容的 ASCII 安装包名 */
 function getStandardInstallerName(version) {
@@ -26,7 +39,7 @@ function normalizeVersion(version) {
 function getChangelogForVersion(version = pkg.version) {
   const ver = normalizeVersion(version)
   if (!fs.existsSync(CHANGELOG_PATH)) {
-    console.warn(`[publish] 未找到 ${CHANGELOG_PATH}，Release 将使用默认说明`)
+    diagnostics.warn('L001', `[publish] 未找到 ${CHANGELOG_PATH}，Release 将使用默认说明`)
     return ''
   }
 
@@ -34,7 +47,7 @@ function getChangelogForVersion(version = pkg.version) {
   const headerRe = new RegExp(`^##\\s+v?${ver.replace(/\./g, '\\.')}\\s*$`, 'm')
   const match = content.match(headerRe)
   if (!match || match.index == null) {
-    console.warn(`[publish] CHANGELOG.md 中未找到版本 ${ver} 章节，Release 将使用默认说明`)
+    diagnostics.warn('L002', `[publish] CHANGELOG.md 中未找到版本 ${ver} 章节，Release 将使用默认说明`)
     return ''
   }
 
@@ -49,7 +62,12 @@ function buildReleaseBody(version = pkg.version) {
   const ver = normalizeVersion(version)
   const notes = getChangelogForVersion(ver)
   const header = `北极熊企微框架Pro v${ver}`
-  const footer = `发布于 ${new Date().toLocaleString('zh-CN')}`
+  const footerLines = []
+  if (fs.existsSync(GUIDE_PATH)) {
+    footerLines.push(`操作指南见附件：${GUIDE_FILENAME}`)
+  }
+  footerLines.push(`发布于 ${new Date().toLocaleString('zh-CN')}`)
+  const footer = footerLines.join('\n')
   if (notes) {
     return `${header}\n\n${notes}\n\n---\n${footer}`
   }
@@ -120,9 +138,13 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   if (!exePath) {
     throw new Error('缺少 .exe 安装包')
   }
-  if (!parsed.sha512 || !parsed.size) {
-    throw new Error('latest.yml 中缺少 sha512 或 size')
+  const actualSize = fs.statSync(exePath).size
+  const actualSha512 = crypto.createHash('sha512').update(fs.readFileSync(exePath)).digest('base64')
+  if (parsed.sha512 !== actualSha512 || (parsed.size && Number(parsed.size) !== actualSize)) {
+    throw new Error('latest.yml 的校验值或大小与安装包不一致，请重新打包')
   }
+  // 关闭差分包后 electron-builder 可能省略 size，发布时从实际文件补全。
+  parsed.size = actualSize
 
   const releaseNotes = buildReleaseBody(parsed.version || version)
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-publish-'))
@@ -139,7 +161,7 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   const normalizedExePath = path.join(tempDir, installerName)
   fs.writeFileSync(normalizedYmlPath, fixedYml, 'utf-8')
   fs.copyFileSync(exePath, normalizedExePath)
-  console.log(`[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
+  diagnostics.info('L003', `[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
 
   const uploadPlan = [
     { localPath: normalizedYmlPath, uploadName: 'latest.yml' },
@@ -154,8 +176,17 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
     uploadPlan.push({ localPath: normalizedBlockmapPath, uploadName: blockmapName })
   }
 
+  if (fs.existsSync(GUIDE_PATH)) {
+    const guideDest = path.join(tempDir, GUIDE_FILENAME)
+    fs.copyFileSync(GUIDE_PATH, guideDest)
+    uploadPlan.push({ localPath: guideDest, uploadName: GUIDE_FILENAME })
+    diagnostics.info('L005', `[publish] 已加入操作指南: ${GUIDE_FILENAME}`)
+  } else {
+    diagnostics.warn('L006', `[publish] 未找到 ${GUIDE_FILENAME}，本次发布不附带操作指南`)
+  }
+
   if (parsed.url !== installerName || parsed.path !== installerName) {
-    console.log(
+    diagnostics.info('L004',
       `[publish] 已规范化更新文件名: ${parsed.path || parsed.url} -> ${installerName}`
     )
   }
@@ -181,7 +212,7 @@ function collectReleaseFiles() {
 
   const names = ['latest.yml', pathMatch[1].trim()]
   const blockmapName = `${names[1]}.blockmap`
-  if (fs.existsSync(path.join(DIST_DIR, blockmapName))) {
+  if (pkg.build?.nsis?.differentialPackage !== false && fs.existsSync(path.join(DIST_DIR, blockmapName))) {
     names.push(blockmapName)
   }
 
@@ -228,6 +259,7 @@ function getDefaultBranch() {
 }
 
 module.exports = {
+  assertGiteeAssetSizes,
   pkg,
   DIST_DIR,
   CHANGELOG_PATH,

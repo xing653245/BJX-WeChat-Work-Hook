@@ -1,15 +1,15 @@
 {
   "name": "vwork-electron",
-  "version": "2.2.3",
+  "version": "2.2.6",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
-    "test": "node --test electron/tests/*.test.js",
+    "test": "node scripts/run-tests.js",
     "build": "vite build",
     "preview": "vite preview",
     "convert-icon": "node scripts/convert-icon.js",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "node scripts/electron-dev.mjs",
     "electron:build": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "electron:build:dir": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "electron:build:publish": "npm run convert-icon && npm run build && node scripts/reset-pack-conf-login.js && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder && node scripts/publish-all.js",
@@ -29,33 +29,34 @@
     "url": "https://gitee.com/ldsz_1/vworkqt.git"
   },
   "dependencies": {
-    "@element-plus/icons-vue": "^2.3.1",
     "axios": "^1.6.5",
     "cors": "^2.8.5",
     "electron-updater": "^6.7.3",
-    "element-plus": "^2.5.6",
     "express": "^4.22.1",
-    "iconv-lite": "^0.7.2",
-    "pinia": "^2.1.7",
-    "vue": "^3.4.15",
-    "vue-router": "^4.2.5"
+    "ini": "^4.1.2"
   },
   "devDependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
     "@vitejs/plugin-vue": "^5.0.3",
-    "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^28.1.4",
     "electron-builder": "^24.9.1",
+    "element-plus": "^2.5.6",
+    "pinia": "^2.1.7",
     "sharp": "^0.34.5",
     "to-ico": "^1.1.5",
     "vite": "^5.1.0",
-    "wait-on": "^7.2.0"
-  },
-  "optionalDependencies": {
-    "ini": "^4.1.2"
+    "vue": "^3.4.15"
   },
   "build": {
+    "compression": "maximum",
+    "beforePack": "scripts/before-pack.js",
     "appId": "com.vwork.framework",
+    "electronLanguages": [
+      "zh-CN",
+      "zh-TW",
+      "en-US"
+    ],
     "productName": "北极熊企微框架Pro",
     "artifactName": "vwork-electron-setup-${version}.${ext}",
     "icon": "build/icon.ico",
@@ -63,9 +64,8 @@
       "output": "dist-electron",
       "buildResources": "build"
     },
-    "compression": "maximum",
-    "electronLanguages": ["zh-CN", "en-US"],
     "nsis": {
+      "differentialPackage": false,
       "oneClick": false,
       "language": "2052",
       "perMachine": true,
@@ -76,27 +76,47 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "node_modules/**/*",
-      "!**/*.map"
+      "!electron/tests{,/**/*}",
+      "!**/*.map",
+      "!**/*.{log,tmp,temp,pem,key}",
+      "!**/.env{,.*}",
+      "!electron/**/*.md"
     ],
     "extraResources": [
       {
-        "from": "bin/agent",
-        "to": "bin/agent",
+        "from": "bin",
+        "to": "bin",
         "filter": [
-          "**/*"
+          "it.exe",
+          "BJXBridge.dll",
+          "BJX.dll",
+          "versions.json"
         ]
       },
       {
-        "from": "conf",
+        "from": ".cache/package-resources/bin",
+        "to": "bin",
+        "filter": [
+          "settings.json"
+        ]
+      },
+      {
+        "from": ".cache/package-resources/conf",
         "to": "conf",
         "filter": [
-          "**/*"
+          "conf.ini"
         ]
       }
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "ia32"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "signAndEditExecutable": true,
       "sign": null,

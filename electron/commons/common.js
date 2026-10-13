@@ -1,24 +1,22 @@
+const { createDiagnostics } = require('./diagnostics.cjs')
+const diagnostics = createDiagnostics('commons/common.js')
 /**
  * Electron版本的通用工具函数
  * Node.js版本，独立于vwork_qt项目
  */
 const path = require('path')
 const fs = require('fs')
-const axios = require('axios')
 const ini = require('ini')
+const { getInjectBinDir } = require('./resourcePaths')
+const { readInjectSettings } = require('../services/injectSettings')
 const { ReadConfig, LoginInfo } = require('../utils/schemas')
 const { exec } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
 const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
-const {
-  encryptCallbackPayload,
-  isValidCallbackEncryptKey
-} = require('./callbackCrypto')
+const { parseNetstatListeningPids } = require('./portProcess.cjs')
 
-const LEGACY_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8001/msg'
-const DEFAULT_BUSINESS_CALLBACK_URL = 'http://127.0.0.1:8002/msg'
 
 /**
  * 获取配置文件路径
@@ -58,7 +56,7 @@ function getConfigPath() {
         }
       } catch (e) {
         // 复制失败时不影响后续读取逻辑，后面 readIni 会有默认配置兜底
-        console.error(`初始化用户配置文件失败: ${e.message}`)
+        diagnostics.error('L001', `初始化用户配置文件失败: ${e.message}`)
       }
 
       return userConfigPath
@@ -82,6 +80,14 @@ function getAppRootPath() {
   const electronDir = __dirname.replace(/[\\/]commons$/, '')
   // 返回项目根目录（electron目录的父目录）
   return path.dirname(electronDir)
+}
+
+/** 注入与回调只认 bin/settings.json；禁用或读取失败时不回退到旧 INI。 */
+function getBusinessCallbackUrl() {
+  try {
+    const settings = readInjectSettings(getInjectBinDir())
+    return settings.enabled && /^https?:\/\//i.test(settings.url || '') ? String(settings.url).trim() : ''
+  } catch { return '' }
 }
 
 /**
@@ -170,7 +176,7 @@ function readConfigTextWithBackup(configPath) {
   } catch (primaryErr) {
     const backupPath = `${configPath}.bak`
     if (fs.existsSync(backupPath)) {
-      console.warn(`主配置读取失败，使用备份: ${primaryErr.message}`)
+      diagnostics.warn('L002', `主配置读取失败，使用备份: ${primaryErr.message}`)
       const content = fs.readFileSync(backupPath, 'utf-8')
       try {
         writeConfigAtomic(configPath, content)
@@ -251,15 +257,15 @@ async function saveLogToFile(data) {
           writeToDir(fallbackDir)
           return true
         } catch (e2) {
-          console.error(`保存日志失败(主目录和备用目录都失败): ${e2.message}`)
+          diagnostics.error('L003', `保存日志失败(主目录和备用目录都失败): ${e2.message}`)
           return false
         }
       }
-      console.error(`保存日志失败: ${err.message}`)
+      diagnostics.error('L004', `保存日志失败: ${err.message}`)
       return false
     }
   } catch (error) {
-    console.error(`保存日志失败: ${error.message}`)
+    diagnostics.error('L005', `保存日志失败: ${error.message}`)
     return false
   }
 }
@@ -268,91 +274,7 @@ function parseIniFlag(value) {
   return value === 'true' || value === true
 }
 
-/**
- * 按设置决定是否加密回调正文。加密已开但密钥无效时不发送明文。
- */
-function buildCallbackPostBody(data) {
-  const ini_config = readIni()
-  if (!ini_config.callback_encrypt) {
-    return { ok: true, body: data, headers: {} }
-  }
-  if (!isValidCallbackEncryptKey(ini_config.callback_encrypt_key)) {
-    return {
-      ok: false,
-      message: '回调加密已开启但密钥无效，请在设置中生成密钥并保存'
-    }
-  }
-  try {
-    return {
-      ok: true,
-      body: encryptCallbackPayload(data, ini_config.callback_encrypt_key),
-      headers: { 'X-VWork-Encrypt': 'AES-256-GCM' }
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      message: `回调加密失败: ${error.message}`
-    }
-  }
-}
-
-/**
- * 异步发送回调
- * @param {string} url - 回调地址
- * @param {object} data - 回调数据
- * @returns {Promise<{success: boolean, message: string, data: any}>} 返回发送结果
- */
-async function sendCallback(url, data) {
-  const startTime = Date.now()
-  const packed = buildCallbackPostBody(data)
-  if (!packed.ok) {
-    console.error(`❌ ${packed.message}`)
-    return {
-      success: false,
-      message: packed.message,
-      data: null,
-      duration: Date.now() - startTime
-    }
-  }
-  try {
-    const response = await axios.post(url, packed.body, {
-      timeout: 10000,
-      headers: packed.headers
-    })
-    const duration = Date.now() - startTime
-    console.log(`✅ 回调发送成功: ${url} (耗时: ${duration}ms)`)
-    return {
-      success: true,
-      message: '回调发送成功',
-      data: response.data,
-      duration
-    }
-  } catch (error) {
-    const duration = Date.now() - startTime
-    let errorMessage = '回调发送失败'
-    if (error.code === 'ECONNREFUSED') {
-      errorMessage = `回调发送失败: 无法连接到 ${url} (连接被拒绝)`
-    } else if (error.code === 'ETIMEDOUT') {
-      errorMessage = `回调发送失败: 请求超时 (${url})`
-    } else if (error.response) {
-      errorMessage = `回调发送失败: HTTP ${error.response.status} - ${error.response.statusText}`
-    } else {
-      errorMessage = `回调发送失败: ${error.message}`
-    }
-    console.error(`❌ ${errorMessage} (耗时: ${duration}ms)`)
-    return {
-      success: false,
-      message: errorMessage,
-      data: null,
-      duration,
-      error: error.code || error.message
-    }
-  }
-}
-
 const {
-  AUTH_REASON,
-  checkAuthExpire,
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime,
@@ -360,52 +282,16 @@ const {
 } = require('./authCheck.cjs')
 
 /**
- * 检查端口是否被占用
- */
-function isPortInUse(port) {
-  return new Promise((resolve) => {
-    const net = require('net')
-    const server = net.createServer()
-    server.listen(port, () => {
-      server.once('close', () => resolve(false))
-      server.close()
-    })
-    server.on('error', () => resolve(true))
-  })
-}
-
-/**
  * 杀死占用指定端口的进程
  */
 async function killProcessByPort(port) {
-  const inUse = await isPortInUse(port)
-  if (!inUse) {
-    return false
-  }
-
-  // Windows 系统
+  // 不用 bind 探测：企微 Hook 常只监听 127.0.0.1，listen(port) 仍可能成功，会误判“端口空闲”而跳过。
   if (process.platform === 'win32') {
     try {
-      // 查找占用端口的进程 PID
-      const { stdout } = await execAsync(`netstat -ano | findstr :${port}`)
-      const lines = stdout.trim().split('\n')
-      if (!lines || lines.length === 0 || lines[0].trim() === '') {
-        console.log(`未找到占用端口 ${port} 的进程`)
-        return false
-      }
-
-      const pids = new Set()
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/)
-        if (parts.length >= 5) {
-          const pid = parseInt(parts[parts.length - 1])
-          if (!isNaN(pid) && pid > 0) {
-            pids.add(pid)
-          }
-        }
-      }
-
+      const { stdout } = await execAsync(`netstat -ano -p tcp`)
+      const pids = new Set(parseNetstatListeningPids(stdout, port))
       if (pids.size === 0) {
+        diagnostics.info('L007', `未找到监听端口 ${port} 的进程`)
         return false
       }
 
@@ -413,16 +299,16 @@ async function killProcessByPort(port) {
       const selfPid = process.pid
       const toKill = [...pids].filter((pid) => pid !== selfPid)
       if (toKill.length === 0) {
-        console.log(`端口 ${port} 仅由当前进程监听，跳过 taskkill（避免自杀）`)
+        diagnostics.info('L008', `端口 ${port} 仅由当前进程监听，跳过 taskkill（避免关闭框架自身）`)
         return false
       }
 
       for (const pid of toKill) {
         try {
           await execAsync(`taskkill /F /PID ${pid}`)
-          console.log(`成功终止进程 (PID: ${pid})`)
+          diagnostics.info('L009', `成功终止进程 (PID: ${pid})`)
         } catch (error) {
-          console.error(`终止进程失败 (PID: ${pid}):`, error.message)
+          diagnostics.error('L010', `终止进程失败 (PID: ${pid}):`, error.message)
         }
       }
       return true
@@ -431,7 +317,7 @@ async function killProcessByPort(port) {
         // 未找到进程
         return false
       }
-      console.error(`终止进程失败: ${error.message}`)
+      diagnostics.error('L011', `终止进程失败: ${error.message}`)
       return false
     }
   } else {
@@ -443,9 +329,9 @@ async function killProcessByPort(port) {
       const toKill = pids.filter((pid) => pid !== selfPid)
       if (toKill.length === 0) {
         if (pids.length > 0) {
-          console.log(`端口 ${port} 仅由当前进程监听，跳过 kill（避免自杀）`)
+          diagnostics.info('L012', `端口 ${port} 仅由当前进程监听，跳过 kill（避免关闭框架自身）`)
         } else {
-          console.log(`未找到占用端口 ${port} 的进程`)
+          diagnostics.info('L013', `未找到占用端口 ${port} 的进程`)
         }
         return false
       }
@@ -453,9 +339,9 @@ async function killProcessByPort(port) {
       for (const pid of toKill) {
         try {
           await execAsync(`kill -9 ${pid}`)
-          console.log(`成功终止进程 (PID: ${pid})`)
+          diagnostics.info('L014', `成功终止进程 (PID: ${pid})`)
         } catch (error) {
-          console.error(`终止进程失败 (PID: ${pid}):`, error.message)
+          diagnostics.error('L015', `终止进程失败 (PID: ${pid}):`, error.message)
         }
       }
       return true
@@ -464,7 +350,7 @@ async function killProcessByPort(port) {
         // 未找到进程
         return false
       }
-      console.error(`终止进程失败: ${error.message}`)
+      diagnostics.error('L016', `终止进程失败: ${error.message}`)
       return false
     }
   }
@@ -485,27 +371,14 @@ function readIni(configPath = null) {
     const conf = ini.parse(content)
 
     let server_port = DEFAULT_SERVER_PORT_STRING
-    let callback = ''
+    const callback = getBusinessCallbackUrl()
     let open_log = true
     let save_log = true
-    let callback_encrypt = false
-    let callback_encrypt_key = ''
 
     if (conf.sys) {
       server_port = conf.sys.server_port || server_port
-      callback = conf.sys.callback || callback
-      if (callback === LEGACY_LOCAL_CALLBACK_URL) {
-        callback = DEFAULT_BUSINESS_CALLBACK_URL
-        conf.sys.callback = callback
-        const migration = writeConfigAtomic(configPath, ini.stringify(conf))
-        if (!migration.success) {
-          console.error(`迁移旧回调地址失败: ${migration.msg}`)
-        }
-      }
       open_log = parseIniFlag(conf.sys.open_log)
       save_log = parseIniFlag(conf.sys.save_log)
-      callback_encrypt = parseIniFlag(conf.sys.callback_encrypt)
-      callback_encrypt_key = String(conf.sys.callback_encrypt_key || '').trim()
     }
 
     let login_info_list = '[]'
@@ -520,7 +393,7 @@ function readIni(configPath = null) {
         login_info = parsed.map(item => new LoginInfo(item))
       }
     } catch (e) {
-      console.error('解析login_info失败:', e)
+      diagnostics.error('L017', '账号列表格式异常，请检查配置备份：', e)
     }
 
     return new ReadConfig({
@@ -528,19 +401,15 @@ function readIni(configPath = null) {
       callback,
       open_log,
       save_log,
-      callback_encrypt,
-      callback_encrypt_key,
       login_info
     })
   } catch (error) {
-    console.error(`读取配置失败: ${error.message}`)
+    diagnostics.error('L018', `读取配置失败: ${error.message}`)
     return new ReadConfig({
       server_port: DEFAULT_SERVER_PORT_STRING,
       callback: '',
       open_log: true,
       save_log: true,
-      callback_encrypt: false,
-      callback_encrypt_key: '',
       login_info: []
     })
   }
@@ -548,19 +417,15 @@ function readIni(configPath = null) {
 
 module.exports = {
   getConfigPath,
-  getAppRootPath,
   getRunLogDirectory,
   readTodayRunLogTail,
   writeConfigAtomic,
   readConfigTextWithBackup,
-  sendCallback,
-  AUTH_REASON,
-  checkAuthExpire,
+  getBusinessCallbackUrl,
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime,
   isAuthorizedAuthState,
-  isPortInUse,
   killProcessByPort,
   readIni,
   saveLogToFile

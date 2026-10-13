@@ -1,3 +1,5 @@
+import { createDiagnostics } from '../utils/diagnostics.mjs'
+const diagnostics = createDiagnostics('stores/config.js')
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
@@ -7,8 +9,6 @@ export const useConfigStore = defineStore('config', () => {
     sys: {
       server_port: DEFAULT_SERVER_PORT_STRING,
       callback: '',
-      callback_encrypt: 'false',
-      callback_encrypt_key: '',
       open_log: 'true',
       save_log: 'true',
       auto_check_update: 'true',
@@ -46,7 +46,7 @@ export const useConfigStore = defineStore('config', () => {
               }
               config.value.custom.login_info = JSON.parse(loginInfoStr)
             } catch (e) {
-              console.error('解析 login_info JSON 失败:', e, '原始值:', config.value.custom.login_info)
+              diagnostics.error('L001', '解析 login_info JSON 失败:', e)
               config.value.custom.login_info = []
             }
           }
@@ -55,7 +55,7 @@ export const useConfigStore = defineStore('config', () => {
         }
       }
     } catch (error) {
-      console.error('加载配置失败:', error)
+      diagnostics.error('L002', '加载配置失败:', error)
     } finally {
       loading.value = false
     }
@@ -78,11 +78,12 @@ export const useConfigStore = defineStore('config', () => {
       
       const result = await window.electronAPI.saveConfig(configToSave)
       if (result.success) {
-        config.value = newConfig
+        const { injectTool: _injectTool, ...rest } = newConfig
+        config.value = rest
       }
       return result
     } catch (error) {
-      console.error('保存配置失败:', error)
+      diagnostics.error('L003', '保存配置失败:', error)
       return { success: false, msg: error.message }
     } finally {
       loading.value = false
@@ -105,7 +106,7 @@ export const useConfigStore = defineStore('config', () => {
         }
         return JSON.parse(parsed)
       } catch (e) {
-        console.error('getLoginInfo 解析失败:', e)
+        diagnostics.error('L004', '读取账号列表失败，将暂时显示空列表：', e)
         return []
       }
     }
@@ -114,10 +115,11 @@ export const useConfigStore = defineStore('config', () => {
 
   // 更新登录信息
   const updateLoginInfo = async (loginInfo) => {
-    const currentConfig = { ...config.value }
+    const currentConfig = { ...config.value, custom: { ...config.value.custom } }
     if (!currentConfig.custom) {
       currentConfig.custom = {}
     }
+    delete currentConfig.injectTool
     currentConfig.custom.login_info = loginInfo
     return await saveConfig(currentConfig)
   }

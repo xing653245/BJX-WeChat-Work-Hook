@@ -1,106 +1,202 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('callback_server.js')
 /**
  * 回调服务器示例
- * 用于接收企微框架推送的消息
+ * 监听地址和路径从命令行回调地址读取，不读配置文件。
  *
  * 启动方式：
- * node scripts/callback_server.js
- * node scripts/callback_server.js 8001
- *
- * 若设置页开启了「消息加密」，启动时传入同一把 64 位十六进制密钥：
- * node scripts/callback_server.js 8001 <64位hex密钥>
- * 或设置环境变量 CALLBACK_ENCRYPT_KEY
+ * node scripts/callback_server.js http://127.0.0.1:8002/msg
+ * 加密回调：先设置 CALLBACK_PRIVATE_KEY_FILE 为配对的 PEM 私钥文件路径。
+ * 详见 docs/callback-server.md。
  */
-const path = require('path')
+const fs = require('fs')
 const express = require('express')
 const cors = require('cors')
-const {
-  decryptCallbackPayload,
-  isEncryptedCallbackBody
-} = require(path.join(__dirname, '../electron/commons/callbackCrypto'))
+const crypto = require('crypto')
+const { TextDecoder } = require('util')
 
-const app = express()
-
-app.use(cors({
-  origin: '*',
-  credentials: true,
-  methods: ['*'],
-  allowedHeaders: ['*']
-}))
-
-app.use(express.json({ limit: '8mb' }))
-
-const PORT = process.argv[2] || 8002
-const ENCRYPT_KEY = process.env.CALLBACK_ENCRYPT_KEY || process.argv[3] || ''
-
-function unwrapCallbackBody(body) {
-  if (!isEncryptedCallbackBody(body)) {
-    return body
+function readCallbackTarget(callbackUrl) {
+  const url = String(callbackUrl || '').trim()
+  if (!url) {
+    throw new Error('请传入回调地址，例如: node scripts/callback_server.js http://127.0.0.1:8002/msg')
   }
-  if (!ENCRYPT_KEY) {
-    throw new Error('收到加密回调，但未提供密钥。请设置 CALLBACK_ENCRYPT_KEY 或传入第三个启动参数')
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error(`回调地址不是有效地址: ${url}`)
   }
-  return decryptCallbackPayload(body, ENCRYPT_KEY)
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`回调地址必须是 HTTP/HTTPS: ${url}`)
+  }
+  const port = parsed.port
+    ? Number(parsed.port)
+    : (parsed.protocol === 'https:' ? 443 : 80)
+  const pathname = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '/'
+  return {
+    url,
+    host: parsed.hostname || '127.0.0.1',
+    port,
+    pathname
+  }
 }
 
-app.post('/msg', (req, res) => {
+function loadPrivateKey(filePath) {
+  if (!filePath) return null
+  let key
   try {
-    const data = unwrapCallbackBody(req.body)
+    key = crypto.createPrivateKey(fs.readFileSync(filePath))
+  } catch {
+    throw new Error('无法读取 RSA 私钥，请检查 CALLBACK_PRIVATE_KEY_FILE（PEM 格式的 PKCS#1 或 PKCS#8 私钥）')
+  }
+  if (key.asymmetricKeyType !== 'rsa' || key.asymmetricKeyDetails?.modulusLength !== 1024) {
+    throw new Error('回调解密需要 RSA 1024 bits 私钥')
+  }
+  // 启动时验证运行时能力，不关闭 Node 的安全保护或自行实现 RSA 填充。
+  try {
+    const probe = Buffer.from('callback-rsa-check')
+    const encrypted = crypto.publicEncrypt({ key: crypto.createPublicKey(key), padding: crypto.constants.RSA_PKCS1_PADDING }, probe)
+    const decrypted = crypto.privateDecrypt({ key, padding: crypto.constants.RSA_PKCS1_PADDING }, encrypted)
+    if (!decrypted.equals(probe)) throw new Error('RSA self-test failed')
+  } catch {
+    throw new Error('当前 Node/OpenSSL 不支持 RSA PKCS#1 v1.5 私钥解密，请使用支持 implicit rejection 的 Node 版本（参见 docs/callback-server.md）')
+  }
+  return key
+}
 
-    console.log(`[${new Date().toLocaleString('zh-CN')}] 收到回调消息:`)
-    if (data.msg_type != null) {
-      console.log(`  msg_type: ${data.msg_type}${data.msg_type_text ? ` (${data.msg_type_text})` : ''}`)
+function decodeCallback(body, privateKey) {
+  // 只有明确标记 encrypted: true 的信封才解密，明文不做转换。
+  if (!body || typeof body !== 'object' || body.encrypted !== true) return body
+  if (!privateKey) {
+    const error = new Error('未配置解密私钥，请设置 CALLBACK_PRIVATE_KEY_FILE 后重启')
+    error.status = 503
+    throw error
+  }
+  try {
+    if (!Array.isArray(body.data) || body.data.length === 0) throw new Error('Invalid envelope')
+    const chunks = body.data.map(chunk => {
+      if (typeof chunk !== 'string') throw new Error('Invalid block')
+      const base64 = chunk.replace(/\s+/g, '')
+      const bytes = Buffer.from(base64, 'base64')
+      // 1024 bits RSA：每个密文块恰好 128 字节，拒绝宽松 Base64 解码。
+      if (bytes.length !== 128 || bytes.toString('base64') !== base64) throw new Error('Invalid block')
+      return bytes
+    })
+    const decrypted = chunks.map(chunk => crypto.privateDecrypt({
+      key: privateKey,
+      padding: crypto.constants.RSA_PKCS1_PADDING
+    }, chunk))
+    // 必须先拼字节再解码，中文或 emoji 可能跨越 RSA 分段边界。
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(decrypted))
+    try { return JSON.parse(text) } catch { return text }
+  } catch {
+    const error = new Error('加密回调解密失败，请检查配对私钥和密文格式')
+    error.status = 400
+    throw error
+  }
+}
+
+function createCallbackApp(target, { privateKey = null, logger = console } = {}) {
+  const app = express()
+
+  app.use(cors({
+    origin: '*',
+    credentials: true,
+    methods: ['*'],
+    allowedHeaders: ['*']
+  }))
+
+  app.use(express.json({ limit: '8mb' }))
+  app.use(express.urlencoded({ extended: true, limit: '8mb' }))
+  app.use(express.text({ type: ['text/*', 'application/octet-stream'], limit: '8mb' }))
+
+  function handleCallback(req, res) {
+    try {
+      const data = decodeCallback(req.body, privateKey)
+      logger.log(`[${new Date().toLocaleString('zh-CN')}] 收到回调 ${req.method} ${req.originalUrl}`)
+      if (data && typeof data === 'object' && !Buffer.isBuffer(data) && data.msg_type != null) {
+        logger.log(`  msg_type: ${data.msg_type}${data.msg_type_text ? ` (${data.msg_type_text})` : ''}`)
+      }
+      logger.log(typeof data === 'string' ? data : JSON.stringify(data, null, 2))
+      res.json({
+        success: true,
+        message: '回调接收成功',
+        timestamp: new Date().toISOString()
+      })
+    } catch (error) {
+      logger.error('处理回调消息错误:', error.message)
+      res.status(error.status || 500).json({
+        success: false,
+        message: error.message
+      })
     }
-    console.log(JSON.stringify(data, null, 2))
+  }
 
+  app.post(target.pathname, handleCallback)
+  if (target.pathname.length > 1 && target.pathname.endsWith('/')) {
+    app.post(target.pathname.replace(/\/+$/, ''), handleCallback)
+  }
+
+  app.get('/health', (req, res) => {
     res.json({
-      success: true,
-      message: '回调接收成功',
+      status: 'ok',
+      service: 'callback-server',
+      url: target.url,
       timestamp: new Date().toISOString()
     })
-  } catch (error) {
-    console.error('处理回调消息错误:', error)
-    res.status(500).json({
-      success: false,
-      message: error.message
+  })
+
+  app.get('/', (req, res) => {
+    res.json({
+      message: '回调服务器运行中',
+      callback: `POST ${target.url}`,
+      health: 'GET /health'
     })
-  }
-})
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'callback-server',
-    encrypted: Boolean(ENCRYPT_KEY),
-    timestamp: new Date().toISOString()
   })
-})
 
-app.get('/', (req, res) => {
-  res.json({
-    message: '回调服务器运行中',
-    endpoints: {
-      callback: 'POST /msg - 接收企微回调消息',
-      health: 'GET /health - 健康检查'
-    }
+  app.use((req, res) => {
+    logger.log(`[${new Date().toLocaleString('zh-CN')}] 未匹配请求 ${req.method} ${req.originalUrl}`)
+    res.status(404).json({
+      success: false,
+      message: `未找到接口 ${req.method} ${req.originalUrl}，回调请 POST ${target.pathname}`
+    })
   })
-})
 
-const HOST = '127.0.0.1'
+  return app
+}
 
-app.listen(PORT, HOST, () => {
-  console.log(`📡 监听地址: http://${HOST}:${PORT}`)
-  console.log(`📥 回调接口: http://${HOST}:${PORT}/msg`)
-  if (ENCRYPT_KEY) {
-    console.log('🔐 已启用回调解密（AES-256-GCM）')
+function startServer(callbackUrl = process.argv[2]) {
+  const target = readCallbackTarget(callbackUrl)
+  const privateKey = loadPrivateKey(process.env.CALLBACK_PRIVATE_KEY_FILE)
+  const app = createCallbackApp(target, { privateKey })
+  const server = app.listen(target.port, target.host, () => {
+    diagnostics.info('L001', `📥 命令行回调地址: ${target.url}`)
+    diagnostics.info('L002', `📡 监听地址: http://${target.host}:${target.port}`)
+    diagnostics.info('L003', `📥 回调接口: ${target.url}`)
+    diagnostics.info('L004', `🔑 RSA 解密: ${privateKey ? '已配置（1024 bits / PKCS#1 v1.5）' : '未配置私钥，仍可接收明文'}`)
+  })
+  server.on('error', error => {
+    diagnostics.error('L005', '回调服务器启动失败:', error.message)
+    process.exitCode = 1
+  })
+
+  process.on('SIGINT', () => {
+    diagnostics.info('L006', '\n正在关闭服务器...')
+    process.exit(0)
+  })
+
+  process.on('SIGTERM', () => {
+    diagnostics.info('L007', '\n正在关闭服务器...')
+    process.exit(0)
+  })
+  return server
+}
+
+if (require.main === module) {
+  try { startServer() } catch (error) {
+    diagnostics.error('L008', '回调服务器启动失败:', error.message)
+    process.exitCode = 1
   }
-})
+}
 
-process.on('SIGINT', () => {
-  console.log('\n正在关闭服务器...')
-  process.exit(0)
-})
-
-process.on('SIGTERM', () => {
-  console.log('\n正在关闭服务器...')
-  process.exit(0)
-})
+module.exports = { readCallbackTarget, loadPrivateKey, decodeCallback, createCallbackApp }

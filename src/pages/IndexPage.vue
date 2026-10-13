@@ -10,9 +10,6 @@
         </div>
 
         <div class="hero-actions">
-          <el-button type="primary" size="large" class="hero-btn" @click="openDocs">
-            开发文档
-          </el-button>
           <el-button type="success" size="large" class="hero-btn" @click="showWechatPay">
             购买 / 续费授权
           </el-button>
@@ -35,6 +32,9 @@
 </template>
 
 <script setup>
+import { createDiagnostics } from '../utils/diagnostics.mjs'
+const diagnostics = createDiagnostics('pages/IndexPage.vue')
+
 import { ref, onMounted } from 'vue'
 
 const frameName = '北极熊企微框架'
@@ -47,7 +47,7 @@ const loadAppVersion = async () => {
     try {
       version.value = await window.electronAPI.getAppVersion()
     } catch (error) {
-      console.error('获取版本失败:', error)
+      diagnostics.error('L001', '获取版本失败:', error)
       version.value = '未知'
     }
   } else {
@@ -58,14 +58,6 @@ const loadAppVersion = async () => {
 onMounted(() => {
   loadAppVersion()
 })
-
-const openDocs = async () => {
-  if (window.electronAPI) {
-    await window.electronAPI.openExternal('https://23t2z5j37i.apifox.cn')
-  } else {
-    window.open('https://23t2z5j37i.apifox.cn', '_blank')
-  }
-}
 
 const showWechatPay = () => {
   showPayDialog.value = true

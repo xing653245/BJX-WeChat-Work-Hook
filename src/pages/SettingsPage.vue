@@ -2,13 +2,15 @@
   <div class="settings-page">
     <div class="settings-body">
       <aside class="settings-nav" aria-label="设置分区导航">
+        <div class="nav-caption">设置分区</div>
         <nav class="nav-list">
           <button
-            v-for="item in navSections"
+            v-for="item in visibleNavSections"
             :key="item.id"
             type="button"
             class="nav-item"
             :class="{ active: activeSection === item.id }"
+            :aria-current="activeSection === item.id ? 'location' : undefined"
             @click="scrollToSection(item.id)"
           >
             <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
@@ -18,139 +20,191 @@
         </nav>
       </aside>
 
-      <main ref="mainScrollRef" class="settings-main">
+      <main ref="mainScrollRef" class="settings-main" tabindex="0" aria-label="设置内容">
         <!-- HTTP -->
         <section :id="sectionDomId('http')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.http }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.http"
+              @click="toggleSection('http')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Connection /></el-icon></span>
                 <div>
-                  <h2 class="section-title">HTTP 设置</h2>
-                  <p class="section-desc">框架监听端口、消息回调与推送加密</p>
+                  <h2 class="section-title">连接、回调与加密</h2>
+                  <p class="section-desc">先选择企微，再设置消息推送与加密方式</p>
                 </div>
               </div>
-              <el-tooltip
-                content="当你需要调用框架的接口时，就是用的这个端口&#10;调用框架的地址为：http://127.0.0.1:端口号/api&#10;修改后保存即可切换接口地址；已登录企微无需额外操作"
-                placement="top"
-              >
-                <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
-              </el-tooltip>
-            </div>
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.http }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.http">
             <div class="section-body">
+              <div class="instance-toolbar">
+                <div class="instance-picker">
+                <label for="callback-instance">当前企微实例</label>
+                <el-select v-model="selectedCallbackPort" placeholder="请选择运行中的企微 HTTP 端口" :disabled="updatingInstance" id="callback-instance" class="instance-select">
+                  <el-option v-for="row in callbackInstances" :key="row.port" :value="String(row.port)" :label="'HTTP ' + row.port + (row.nick_name ? ' · ' + row.nick_name : '') + (row.user_id ? ' · ID ' + row.user_id : ' · 未登录')" />
+                </el-select>
+                </div>
+                <el-button :loading="loadingInstances" :disabled="updatingInstance" @click="refreshCallbackInstances">刷新列表</el-button>
+              </div>
+              <p class="instance-status" role="status">{{ instanceStatus }}</p>
               <div class="field-grid">
-                <label class="field-label" for="settings-server-port">监听端口</label>
+                <label class="field-label" for="settings-push-url">原生回调地址</label>
                 <div class="field-control">
-                  <el-input
-                    id="settings-server-port"
-                    v-model="formData.server_port"
-                    placeholder="1024–10000"
-                    class="field-input"
-                  />
-                  <p class="field-hint">有效范围 (1024, 10000]。保存后立即切换接口地址，已登录企微可继续使用</p>
+                  <el-input :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-url" v-model="instanceForm.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
+                  <p class="field-hint">企微向此地址推送后续回调；更新只影响当前选择的实例</p>
                 </div>
 
-                <label class="field-label" for="settings-callback">回调地址</label>
-                <div class="field-control">
-                  <el-input
-                    id="settings-callback"
-                    v-model="formData.callback"
-                    placeholder="如 http://127.0.0.1:8002/msg"
-                    class="field-input field-input-wide"
-                  />
-                  <p class="field-hint">
-                    框架向此 POST 地址推送企微消息（JSON）；修改后无需重启
-                    <el-tooltip
-                      content="这个回调地址，是框架向你推送企微消息的地址&#10;接口需要是POST，且我传给你的是JSON&#10;你需要搭建这个回调服务，并把地址填入"
-                      placement="top"
-                    >
-                      <el-icon class="inline-help"><QuestionFilled /></el-icon>
-                    </el-tooltip>
-                  </p>
+                <label class="field-label" for="settings-push-enabled">开启原生回调</label>
+                <div class="field-control control-inline">
+                  <el-switch :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-enabled" v-model="instanceForm.push_enabled" />
+                  <span class="field-hint inline-hint">{{ instanceForm.push_enabled ? '更新后开启推送' : '更新后关闭推送' }}</span>
                 </div>
-
+                <label class="field-label">回调策略</label>
+                <div class="field-control callback-options">
+                  <div class="compact-field">
+                    <label for="settings-push-timeout">超时时间 <span>毫秒</span></label>
+                    <el-input-number :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-timeout" v-model="instanceForm.push_timeout_ms" :min="1" :max="2147483647" :precision="0" controls-position="right" />
+                  </div>
+                  <div class="compact-field">
+                    <label for="settings-push-retries">失败重试 <span>次</span></label>
+                    <el-input-number :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-retries" v-model="instanceForm.push_retries" :min="0" :max="2147483647" :precision="0" controls-position="right" />
+                  </div>
+                </div>
                 <label class="field-label" for="settings-callback-encrypt">消息加密</label>
                 <div class="field-control">
-                  <el-switch id="settings-callback-encrypt" v-model="formData.callback_encrypt" />
-                  <p class="field-hint">
-                    开启后，推送到回调地址的正文使用 AES-256-GCM 加密；未开启则仍为明文 JSON。保存后需要重启框架
-                    <el-tooltip
-                      content="加密后请求头带 X-VWork-Encrypt: AES-256-GCM&#10;正文为 { encrypted, alg, iv, tag, ciphertext }&#10;用下方 64 位十六进制密钥解密即可得到原来的 JSON"
-                      placement="top"
-                    >
-                      <el-icon class="inline-help"><QuestionFilled /></el-icon>
-                    </el-tooltip>
-                  </p>
+                  <el-switch :disabled="!selectedCallbackRow || updatingInstance" id="settings-callback-encrypt" v-model="instanceForm.encrypt" />
                 </div>
 
-                <template v-if="formData.callback_encrypt">
-                  <label class="field-label" for="settings-callback-encrypt-key">解密密钥</label>
+                <template v-if="instanceForm.encrypt">
+                  <label class="field-label" for="settings-callback-encrypt-public-key">加密公钥</label>
                   <div class="field-control">
                     <div class="key-row">
-                      <el-input
-                        id="settings-callback-encrypt-key"
-                        v-model="formData.callback_encrypt_key"
-                        type="password"
-                        show-password
-                        placeholder="64 位十六进制（32 字节）"
+                      <el-input :disabled="!selectedCallbackRow || updatingInstance"
+                        id="settings-callback-encrypt-public-key"
+                        v-model="instanceForm.public_key"
+                        type="textarea"
+                        :rows="4"
+                        placeholder="PKCS#1 RSA 1024 bits 公钥，内容为 Base64"
                         class="field-input-wide"
                       />
-                      <el-button @click="copyEncryptKey">复制</el-button>
-                      <el-button @click="regenerateEncryptKey">重新生成</el-button>
                     </div>
-                    <p class="field-hint">
-                      请妥善保存并配置到你的回调服务；重新生成后旧密钥无法解密之后的推送。
-                    </p>
-                    <pre class="decrypt-sample">{{ decryptSampleText }}</pre>
-                    <div class="key-row key-row-actions">
-                      <el-button size="small" plain @click="copyDecryptSnippet('node')">复制 Node 解密</el-button>
-                      <el-button size="small" plain @click="copyDecryptSnippet('python')">复制 Python 解密</el-button>
-                    </div>
+                    <p class="field-hint">填写 RSA 1024 位公钥的 Base64 内容；私钥由回调接收端保管</p>
                   </div>
                 </template>
               </div>
             </div>
+            <div class="card-actions">
+              <p class="card-note">{{ selectedCallbackRow ? '仅应用于 HTTP ' + selectedCallbackRow.port + '，其他企微不受影响' : '添加企微后，即可设置回调与加密' }}</p>
+              <el-button type="primary" :loading="updatingInstance" :disabled="!selectedCallbackRow?.user_id" @click="updateCallbackInstance">更新当前企微</el-button>
+            </div>
+              </div>
+            </Transition>
           </div>
         </section>
 
-        <!-- WeCom Agent -->
+        <!-- WeCom Version -->
         <section :id="sectionDomId('wecom')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.wecom }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.wecom"
+              @click="toggleSection('wecom')"
+            >
               <div class="section-head-left">
                 <span class="section-icon accent"><el-icon><ChatLineRound /></el-icon></span>
                 <div>
-                  <h2 class="section-title">企微接入</h2>
-                  <p class="section-desc">框架已内置当前企微服务，无需选择版本或配置注入工具</p>
+                  <h2 class="section-title">企微版本</h2>
+                  <p class="section-desc">配置用于启动企微的客户端路径</p>
                 </div>
               </div>
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.wecom }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.wecom">
+            <div class="section-body wecom-section-body">
+              <div class="wecom-version-summary">
+                <div>
+                  <h3 class="wecom-client-title">企业微信 Windows 客户端</h3>
+                  <p class="field-hint">仅支持以下版本，请填写 WXWork.exe 的完整路径。</p>
+                </div>
+                <span class="wecom-version-badge">v5.0.3.6005</span>
+              </div>
+              <div class="wecom-path-field">
+                <label class="wecom-path-label" for="settings-wecom-exe-v5">客户端路径</label>
+                <div class="wecom-path-row">
+                  <el-input
+                    id="settings-wecom-exe-v5"
+                    v-model="formData.wecom_exe_path_v5"
+                    :disabled="!injectSettingsLoaded || findingInstallations || saving"
+                    :aria-invalid="Boolean(pathSaveError)"
+                    aria-describedby="wecom-path-hint wecom-path-status"
+                    placeholder="如 D:\WeCom5\WXWork.exe"
+                    class="wecom-path-input"
+                    @keyup.enter="handleSave()"
+                  />
+                  <el-button :loading="findingInstallations" :disabled="saving || !injectSettingsLoaded" @click="autoFindWecom">
+                    <el-icon v-if="!findingInstallations"><Search /></el-icon>
+                    <span>{{ findingInstallations ? '正在查找…' : '自动查找' }}</span>
+                  </el-button>
+                </div>
+                <p id="wecom-path-hint" class="field-hint">自动查找仅在找到一个兼容客户端时保存；手动填写后请点击「保存路径」。</p>
+              </div>
+              <div v-if="installationCandidates.length > 1" class="wecom-candidates">
+                <p class="wecom-candidates-title">找到 {{ installationCandidates.length }} 个兼容客户端，选择一个保存</p>
+                <button
+                  v-for="item in installationCandidates"
+                  :key="item.path"
+                  type="button"
+                  class="wecom-candidate"
+                  :disabled="saving || findingInstallations"
+                  @click="useInstallation(item)"
+                >
+                  <span class="wecom-candidate-detail">
+                    <span class="wecom-candidate-version">v{{ item.version }}</span>
+                    <span class="wecom-candidate-path">{{ item.path }}</span>
+                  </span>
+                  <span class="wecom-candidate-action">使用并保存 <el-icon><ArrowRight /></el-icon></span>
+                </button>
+              </div>
+              <p v-if="installationHint" class="wecom-discovery-hint" :class="'is-' + installationHintType" role="status">
+                <el-icon><WarningFilled /></el-icon>
+                <span>{{ installationHint }}</span>
+              </p>
             </div>
-            <div class="section-body">
-              <div class="field-grid">
-                <span class="field-label">接入组件</span>
-                <div class="field-control">
-                  <el-tag type="success" effect="light">企微服务已内置</el-tag>
-                  <p class="field-hint">打开框架时自动启动，客户无需单独运行或注入。</p>
-                </div>
-
-                <span class="field-label">接口端口</span>
-                <div class="field-control">
-                  <strong>HTTP 8080</strong>
-                  <p class="field-hint">端口由框架固定管理，不需要客户填写。</p>
-                </div>
-
-                <span class="field-label">使用方式</span>
-                <div class="field-control">
-                  <strong>打开框架即可使用</strong>
-                  <p class="field-hint">企微登录后会自动显示在「企微管理」，无需选择企微版本。</p>
+            <footer class="card-actions">
+              <div id="wecom-path-status" class="wecom-path-status" :class="'is-' + pathStatus.type" role="status" aria-live="polite" aria-atomic="true">
+                <el-icon :class="{ 'is-loading': pathStatus.type === 'loading' }"><component :is="pathStatus.icon" /></el-icon>
+                <div>
+                  <p class="wecom-status-title">{{ pathStatus.title }}</p>
+                  <p class="wecom-status-detail">{{ pathStatus.detail }}</p>
                 </div>
               </div>
-            </div>
+              <el-button v-if="!injectSettingsLoaded" :loading="injectSettingsLoading" @click="loadInjectSettings">重新读取</el-button>
+              <el-button
+                v-else
+                type="primary"
+                size="default"
+                class="save-btn"
+                @click="handleSave()"
+                :loading="saving"
+                :disabled="findingInstallations || !isDirty"
+              >
+                {{ saving ? '正在保存…' : '保存路径' }}
+              </el-button>
+            </footer>
+              </div>
+            </Transition>
           </div>
         </section>
 
-        <!-- API Debug -->
-        <section :id="sectionDomId('api')" class="settings-section">
+        <!-- API Debug：暂时隐藏，SHOW_API_DEBUG 改为 true 即可恢复 -->
+        <section v-if="SHOW_API_DEBUG" :id="sectionDomId('api')" class="settings-section">
           <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.api }">
             <button
               type="button"
@@ -161,17 +215,11 @@
               <div class="section-head-left">
                 <span class="section-icon accent"><el-icon><Promotion /></el-icon></span>
                 <div>
-                  <h2 class="section-title">接口调试 · 文本消息</h2>
-                  <p class="section-desc">POST /api/message/text 快速验证</p>
+                  <h2 class="section-title">接口调试</h2>
+                  <p class="section-desc">选择企微与接收方，发送一条测试消息</p>
                 </div>
               </div>
               <div class="section-head-right">
-                <el-tooltip
-                  content="发往本框架：POST http://127.0.0.1:{监听端口}/api/message/text。请求 JSON 包含 port（企微实例 HTTP 端口）、user_id、msg。"
-                  placement="top"
-                >
-                  <span class="help-btn" @click.stop><el-icon><QuestionFilled /></el-icon></span>
-                </el-tooltip>
                 <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.api }"><ArrowDown /></el-icon>
               </div>
             </button>
@@ -231,7 +279,7 @@
                           :disabled="!isElectronAvailable"
                           @click="handleTestMessageText"
                         >
-                          发送 POST /api/message/text
+                          发送 POST /api
                         </el-button>
                       </div>
                     </div>
@@ -273,68 +321,26 @@
           </div>
         </section>
 
-        <!-- Logs -->
-        <section :id="sectionDomId('logs')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
-              <div class="section-head-left">
-                <span class="section-icon"><el-icon><Document /></el-icon></span>
-                <div>
-                  <h2 class="section-title">日志设置</h2>
-                  <p class="section-desc">运行日志输出与持久化</p>
-                </div>
-              </div>
-            </div>
-            <div class="section-body">
-              <div class="switch-cards">
-                <div class="switch-card" :class="{ active: formData.open_log }">
-                  <div class="switch-card-text">
-                    <span class="switch-card-title">开启日志</span>
-                    <span class="switch-card-desc">在界面与控制台输出运行信息</span>
-                  </div>
-                  <el-switch v-model="formData.open_log" />
-                </div>
-                <div
-                  class="switch-card"
-                  :class="{ active: formData.save_log, disabled: !formData.open_log }"
-                >
-                  <div class="switch-card-text">
-                    <span class="switch-card-title">保存日志</span>
-                    <span class="switch-card-desc">写入 logs/runLog，需先开启日志</span>
-                  </div>
-                  <el-switch v-model="formData.save_log" :disabled="!formData.open_log" />
-                </div>
-              </div>
-              <p class="section-footnote">
-                修改后需重启框架生效。运行日志页可「合并今日文件日志」与打开日志目录。
-                <el-tooltip
-                  content="开启之后，会把运行日志保存到logs/runLog下&#10;如果需要开启的话，需要先打开[开启日志]才能生效"
-                  placement="top"
-                >
-                  <el-icon class="inline-help"><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </p>
-              <div class="log-dir-actions">
-                <el-button size="small" plain @click="openLogDirectory">打开日志目录</el-button>
-                <code v-if="logDirectoryPath" class="log-dir-path">{{ logDirectoryPath }}</code>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <!-- Appearance -->
         <section :id="sectionDomId('appearance')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.appearance }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.appearance"
+              @click="toggleSection('appearance')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Sunny /></el-icon></span>
                 <div>
                   <h2 class="section-title">外观</h2>
-                  <p class="section-desc">界面明暗主题</p>
+                  <p class="section-desc">选择适合你的显示方式，立即生效</p>
                 </div>
               </div>
-            </div>
-            <div class="section-body">
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.appearance }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.appearance" class="section-body">
               <div class="option-cards theme-cards">
                 <button
                   type="button"
@@ -373,35 +379,37 @@
                   </span>
                 </button>
               </div>
-            </div>
+              </div>
+            </Transition>
           </div>
         </section>
 
         <!-- Window -->
         <section :id="sectionDomId('window')" class="settings-section">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.window }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.window"
+              @click="toggleSection('window')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Monitor /></el-icon></span>
                 <div>
                   <h2 class="section-title">窗口与关闭</h2>
-                  <p class="section-desc">点击右上角关闭按钮时的行为</p>
+                  <p class="section-desc">选择关闭方式后自动保存</p>
                 </div>
               </div>
-              <el-tooltip
-                content="保存后立即生效，无需重启。选择「直接退出」将跳过确认框。"
-                placement="top"
-              >
-                <button type="button" class="help-btn" aria-label="帮助"><el-icon><QuestionFilled /></el-icon></button>
-              </el-tooltip>
-            </div>
-            <div class="section-body">
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.window }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.window" class="section-body">
               <div class="option-cards">
                 <button
                   type="button"
                   class="option-card"
                   :class="{ selected: formData.window_close_action === 'ask' }"
-                  @click="formData.window_close_action = 'ask'"
+                  @click="savePreference('window_close_action', 'ask')" :disabled="savingPreference"
                 >
                   <span class="option-card-radio" aria-hidden="true" />
                   <span class="option-card-content">
@@ -413,7 +421,7 @@
                   type="button"
                   class="option-card"
                   :class="{ selected: formData.window_close_action === 'tray' }"
-                  @click="formData.window_close_action = 'tray'"
+                  @click="savePreference('window_close_action', 'tray')" :disabled="savingPreference"
                 >
                   <span class="option-card-radio" aria-hidden="true" />
                   <span class="option-card-content">
@@ -425,7 +433,7 @@
                   type="button"
                   class="option-card"
                   :class="{ selected: formData.window_close_action === 'quit' }"
-                  @click="formData.window_close_action = 'quit'"
+                  @click="savePreference('window_close_action', 'quit')" :disabled="savingPreference"
                 >
                   <span class="option-card-radio" aria-hidden="true" />
                   <span class="option-card-content">
@@ -437,21 +445,27 @@
               <Transition name="fade">
                 <div v-if="hasStoredCloseConfirmPrefs" class="close-prefs-hint-box">
                   <p class="close-prefs-hint-text">
-                    检测到上次关窗时勾选了「不再提醒」，将一直按记忆中的操作执行。若要改回弹框或切换行为，可清除记忆，或选上方选项后保存。
+                    检测到上次关窗时勾选了「不再提醒」，将一直按记忆中的操作执行。若要改回弹框或切换行为，可清除记忆，或重新选择上方关闭方式。
                   </p>
                   <el-button type="warning" plain size="small" @click="clearStoredCloseConfirm">
                     清除「不再提醒」记忆
                   </el-button>
                 </div>
               </Transition>
-            </div>
+              </div>
+            </Transition>
           </div>
         </section>
 
         <!-- Update -->
         <section :id="sectionDomId('update')" class="settings-section settings-section-last">
-          <div class="section-card">
-            <div class="section-head">
+          <div class="section-card" :class="{ 'is-collapsed': !sectionExpanded.update }">
+            <button
+              type="button"
+              class="section-head section-head-toggle"
+              :aria-expanded="sectionExpanded.update"
+              @click="toggleSection('update')"
+            >
               <div class="section-head-left">
                 <span class="section-icon"><el-icon><Refresh /></el-icon></span>
                 <div>
@@ -459,8 +473,10 @@
                   <p class="section-desc">版本检查与自动更新</p>
                 </div>
               </div>
-            </div>
-            <div class="section-body">
+              <el-icon class="collapse-chevron" :class="{ expanded: sectionExpanded.update }"><ArrowDown /></el-icon>
+            </button>
+            <Transition name="section-collapse">
+              <div v-show="sectionExpanded.update" class="section-body">
               <div class="version-bar">
                 <div class="version-chip">
                   <span class="version-chip-label">当前版本</span>
@@ -480,8 +496,9 @@
               <div class="auto-update-row">
                 <el-switch
                   v-model="formData.auto_check_update"
+                  @change="value => savePreference('auto_check_update', value)"
                   active-text="启动时自动检查更新"
-                  :disabled="!isElectronAvailable"
+                  :disabled="!isElectronAvailable || savingPreference"
                 />
                 <el-tooltip content="开启后，应用启动时会自动检查是否有新版本" placement="top">
                   <el-icon class="inline-help"><QuestionFilled /></el-icon>
@@ -561,36 +578,25 @@
                   </div>
                 </div>
               </Transition>
-            </div>
+              </div>
+            </Transition>
           </div>
         </section>
       </main>
     </div>
 
-    <footer class="settings-footer" :class="{ 'is-dirty': isDirty, 'is-saving': saving }">
-      <p class="footer-status">
-        <span v-if="saving">正在保存…</span>
-        <span v-else-if="isDirty">有未保存的更改</span>
-        <span v-else class="footer-status-ok">配置已同步</span>
-      </p>
-      <el-button
-        type="primary"
-        size="large"
-        class="save-btn"
-        :class="{ pulse: isDirty && !saving }"
-        @click="handleSave"
-        :loading="saving"
-      >
-        保存修改
-      </el-button>
-    </footer>
   </div>
 </template>
 
 
 <script setup>
+import { createDiagnostics } from '../utils/diagnostics.mjs'
+const diagnostics = createDiagnostics('pages/SettingsPage.vue')
+import { createFeedback } from '../utils/feedback.mjs'
+const feedback = createFeedback('pages/SettingsPage.vue')
+
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick, inject } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
   QuestionFilled,
   Refresh,
@@ -606,12 +612,16 @@ import {
   Promotion,
   Monitor,
   ArrowDown,
+  ArrowRight,
+  Search,
   Sunny
 } from '@element-plus/icons-vue'
 import { useConfigStore } from '../stores/config'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { getCloseConfirmAutoAction, clearCloseConfirmPrefs } from '../utils/closeConfirmPrefs'
 import { getStoredThemeMode } from '../utils/theme'
+import { isWecomHookBodyOk } from '../utils/wecomHookBody.mjs'
+import { VWorkApi } from '../utils/api'
 
 const configStore = useConfigStore()
 const setThemeModeGlobal = inject('setThemeMode', null)
@@ -620,18 +630,27 @@ const isDirty = ref(false)
 const skipDirtyWatch = ref(false)
 const activeSection = ref('http')
 const mainScrollRef = ref(null)
-const sectionExpanded = reactive({ api: true })
+const sectionExpanded = reactive({
+  http: false,
+  wecom: false,
+  api: false,
+  appearance: false,
+  window: false,
+  update: false
+})
 const themeMode = ref(getStoredThemeMode())
-const logDirectoryPath = ref('')
+/** 暂时隐藏「接口调试」分区与侧栏入口；改为 true 即可恢复 */
+const SHOW_API_DEBUG = true
+
 const navSections = [
-  { id: 'http', label: 'HTTP', icon: Connection },
-  { id: 'wecom', label: '企微接入', icon: ChatLineRound },
-  { id: 'api', label: '接口调试', icon: Promotion },
-  { id: 'logs', label: '日志', icon: Document },
+  { id: 'http', label: '回调与加密', icon: Connection },
+  { id: 'wecom', label: '企微版本', icon: ChatLineRound },
+  { id: 'api', label: '接口调试', icon: Promotion, hidden: !SHOW_API_DEBUG },
   { id: 'appearance', label: '外观', icon: Sunny },
   { id: 'window', label: '窗口', icon: Monitor },
   { id: 'update', label: '更新', icon: Refresh }
 ]
+const visibleNavSections = computed(() => navSections.filter((item) => !item.hidden))
 
 let sectionObserver = null
 
@@ -639,13 +658,27 @@ function sectionDomId(id) {
   return `settings-section-${id}`
 }
 
+function expandOnly(id) {
+  for (const key of Object.keys(sectionExpanded)) {
+    sectionExpanded[key] = key === id
+  }
+  activeSection.value = id
+}
+
 function scrollToSection(id) {
   activeSection.value = id
-  document.getElementById(sectionDomId(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  expandOnly(id)
+  nextTick(() => {
+    document.getElementById(sectionDomId(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
 }
 
 function toggleSection(id) {
-  sectionExpanded[id] = !sectionExpanded[id]
+  if (sectionExpanded[id]) {
+    sectionExpanded[id] = false
+    return
+  }
+  expandOnly(id)
 }
 
 function setLocalTheme(mode) {
@@ -662,21 +695,9 @@ watch(
   }
 )
 
-async function openLogDirectory() {
-  if (!window.electronAPI?.openLogDirectory) {
-    ElMessage.warning('当前环境无法打开日志目录')
-    return
-  }
-  const res = await window.electronAPI.openLogDirectory()
-  if (res?.path) logDirectoryPath.value = res.path
-  if (!res?.success && res?.error) {
-    ElMessage.warning(res.error)
-  }
-}
-
 function setupSectionObserver() {
   sectionObserver?.disconnect()
-  const elements = navSections
+  const elements = visibleNavSections.value
     .map((s) => document.getElementById(sectionDomId(s.id)))
     .filter(Boolean)
   if (!elements.length) return
@@ -684,11 +705,12 @@ function setupSectionObserver() {
   const root = mainScrollRef.value || null
   sectionObserver = new IntersectionObserver(
     (entries) => {
+      if (Object.values(sectionExpanded).some(Boolean)) return
       const top = entries
         .filter((e) => e.isIntersecting)
         .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
       if (!top) return
-      const matched = navSections.find((s) => top.target.id === sectionDomId(s.id))
+      const matched = visibleNavSections.value.find((s) => top.target.id === sectionDomId(s.id))
       if (matched) activeSection.value = matched.id
     },
     { root, rootMargin: '-8% 0px -55% 0px', threshold: [0.12, 0.35, 0.6] }
@@ -699,7 +721,7 @@ function setupSectionObserver() {
 /** localStorage「不再提醒」存在时文案提示 */
 const hasStoredCloseConfirmPrefs = ref(false)
 
-/** POST /api/message/text 调试：固定正文；user_id、企微 port 用户填写 */
+/** POST /api 调试：固定正文；user_id、企微 port 用户填写 */
 const TEXT_MSG_TEST_BODY = 'Hello 北极熊，这是一条自动化测试消息！'
 const textTestUserId = ref('')
 const textTestWecomPort = ref('')
@@ -735,32 +757,107 @@ function formatWecomInstanceOptionLabel(row) {
 const formData = reactive({
   server_port: DEFAULT_SERVER_PORT_STRING,
   callback: '',
-  callback_encrypt: false,
-  callback_encrypt_key: '',
-  open_log: true,
-  save_log: true,
+  wecom_exe_path_v5: '',
   /** 默认可在设置中关闭；此前未写入 ini 时也视为开启 */
   auto_check_update: true,
   /** ask | tray | quit，写入 ini sys.window_close_action */
   window_close_action: 'ask'
 })
 
-/** 展示即将/实际请求的 URL 与 Body（与实际发送一致时需 port / user_id 已合法填写） */
-const textTestRequestPreview = computed(() => {
-  const listenPort = parseInt(String(formData.server_port ?? '').trim(), 10)
-  const listenOk =
-    !Number.isNaN(listenPort) && listenPort > 1024 && listenPort <= 10000
-  const url = listenOk
-    ? `http://127.0.0.1:${listenPort}/api/message/text`
-    : '（请先填写顶部「监听端口」，有效范围：(1024, 10000]）'
+// 持久配置按账号 ID 匹配；页面草稿按运行实例及账号隔离，不冒充企微实际配置。
+const callbackInstances = ref([])
+const selectedCallbackPort = ref('')
+const loadingInstances = ref(false)
+const updatingInstance = ref(false)
+let callbackRefreshPending = false
+const instanceDrafts = reactive({})
+const selectedCallbackRow = computed(() => callbackInstances.value.find(row => String(row.port) === selectedCallbackPort.value))
+const emptyInstanceForm = () => ({ push_enabled: false, push_url: '', push_timeout_ms: 2000, push_retries: 2, encrypt: false, public_key: '' })
+const blankInstanceForm = reactive(emptyInstanceForm())
+const instanceForm = computed(() => {
+  const row = selectedCallbackRow.value
+  if (!row) return blankInstanceForm
+  return instanceDrafts[row.port + ':' + row.pid + ':' + row.user_id]?.form || blankInstanceForm
+})
+const instanceStatus = computed(() => {
+  const row = selectedCallbackRow.value
+  if (!row) return '没有选中的运行实例；请先添加企微，或刷新列表。'
+  const draft = instanceDrafts[row.port + ':' + row.pid + ':' + row.user_id]
+  if (!row.user_id) return '尚未取得账号 ID，请先登录企微，再刷新列表以匹配已保存的配置。'
+  if (draft?.storageWarning) return draft.storageWarning
+  if (draft?.restored) return '已按账号 ID 匹配上次保存的回调与加密设置；点击更新应用到当前企微。'
+  return draft?.confirmed ? '已向该实例成功提交配置；继续编辑后需再次点击更新。' : '以下为本地初始值或草稿，尚未确认企微实际配置。请核对后点击更新。'
+})
+async function refreshCallbackInstances() {
+  if (loadingInstances.value || updatingInstance.value) {
+    callbackRefreshPending = true
+    return
+  }
+  callbackRefreshPending = false
+  loadingInstances.value = true
+  try {
+    const rows = await window.electronAPI.listCallbackInstances()
+    for (const row of rows) {
+      const key = row.port + ':' + row.pid + ':' + row.user_id
+      if (!instanceDrafts[key]) {
+        const cfg = row.settings
+        instanceDrafts[key] = { confirmed: row.confirmed === true, restored: row.restored === true, storageWarning: row.storageWarning || '', form: cfg ? {
+          push_enabled: cfg.enabled, push_url: cfg.url, push_timeout_ms: cfg.timeout_ms,
+          push_retries: cfg.retries, encrypt: cfg.Message_Encryption, public_key: cfg.RSA_PublicKey
+        } : emptyInstanceForm() }
+      }
+    }
+    const activeKeys = new Set(rows.map(row => row.port + ':' + row.pid + ':' + row.user_id))
+    for (const key of Object.keys(instanceDrafts)) {
+      if (!activeKeys.has(key)) delete instanceDrafts[key]
+    }
+    callbackInstances.value = rows
+    if (!rows.some(row => String(row.port) === selectedCallbackPort.value)) selectedCallbackPort.value = rows.length ? String(rows[0].port) : ''
+  } catch (error) { feedback.error('C002', '读取企微实例失败：' + error.message) }
+  finally {
+    loadingInstances.value = false
+    if (callbackRefreshPending) void refreshCallbackInstances()
+  }
+}
+watch(() => JSON.stringify(wecomManagerInstances.value.map(row => [row.port, row.user_id])), refreshCallbackInstances)
 
+async function updateCallbackInstance() {
+  const row = selectedCallbackRow.value
+  if (!row || updatingInstance.value) return
+  const draft = instanceDrafts[row.port + ':' + row.pid + ':' + row.user_id]
+  const form = { ...draft.form }
+  updatingInstance.value = true
+  try {
+    const result = await window.electronAPI.updateInstanceCallback({ port: row.port, pid: row.pid, user_id: row.user_id, settings: {
+      enabled: form.push_enabled, url: form.push_url, timeout_ms: form.push_timeout_ms,
+      retries: form.push_retries, Message_Encryption: form.encrypt, RSA_PublicKey: form.public_key
+    } })
+    if (!result.success) throw new Error(result.msg)
+    draft.confirmed = true
+    draft.restored = false
+    draft.storageWarning = result.warning || ''
+    if (result.warning) { ElMessage.warning(result.warning); return }
+    ElMessage.success('当前企微已更新，配置已按账号 ID 保存')
+  } catch (error) { feedback.error('C003', error.message || '更新失败') }
+  finally {
+    updatingInstance.value = false
+    if (callbackRefreshPending) void refreshCallbackInstances()
+  }
+}
+
+/** 展示即将/实际请求的 URL 与 Body（与实际发送一致时需 HTTP 端口 / user_id 已合法填写） */
+const textTestRequestPreview = computed(() => {
   const wPortParsed = parseInt(String(textTestWecomPort.value || '').trim(), 10)
   const portOk =
     !Number.isNaN(wPortParsed) && wPortParsed >= 1 && wPortParsed <= 65535
+  const url = portOk
+    ? `http://127.0.0.1:${wPortParsed}/api`
+    : '（请选择 HTTP 端口）'
+
   const uid = String(textTestUserId.value || '').trim()
 
   const payload = {
-    port: portOk ? wPortParsed : '（请选择企微 HTTP 端口）',
+    type: 3000,
     user_id: uid || '（请填写接收方 user_id）',
     msg: TEXT_MSG_TEST_BODY
   }
@@ -782,18 +879,6 @@ const isElectronAvailable = computed(() => {
   return !!window.electronAPI
 })
 
-const isUpdateInProgress = computed(() => {
-  return checkingUpdate.value || downloadingUpdate.value || installingUpdate.value
-})
-
-/** 用于与 ini.window_close_action 对比 */
-function normalizeIniCloseAction(raw) {
-  const wca = String(raw || 'ask').trim().toLowerCase()
-  if (wca === 'quit' || wca === 'exit') return 'quit'
-  if (wca === 'tray' || wca === 'minimize_tray') return 'tray'
-  return 'ask'
-}
-
 function refreshCloseConfirmPrefsHint() {
   hasStoredCloseConfirmPrefs.value = getCloseConfirmAutoAction() !== null
 }
@@ -806,16 +891,87 @@ function clearStoredCloseConfirm() {
 }
 
 // 加载配置
+const injectSettingsLoaded = ref(false)
+const injectSettingsLoading = ref(false)
+const injectSettingsError = ref('')
+const savedInjectSettings = ref(null)
+const pathSaveError = ref('')
+const pathSaveMessage = ref('')
+const findingInstallations = ref(false)
+const installationCandidates = ref([])
+const installationHint = ref('')
+const installationHintType = ref('warning')
+const useInstallation = async item => {
+  if (saving.value || !item.supported) return
+  formData.wecom_exe_path_v5 = item.path
+  await nextTick()
+  const saved = await handleSave({ detectedVersion: item.version })
+  if (saved) {
+    installationCandidates.value = []
+    installationHint.value = ''
+  }
+}
+const autoFindWecom = async () => {
+  if (findingInstallations.value || saving.value) return
+  findingInstallations.value = true
+  installationHint.value = ''
+  installationHintType.value = 'warning'
+  installationCandidates.value = []
+  try {
+    const result = await window.electronAPI?.findWecomInstallations?.()
+    if (!result?.success) throw new Error(result?.msg || '自动查找不可用，请重启框架后重试')
+    const compatible = result.candidates.filter(item => item.supported)
+    installationCandidates.value = compatible
+    if (compatible.length === 1) await useInstallation(compatible[0])
+    else if (!compatible.length) installationHint.value = result.candidates.length
+      ? `找到企微，但版本不兼容（${[...new Set(result.candidates.map(item => item.version))].join('、')}），未修改路径。请安装支持的版本。`
+      : '未找到企微安装位置，未修改路径。可先打开企微再查找，或手动填写 WXWork.exe 的完整路径。'
+  } catch (error) {
+    installationHintType.value = 'error'
+    installationHint.value = error.message || '自动查找失败，请重试或手动填写客户端路径。'
+    feedback.error('U024', installationHint.value)
+  }
+  finally { findingInstallations.value = false }
+}
+const applyInjectSettings = (data) => { formData.wecom_exe_path_v5 = data.host || '' }
+const loadInjectSettings = async () => {
+  if (injectSettingsLoading.value) return
+  injectSettingsLoading.value = true
+  injectSettingsError.value = ''
+  try {
+    const result = await window.electronAPI?.readInjectSettings()
+    if (!result?.success) throw new Error(result?.msg || '读取客户端路径失败，请重试')
+    savedInjectSettings.value = result.data
+    applyInjectSettings(result.data)
+    injectSettingsLoaded.value = true
+    await nextTick()
+    isDirty.value = false
+  } catch (error) {
+    injectSettingsError.value = error.message || '读取客户端路径失败，请重试'
+    feedback.error('U001', injectSettingsError.value)
+  } finally {
+    injectSettingsLoading.value = false
+  }
+}
+
+const pathStatus = computed(() => {
+  if (injectSettingsLoading.value) return { type: 'loading', icon: Loading, title: '正在读取客户端路径', detail: '读取完成后即可编辑。' }
+  if (!injectSettingsLoaded.value) return { type: 'error', icon: WarningFilled, title: '客户端路径尚未读取', detail: injectSettingsError.value || '请点击「重新读取」加载配置。' }
+  if (saving.value) return { type: 'loading', icon: Loading, title: '正在保存客户端路径', detail: '请稍候，保存完成后将用于后续启动企微。' }
+  if (findingInstallations.value) return { type: 'loading', icon: Loading, title: '正在查找兼容客户端', detail: '找到多个客户端时，可从列表中选择。' }
+  if (pathSaveError.value) return { type: 'error', icon: WarningFilled, title: '路径保存失败', detail: pathSaveError.value }
+  if (isDirty.value) return { type: 'warning', icon: InfoFilled, title: '路径有未保存的更改', detail: '点击「保存路径」后生效。' }
+  if (pathSaveMessage.value) return { type: 'success', icon: CircleCheck, title: pathSaveMessage.value, detail: '后续启动企微将使用此路径，已运行的实例不受影响。' }
+  if (savedInjectSettings.value?.host) return { type: 'neutral', icon: CircleCheck, title: '已读取保存的客户端路径', detail: '修改路径后，请保存再启动企微。' }
+  return { type: 'neutral', icon: InfoFilled, title: '尚未配置客户端路径', detail: '自动查找兼容客户端，或手动填写完整路径。' }
+})
+
 const loadConfig = () => {
   skipDirtyWatch.value = true
   const config = configStore.config
   formData.server_port = config.sys?.server_port || DEFAULT_SERVER_PORT_STRING
   formData.callback = config.sys?.callback || ''
-  formData.callback_encrypt =
-    config.sys?.callback_encrypt === 'true' || config.sys?.callback_encrypt === true
-  formData.callback_encrypt_key = String(config.sys?.callback_encrypt_key || '').trim()
-  formData.open_log = config.sys?.open_log === 'true' || config.sys?.open_log === true
-  formData.save_log = config.sys?.save_log === 'true' || config.sys?.save_log === true
+  if (savedInjectSettings.value) applyInjectSettings(savedInjectSettings.value)
   formData.auto_check_update = !(
     config.sys?.auto_check_update === 'false' ||
     config.sys?.auto_check_update === false
@@ -842,172 +998,47 @@ const loadConfig = () => {
 }
 
 watch(
-  formData,
+  () => formData.wecom_exe_path_v5,
   () => {
     if (skipDirtyWatch.value) return
-    isDirty.value = true
+    pathSaveError.value = ''
+    pathSaveMessage.value = ''
+    isDirty.value = formData.wecom_exe_path_v5 !== (savedInjectSettings.value?.host || '')
   },
   { deep: true }
 )
 
-watch(
-  () => formData.open_log,
-  (open) => {
-    if (!open) formData.save_log = false
-  }
-)
-
-watch(
-  () => formData.callback_encrypt,
-  (on) => {
-    if (skipDirtyWatch.value) return
-    if (on && !isValidCallbackEncryptKey(formData.callback_encrypt_key)) {
-      formData.callback_encrypt_key = generateCallbackEncryptKey()
-    }
-  }
-)
-
-function generateCallbackEncryptKey() {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32))
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-function isValidCallbackEncryptKey(raw) {
-  return /^[0-9a-fA-F]{64}$/.test(String(raw || '').trim())
-}
-
-const decryptSampleText = `{
-  "encrypted": true,
-  "alg": "AES-256-GCM",
-  "iv": "<Base64>",
-  "tag": "<Base64>",
-  "ciphertext": "<Base64>"
-}`
-
-const NODE_DECRYPT_SNIPPET = `const crypto = require('crypto')
-
-function decryptCallback(body, keyHex) {
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    Buffer.from(keyHex, 'hex'),
-    Buffer.from(body.iv, 'base64')
-  )
-  decipher.setAuthTag(Buffer.from(body.tag, 'base64'))
-  const buf = Buffer.concat([
-    decipher.update(Buffer.from(body.ciphertext, 'base64')),
-    decipher.final()
-  ])
-  return JSON.parse(buf.toString('utf8'))
-}`
-
-const PYTHON_DECRYPT_SNIPPET = `import json, base64
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-def decrypt_callback(body: dict, key_hex: str) -> dict:
-    key = bytes.fromhex(key_hex)
-    iv = base64.b64decode(body["iv"])
-    tag = base64.b64decode(body["tag"])
-    ct = base64.b64decode(body["ciphertext"])
-    plain = AESGCM(key).decrypt(iv, ct + tag, None)
-    return json.loads(plain)`
-
-async function copyText(text, okMsg) {
-  try {
-    await navigator.clipboard.writeText(text)
-    ElMessage.success(okMsg)
-  } catch {
-    ElMessage.warning('复制失败，请手动复制')
-  }
-}
-
-async function copyEncryptKey() {
-  const key = String(formData.callback_encrypt_key || '').trim()
-  if (!isValidCallbackEncryptKey(key)) {
-    ElMessage.warning('请先生成有效密钥')
-    return
-  }
-  await copyText(key, '密钥已复制')
-}
-
-async function regenerateEncryptKey() {
-  try {
-    await ElMessageBox.confirm(
-      '重新生成后，旧密钥无法解密之后的推送。请同步更新你的回调服务，并点击「保存修改」。',
-      '重新生成解密密钥',
-      { type: 'warning', confirmButtonText: '重新生成', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  formData.callback_encrypt_key = generateCallbackEncryptKey()
-  ElMessage.success('已生成新密钥，保存后生效')
-}
-
-async function copyDecryptSnippet(kind) {
-  if (kind === 'python') {
-    await copyText(PYTHON_DECRYPT_SNIPPET, 'Python 解密示例已复制')
-    return
-  }
-  await copyText(NODE_DECRYPT_SNIPPET, 'Node 解密示例已复制')
-}
-
 async function handleTestMessageText() {
-  if (!window.electronAPI?.callAPI) {
-    ElMessage.warning('当前环境无法调用 Electron 接口')
+  if (!window.electronAPI?.callFrameworkWecom) {
+    feedback.warning('U003', '当前环境无法调用 Electron 接口')
     return
   }
   const uid = String(textTestUserId.value || '').trim()
   if (!uid) {
-    ElMessage.warning('请填写接收方 user_id')
+    feedback.warning('U004', '请填写接收方 user_id')
     return
   }
   const wPort = parseInt(String(textTestWecomPort.value || '').trim(), 10)
   if (Number.isNaN(wPort) || wPort < 1 || wPort > 65535) {
-    ElMessage.warning('请填写有效的企微 HTTP 端口（请求体里的 port，1～65535）')
-    return
-  }
-  const listenPort = parseInt(String(formData.server_port || '').trim(), 10)
-  if (Number.isNaN(listenPort) || listenPort <= 1024 || listenPort > 10000) {
-    ElMessage.warning('请先在「HTTP 设置」中填写有效的监听端口')
+    feedback.warning('U005', '请选择有效的 HTTP 端口（1～65535）')
     return
   }
 
   testingTextMsg.value = true
   textTestResponseRaw.value = ''
-  const url = `http://127.0.0.1:${listenPort}/api/message/text`
   try {
-    const result = await window.electronAPI.callAPI({
-      url,
-      method: 'POST',
-      data: {
-        port: wPort,
-        user_id: uid,
-        msg: TEXT_MSG_TEST_BODY
-      }
-    })
-
-    if (!result?.success) {
-      textTestResponseRaw.value = JSON.stringify(
-        { ipcError: result?.msg || '请求失败', detail: result },
-        null,
-        2
-      )
-      ElMessage.error(result?.msg || '请求失败')
-      return
-    }
-
-    const body = result.data
+    const body = await VWorkApi.sendTestText(wPort, uid, TEXT_MSG_TEST_BODY)
     textTestResponseRaw.value =
       typeof body === 'string'
         ? body
         : JSON.stringify(body, null, 2)
 
-    const innerOk = body && typeof body === 'object' && body.success === true
+    const innerOk = isWecomHookBodyOk(body)
     if (innerOk) {
       ElMessage.success('调用成功')
     } else {
-      const m = body?.message || body?.msg || '接口返回 failure'
-      ElMessage.warning(typeof m === 'string' ? m : '接口返回异常，请看下方正文')
+      const m = body?.errmsg || body?.error || body?.message || '接口返回 failure'
+      feedback.warning('U008', typeof m === 'string' ? m : '接口返回异常，请看下方正文')
     }
   } catch (e) {
     const wrap = {
@@ -1015,7 +1046,7 @@ async function handleTestMessageText() {
       message: e?.message || String(e)
     }
     textTestResponseRaw.value = JSON.stringify(wrap, null, 2)
-    ElMessage.error(e?.message || String(e))
+    feedback.error('U009', e?.message || String(e))
   } finally {
     testingTextMsg.value = false
   }
@@ -1027,7 +1058,7 @@ const loadAppVersion = async () => {
     try {
       appVersion.value = await window.electronAPI.getAppVersion()
     } catch (error) {
-      console.error('获取版本失败:', error)
+      diagnostics.error('L001', '获取版本失败:', error)
       appVersion.value = '未知'
     }
   }
@@ -1036,7 +1067,7 @@ const loadAppVersion = async () => {
 // 工具函数：检查 Electron API 是否可用
 const checkElectronAPI = () => {
   if (!window.electronAPI) {
-    ElMessage.warning('当前环境不支持更新功能')
+    feedback.warning('U010', '当前环境不支持更新功能')
     return false
   }
   return true
@@ -1071,7 +1102,7 @@ const handleCheckUpdate = async () => {
         '检查更新失败',
         result.message || '检查更新失败'
       )
-      ElMessage.warning(result.message || '检查更新失败')
+      feedback.warning('U011', result.message || '检查更新失败')
     } else if (result.usedFallback) {
       ElMessage.info(result.message || '已改用备用更新源检查更新')
     }
@@ -1082,7 +1113,7 @@ const handleCheckUpdate = async () => {
       '检查更新失败',
       error.message
     )
-    ElMessage.error('检查更新失败: ' + error.message)
+    feedback.error('U012', '检查更新失败: ' + error.message)
   } finally {
     checkingUpdate.value = false
   }
@@ -1098,11 +1129,11 @@ const handleDownloadUpdate = async () => {
   try {
     const result = await window.electronAPI.downloadUpdate()
     if (!result.success) {
-      ElMessage.warning(result.message || '下载更新失败')
+      feedback.warning('U013', result.message || '下载更新失败')
       resetUpdateState()
     }
   } catch (error) {
-    ElMessage.error('下载更新失败: ' + error.message)
+    feedback.error('U014', '下载更新失败: ' + error.message)
     resetUpdateState()
   }
 }
@@ -1116,11 +1147,11 @@ const handleInstallUpdate = async () => {
   try {
     const result = await window.electronAPI.quitAndInstall()
     if (!result.success) {
-      ElMessage.warning(result.message || '安装更新失败')
+      feedback.warning('U015', result.message || '安装更新失败')
       installingUpdate.value = false
     }
   } catch (error) {
-    ElMessage.error('安装更新失败: ' + error.message)
+    feedback.error('U016', '安装更新失败: ' + error.message)
     installingUpdate.value = false
   }
 }
@@ -1189,7 +1220,7 @@ const handleUpdateStatusChange = (data) => {
         data.message
       )
       resetUpdateState()
-      ElMessage.error(data.message)
+      feedback.error('U017', data.message)
     }
   }
 
@@ -1197,7 +1228,7 @@ const handleUpdateStatusChange = (data) => {
   if (handler) {
     handler()
   } else {
-    console.warn('未知的更新状态:', data.status)
+    diagnostics.warn('L002', '未知的更新状态:', data.status)
   }
 }
 
@@ -1216,98 +1247,74 @@ const setupUpdateListeners = () => {
   })
 }
 
-// 保存配置
-const handleSave = async () => {
-  // 验证端口
-  const port = parseInt(formData.server_port)
-  if (isNaN(port) || port <= 1024 || port > 10000) {
-    ElMessage.warning('端口号的范围(1024, 10000]')
-    loadConfig() // 恢复原值
-    return
-  }
-
-  if (formData.callback_encrypt && !isValidCallbackEncryptKey(formData.callback_encrypt_key)) {
-    ElMessage.warning('消息加密已开启，请填写有效的 64 位十六进制密钥，或点击「重新生成」')
-    return
-  }
-
-  saving.value = true
-  const prevCloseIni = normalizeIniCloseAction(configStore.config.sys?.window_close_action)
-  const nextClose = formData.window_close_action || 'ask'
-  const oldPortBeforeSave = configStore.config.sys?.server_port
+const savingPreference = ref(false)
+async function savePreference(key, value) {
+  if (savingPreference.value) return
+  const previous = configStore.config.sys?.[key]
+  savingPreference.value = true
   try {
-    const newConfig = {
-      sys: {
-        server_port: String(formData.server_port),
-        callback: formData.callback || '',
-        callback_encrypt: String(formData.callback_encrypt),
-        callback_encrypt_key: String(formData.callback_encrypt_key || '').trim().toLowerCase(),
-        open_log: String(formData.open_log),
-        save_log: String(formData.save_log),
-        auto_check_update: String(formData.auto_check_update),
-        window_close_action: formData.window_close_action || 'ask'
-      },
-      custom: {
-        login_info: configStore.getLoginInfo()
-      }
-    }
-
-    const result = await configStore.saveConfig(newConfig)
-    
-    if (result.success) {
-      // 直接退出：与本地「一直最小化」记忆冲突，保存后顺带清除记忆
-      if (nextClose === 'quit') {
-        clearCloseConfirmPrefs()
-        refreshCloseConfirmPrefsHint()
-      } else if (prevCloseIni !== 'ask' && nextClose === 'ask') {
-        // 从「托盘 / 退出」改回询问时，清空记忆以免仍按旧习惯自动最小化
-        clearCloseConfirmPrefs()
-        refreshCloseConfirmPrefsHint()
-      }
-      const listenPortChanged =
-        String(oldPortBeforeSave) !== String(formData.server_port)
-      if (listenPortChanged && window.electronAPI) {
-        const restartRes = await window.electronAPI.restartFastAPIServer(
-          parseInt(formData.server_port, 10)
-        )
-        if (!restartRes?.success) {
-          ElMessage.error(
-            `HTTP 服务未在端口 ${formData.server_port} 启动：${restartRes?.message || '未知错误'}。请检查端口是否被占用，或完全退出框架后重新打开。`
-          )
-          isDirty.value = false
-          return
-        }
-      }
-      isDirty.value = false
-      if (listenPortChanged) {
-        ElMessage.success('监听端口已切换。外部请改用新端口调用接口；已登录企微无需额外操作')
-      } else {
-        ElMessage.success('保存成功')
-      }
-    } else {
-      ElMessage.error(result.msg || '保存失败')
-      loadConfig() // 恢复原值
-    }
+    const result = await window.electronAPI.saveConfig({ sys: { [key]: String(value) } })
+    if (!result.success) throw new Error(result.msg)
+    configStore.config.sys = { ...configStore.config.sys, [key]: String(value) }
+    formData[key] = value
+    if (key === 'window_close_action') { clearCloseConfirmPrefs(); refreshCloseConfirmPrefsHint() }
+    ElMessage.success('偏好已保存')
   } catch (error) {
-    ElMessage.error('保存失败: ' + error.message)
-    loadConfig() // 恢复原值
-  } finally {
-    saving.value = false
-  }
+    formData[key] = key === 'auto_check_update' ? previous == null || previous === true || previous === 'true' : previous || 'ask'
+    feedback.error('P001', error.message || '保存偏好失败，请重试')
+  } finally { savingPreference.value = false }
 }
 
-// 监听配置变化，自动更新表单（当配置加载完成后）
+// 保存配置
+const handleSave = async ({ detectedVersion } = {}) => {
+  if (saving.value || !injectSettingsLoaded.value) return false
+  const host = String(formData.wecom_exe_path_v5 || '').trim()
+  pathSaveError.value = ''
+  pathSaveMessage.value = ''
+  if (!host) {
+    pathSaveError.value = '请填写 WXWork.exe 的完整路径，或点击「自动查找」。'
+    feedback.warning('U018', pathSaveError.value)
+    return false
+  }
+  if (host === (savedInjectSettings.value?.host || '') && !detectedVersion) {
+    formData.wecom_exe_path_v5 = host
+    await nextTick()
+    isDirty.value = false
+    return true
+  }
+  saving.value = true
+  try {
+    const result = await window.electronAPI.saveInjectHost(host)
+    if (!result?.success) throw new Error(result?.msg || '请检查路径和文件权限后重试。')
+    savedInjectSettings.value = { ...savedInjectSettings.value, host }
+    formData.wecom_exe_path_v5 = host
+    await nextTick()
+    isDirty.value = false
+    installationHint.value = ''
+    installationCandidates.value = []
+    pathSaveMessage.value = detectedVersion ? `已找到并保存企微 v${detectedVersion} 的路径` : '客户端路径已保存'
+    ElMessage.success({ message: pathSaveMessage.value, grouping: true })
+    return true
+  } catch (error) {
+    pathSaveError.value = error.message || '请检查路径和文件权限后重试。'
+    feedback.error('U023', '客户端路径保存失败：' + pathSaveError.value)
+    return false
+  }
+  finally { saving.value = false }
+}
+
+// 仅在没有未保存草稿时回填；编辑中不读盘、不写 bin，避免和文件来回同步
 watch(
   () => configStore.config.sys,
   (newSys) => {
-    if (newSys && newSys.server_port) {
-      loadConfig()
-    }
+    if (!newSys?.server_port || isDirty.value || saving.value) return
+    loadConfig()
   },
   { deep: true }
 )
 
 onMounted(async () => {
+  await refreshCallbackInstances()
   const hasLoaded =
     configStore.config.sys?.server_port &&
     configStore.config.sys?.callback !== undefined
@@ -1316,12 +1323,10 @@ onMounted(async () => {
     await configStore.loadConfig()
   }
   loadConfig()
+  await loadInjectSettings()
   loadAppVersion()
   setupUpdateListeners()
   themeMode.value = getStoredThemeMode()
-  window.electronAPI?.getLogDirectory?.().then((res) => {
-    if (res?.success) logDirectoryPath.value = res.path
-  })
   await nextTick()
   setupSectionObserver()
 })
@@ -1336,6 +1341,51 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.instance-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; padding: 16px; background: var(--sp-subtle-bg); border: 1px solid var(--sp-border); border-radius: 10px; }
+.instance-picker { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px; }
+.instance-picker label { font-size: 13px; font-weight: 600; }
+.instance-select { width: 100%; }
+.instance-status { font-size: 12px; line-height: 1.7; color: var(--sp-muted); margin: 12px 0 24px; }
+.card-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-top: 1px solid var(--sp-border); background: var(--sp-subtle-bg); }
+.card-actions :deep(.el-button) { flex-shrink: 0; min-width: 124px; margin: 0; }
+.card-note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--sp-muted); }
+.wecom-section-body { display: flex; flex-direction: column; gap: 20px; }
+.wecom-version-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px; background: var(--sp-subtle-bg); border: 1px solid var(--sp-border); border-radius: 10px; }
+.wecom-client-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.wecom-version-summary .field-hint { margin-top: 4px; }
+.wecom-version-badge { flex-shrink: 0; padding: 5px 10px; border-radius: 6px; background: var(--sp-accent-soft); color: var(--sp-accent); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.wecom-path-field { min-width: 0; }
+.wecom-path-label { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+.wecom-path-row { display: flex; align-items: center; gap: 10px; }
+.wecom-path-input { flex: 1; min-width: 0; }
+.wecom-path-input :deep(.el-input__inner) { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.wecom-path-input :deep(.el-input__inner[aria-invalid="true"]) { color: var(--el-color-danger); }
+.wecom-path-row :deep(.el-button) { flex-shrink: 0; margin: 0; min-height: 38px; gap: 6px; }
+.wecom-path-field .field-hint { margin-top: 10px; }
+.wecom-candidates { padding: 14px; border: 1px solid var(--sp-border); border-radius: 10px; background: var(--sp-subtle-bg); }
+.wecom-candidates-title { margin: 0 0 12px; font-size: 12px; color: var(--sp-muted); line-height: 1.6; }
+.wecom-candidate { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 12px 14px; border: 1px solid var(--sp-border); border-radius: 8px; background: var(--sp-surface); color: var(--sp-text); font: inherit; text-align: left; cursor: pointer; transition: border-color .2s, background .2s; }
+.wecom-candidate + .wecom-candidate { margin-top: 8px; }
+.wecom-candidate:hover:not(:disabled) { border-color: var(--sp-accent); background: var(--sp-accent-soft); }
+.wecom-candidate:disabled { cursor: wait; opacity: .65; }
+.wecom-candidate-detail { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wecom-candidate-version { font-size: 12px; font-weight: 600; color: var(--sp-muted); }
+.wecom-candidate-path { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.wecom-candidate-action { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--sp-accent); font-size: 12px; font-weight: 500; }
+.wecom-discovery-hint { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 12px 14px; border: 1px solid var(--sp-warning-border); border-radius: 8px; background: var(--sp-warning-bg); color: var(--sp-warning-text); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.wecom-discovery-hint > .el-icon { flex-shrink: 0; margin-top: 3px; font-size: 14px; }
+.wecom-discovery-hint.is-error { color: var(--el-color-danger); border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.wecom-path-status { display: flex; align-items: flex-start; gap: 10px; min-width: 0; text-align: left; }
+.wecom-path-status > .el-icon { flex-shrink: 0; margin-top: 2px; font-size: 17px; color: var(--sp-muted); }
+.wecom-path-status.is-loading > .el-icon { color: var(--sp-accent); }
+.wecom-path-status.is-warning > .el-icon { color: var(--el-color-warning); }
+.wecom-path-status.is-error > .el-icon { color: var(--el-color-danger); }
+.wecom-path-status.is-success > .el-icon { color: var(--el-color-success); }
+.wecom-status-title { margin: 0; font-size: 13px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.wecom-status-detail { margin: 3px 0 0; font-size: 12px; line-height: 1.6; color: var(--sp-muted); overflow-wrap: anywhere; }
+.wecom-path-status.is-error .wecom-status-detail { color: var(--el-color-danger); }
+.option-card:disabled { cursor: wait; opacity: .65; }
+.option-card:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
 .settings-page {
   display: flex;
   flex-direction: column;
@@ -1356,9 +1406,10 @@ onUnmounted(() => {
 .settings-nav {
   flex-shrink: 0;
   width: var(--sp-nav-w);
-  padding: 16px 10px;
+  padding: 24px 12px;
   border-right: 1px solid var(--sp-border);
   background: var(--sp-surface);
+  overflow-y: auto;
 }
 
 .nav-list {
@@ -1423,13 +1474,20 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 24px 100px;
+  padding: 24px clamp(16px, 3vw, 36px) 40px;
   scroll-behavior: smooth;
+}
+
+.settings-main:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: -2px;
 }
 
 .settings-section {
   scroll-margin-top: 12px;
-  margin-bottom: 16px;
+  margin: 0 auto 24px;
+  max-width: 1000px;
 }
 
 .settings-section-last {
@@ -1440,14 +1498,13 @@ onUnmounted(() => {
   background: var(--sp-surface);
   border: 1px solid var(--sp-border);
   border-radius: var(--sp-radius);
-  box-shadow: var(--sp-shadow);
+  box-shadow: 0 2px 6px rgb(15 23 42 / 3%);
   overflow: hidden;
   transition: box-shadow 0.25s ease, border-color 0.25s ease;
 }
 
 .section-card:hover {
-  border-color: #dce3ec;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  border-color: var(--sp-border);
 }
 
 .section-head {
@@ -1455,7 +1512,7 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 20px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--sp-border);
 }
 
@@ -1472,6 +1529,15 @@ onUnmounted(() => {
 
 .section-head-toggle:hover {
   background: rgba(64, 158, 255, 0.04);
+}
+
+.section-head-toggle:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: -2px;
+}
+
+.section-card.is-collapsed .section-head {
+  border-bottom-color: transparent;
 }
 
 .section-head-left {
@@ -1502,12 +1568,12 @@ onUnmounted(() => {
 
 .section-icon.accent {
   background: rgba(103, 194, 58, 0.1);
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 
 .section-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.35;
 }
@@ -1520,7 +1586,7 @@ onUnmounted(() => {
 }
 
 .section-body {
-  padding: 20px;
+  padding: 24px;
 }
 
 .api-section-body {
@@ -1588,8 +1654,8 @@ onUnmounted(() => {
 
 .field-grid {
   display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
-  gap: 20px 16px;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 22px 24px;
   align-items: start;
 }
 
@@ -1598,7 +1664,7 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 500;
   color: var(--sp-muted);
-  text-align: right;
+  text-align: left;
 }
 
 .field-control {
@@ -1606,11 +1672,13 @@ onUnmounted(() => {
 }
 
 .field-input {
-  max-width: 280px;
+  width: 100%;
+  max-width: 260px;
 }
 
 .field-input-wide {
-  max-width: 480px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .field-hint {
@@ -1649,72 +1717,6 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
-.switch-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.switch-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--sp-border);
-  border-radius: 10px;
-  background: var(--sp-toolbar-bg);
-  transition: border-color 0.2s, background 0.2s, transform 0.15s ease;
-}
-
-.switch-card.active {
-  border-color: rgba(64, 158, 255, 0.35);
-  background: var(--sp-accent-soft);
-}
-
-.switch-card.disabled {
-  opacity: 0.55;
-}
-
-.switch-card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.switch-card-title {
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.switch-card-desc {
-  font-size: 12px;
-  color: var(--sp-muted);
-}
-
-.section-footnote {
-  margin: 14px 0 0;
-  font-size: 12px;
-  color: var(--sp-muted);
-}
-
-.log-dir-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.log-dir-path {
-  font-size: 11px;
-  padding: 4px 8px;
-  background: var(--sp-accent-soft);
-  border-radius: 6px;
-  word-break: break-all;
-}
-
 .theme-cards {
   margin-top: 0;
 }
@@ -1741,7 +1743,7 @@ onUnmounted(() => {
 }
 
 .option-card:hover {
-  border-color: #c6d4e3;
+  border-color: var(--sp-accent);
   transform: translateY(-1px);
 }
 
@@ -1756,7 +1758,7 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  border: 2px solid #c0c4cc;
+  border: 2px solid var(--sp-control-border);
   border-radius: 50%;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
@@ -1976,39 +1978,6 @@ onUnmounted(() => {
   border-top: 1px solid var(--sp-border);
 }
 
-.settings-footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 24px;
-  border-top: 1px solid var(--sp-border);
-  background: var(--sp-footer-bg);
-  backdrop-filter: blur(8px);
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-.settings-footer.is-dirty {
-  border-top-color: #fde68a;
-  box-shadow: 0 -4px 20px rgba(245, 158, 11, 0.08);
-}
-
-.footer-status {
-  margin: 0;
-  font-size: 13px;
-  color: var(--sp-muted);
-}
-
-.footer-status-ok {
-  color: #67c23a;
-}
-
-.save-btn.pulse:not(.is-loading) {
-  animation: save-pulse 2s ease-in-out infinite;
-}
-
-/* API test (preserved layout) */
 .api-test-split {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(260px, 1.08fr);
@@ -2241,6 +2210,20 @@ onUnmounted(() => {
   transform: translateY(-8px);
 }
 
+
+
+.nav-caption { padding: 0 12px 14px; font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--sp-muted); }
+.control-inline { display: flex; align-items: center; gap: 12px; }
+.inline-hint { margin: 0; }
+.callback-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; max-width: 460px; }
+.compact-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.compact-field label { font-size: 12px; color: var(--sp-text); }
+.compact-field label span { margin-left: 6px; color: var(--sp-muted); }
+.compact-field :deep(.el-input-number) { width: 100%; }
+.settings-page :deep(.el-input__wrapper), .settings-page :deep(.el-select__wrapper) { min-height: 36px; border-radius: 7px; }
+.settings-page :deep(.el-textarea__inner) { border-radius: 7px; }
+.settings-page button:focus-visible { outline: 2px solid var(--sp-accent); outline-offset: 3px; }
+.section-desc, .field-hint, .option-card-desc { line-height: 1.65; overflow-wrap: anywhere; }
 @media (max-width: 960px) {
   .settings-body {
     flex-direction: column;
@@ -2251,6 +2234,7 @@ onUnmounted(() => {
     border-right: none;
     border-bottom: 1px solid var(--sp-border);
     padding: 10px 16px;
+    box-sizing: border-box;
     overflow-x: auto;
   }
 
@@ -2262,6 +2246,8 @@ onUnmounted(() => {
 
   .nav-item {
     flex-shrink: 0;
+    width: auto;
+    white-space: nowrap;
     padding: 8px 12px;
   }
 
@@ -2269,9 +2255,8 @@ onUnmounted(() => {
     display: none;
   }
 
-  .option-cards {
-    grid-template-columns: 1fr;
-  }
+  .nav-caption { display: none; }
+  .option-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
   .api-test-split {
     grid-template-columns: 1fr;
@@ -2279,8 +2264,9 @@ onUnmounted(() => {
 
   .field-grid {
     grid-template-columns: 1fr;
-    gap: 6px;
+    gap: 8px;
   }
+  .field-control { margin-bottom: 12px; }
 
   .field-label {
     text-align: left;
@@ -2289,19 +2275,28 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
+  .wecom-path-row { align-items: stretch; flex-direction: column; }
+  .wecom-candidate { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .section-head, .section-body { padding: 18px 16px; }
+  .option-cards { grid-template-columns: 1fr; }
+  .settings-main { padding-top: 16px; }
+  .instance-toolbar { align-items: stretch; }
+  .instance-picker { flex-basis: 100%; min-width: 0; }
+  .card-actions { text-align: left; }
+  .field-input, .field-input-wide { max-width: 100%; }
   .settings-main,
-  .settings-footer {
+  .card-actions {
     padding-left: 16px;
     padding-right: 16px;
   }
 
-  .settings-footer {
+  .card-actions {
     flex-direction: column;
     align-items: stretch;
     text-align: center;
   }
 
-  .save-btn {
+  .card-actions :deep(.el-button) {
     width: 100%;
   }
 
@@ -2314,5 +2309,7 @@ onUnmounted(() => {
     padding-top: 0;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .settings-page *, .settings-page *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
 </style>
-

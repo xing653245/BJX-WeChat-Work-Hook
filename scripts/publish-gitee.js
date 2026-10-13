@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('publish-gitee.js')
 /**
  * 将 dist-electron 打包产物上传到 Gitee Release，供 electron-updater（generic）自动更新。
  *
@@ -15,7 +17,7 @@ const axios = require('axios')
 const {
   pkg,
   collectReleaseFiles,
-  getDefaultBranch,
+  assertGiteeAssetSizes,
   getEnvToken,
   normalizeReleaseFilesForPublish,
   buildReleaseBody
@@ -86,10 +88,13 @@ async function getReleaseByTag(owner, repo, tag, token) {
 async function createRelease(owner, repo, tag, token, { title, version } = {}) {
   const ver = version || pkg.version
   const name = title || tag
+  // 本地开发分支可能并不存在于发布仓库，使用远端默认分支创建标签。
+  const repoInfo = await giteeRequest('GET', `/repos/${owner}/${repo}`, token)
+  if (!repoInfo.default_branch) throw new Error('无法确定 Gitee 仓库的默认分支')
   return giteeRequest('POST', `/repos/${owner}/${repo}/releases`, token, {
     data: {
       tag_name: tag,
-      target_commitish: getDefaultBranch(),
+      target_commitish: repoInfo.default_branch,
       name,
       body: buildReleaseBody(ver),
       prerelease: false
@@ -154,37 +159,38 @@ async function replaceReleaseAssets(owner, repo, releaseId, uploadPlan, token) {
       (targetNames.has(name) ||
         (replacingExe && (name.endsWith('.exe') || name.endsWith('.blockmap'))))
     if (shouldDelete) {
-      console.log(`[publish-gitee] 删除旧附件: ${name}`)
+      diagnostics.info('L001', `[publish-gitee] 删除旧附件: ${name}`)
       await deleteAttachment(owner, repo, releaseId, item.id, token)
     }
   }
 
   for (const { localPath, uploadName } of uploadPlan) {
     const sizeMb = (fs.statSync(localPath).size / 1024 / 1024).toFixed(2)
-    console.log(`[publish-gitee] 上传: ${uploadName} (${sizeMb} MB)`)
+    diagnostics.info('L002', `[publish-gitee] 上传: ${uploadName} (${sizeMb} MB)`)
     await uploadAttachment(owner, repo, releaseId, localPath, token, uploadName)
-    console.log(`[publish-gitee] 完成: ${uploadName}`)
+    diagnostics.info('L003', `[publish-gitee] 完成: ${uploadName}`)
   }
 }
 
 async function publishToTag(owner, repo, tag, token, rawFiles, { title, version } = {}) {
   const ver = version || pkg.version
-  console.log(`\n[publish-gitee] ---- 标签: ${tag} ----`)
+  diagnostics.info('L004', `\n[publish-gitee] ---- 标签: ${tag} ----`)
 
   const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles, ver)
 
   try {
+    assertGiteeAssetSizes(uploadPlan.map(item => item.localPath))
     let release = await getReleaseByTag(owner, repo, tag, token)
     if (!release) {
-      console.log(`[publish-gitee] 创建 Release: ${tag}`)
+      diagnostics.info('L005', `[publish-gitee] 创建 Release: ${tag}`)
       release = await createRelease(owner, repo, tag, token, { title, version: ver })
     } else {
-      console.log(`[publish-gitee] 更新已有 Release 信息: ${tag}`)
+      diagnostics.info('L006', `[publish-gitee] 更新已有 Release 信息: ${tag}`)
       release = await updateRelease(owner, repo, release.id, tag, token, { title, version: ver })
     }
 
     await replaceReleaseAssets(owner, repo, release.id, uploadPlan, token)
-    console.log(`[publish-gitee] 标签 ${tag} 发布完成`)
+    diagnostics.info('L007', `[publish-gitee] 标签 ${tag} 发布完成`)
   } finally {
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true })
@@ -200,18 +206,19 @@ async function publishVersionOnly(version, files) {
     title: versionTag,
     version: version.replace(/^v/, '')
   })
-  console.log(`[publish-gitee] 版本归档: https://gitee.com/${owner}/${repo}/releases/tag/${versionTag}`)
+  diagnostics.info('L008', `[publish-gitee] 版本归档: https://gitee.com/${owner}/${repo}/releases/tag/${versionTag}`)
 }
 
 async function main() {
+  require('./reset-pack-conf-login').disableDebug()
   const { owner, repo, latestTag } = parseGiteePublishConfig()
   const token = getToken()
   const files = collectReleaseFiles()
   const versionTag = `v${pkg.version}`
 
-  console.log(`[publish-gitee] 目标仓库: gitee.com/${owner}/${repo}`)
-  console.log(`[publish-gitee] 版本: v${pkg.version}`)
-  console.log(`[publish-gitee] 文件: ${files.map((f) => path.basename(f)).join(', ')}`)
+  diagnostics.info('L009', `[publish-gitee] 目标仓库: gitee.com/${owner}/${repo}`)
+  diagnostics.info('L010', `[publish-gitee] 版本: v${pkg.version}`)
+  diagnostics.info('L011', `[publish-gitee] 文件: ${files.map((f) => path.basename(f)).join(', ')}`)
 
   // 1. 版本 Release：每次新版本追加一条，保留历史
   await publishToTag(owner, repo, versionTag, token, files, {
@@ -224,9 +231,9 @@ async function main() {
   })
 
   const baseUrl = pkg.build.publish[0].url.replace(/\/?$/, '/')
-  console.log('\n[publish-gitee] 全部发布完成')
-  console.log(`[publish-gitee] 自动更新地址: ${baseUrl}latest.yml`)
-  console.log(`[publish-gitee] 版本归档地址: https://gitee.com/${owner}/${repo}/releases/tag/${versionTag}`)
+  diagnostics.info('L012', '\n[publish-gitee] 全部发布完成')
+  diagnostics.info('L013', `[publish-gitee] 自动更新地址: ${baseUrl}latest.yml`)
+  diagnostics.info('L014', `[publish-gitee] 版本归档地址: https://gitee.com/${owner}/${repo}/releases/tag/${versionTag}`)
 }
 
 module.exports = {
@@ -235,7 +242,7 @@ module.exports = {
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error('[publish-gitee] 失败:', err.message || err)
+    diagnostics.error('L015', '[publish-gitee] 失败:', err.message || err)
     process.exit(1)
   })
 }

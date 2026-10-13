@@ -43,6 +43,10 @@ export function applyThemeMode(mode) {
     root.classList.remove('dark')
   }
   root.dataset.theme = mode
+  // 传递用户选择的模式而非解析后的颜色，否则“跟随系统”会被锁定。
+  window.electronAPI?.setNativeTheme?.(mode)?.catch((error) => {
+    console.warn('同步窗口外观失败:', error)
+  })
   return isDark
 }
 

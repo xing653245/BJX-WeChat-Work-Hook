@@ -179,8 +179,6 @@ function validAuthDatetime(dateStr, authActive) {
 }
 
 module.exports = {
-  AUTH_REASON,
-  checkAuthExpire,
   checkAuthByPort,
   checkAuthByUserId,
   validAuthDatetime,

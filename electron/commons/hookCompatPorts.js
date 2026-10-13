@@ -150,15 +150,6 @@ function applyListenPortChangeToConfig(prevConfig, nextConfig) {
 }
 
 module.exports = {
-  HOOK_PORT_MIN,
-  HOOK_PORT_MAX,
-  FALLBACK_HOOK_COMPAT_PORTS,
-  isValidHookPort,
-  parsePortList,
-  formatPortList,
-  mergeCompatPorts,
-  parseLoginInfoList,
-  stampLoginInfoMyPort,
   collectHookCompatListenPorts,
   applyListenPortChangeToConfig
 }

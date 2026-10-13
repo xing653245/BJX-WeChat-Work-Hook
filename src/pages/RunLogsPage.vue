@@ -4,7 +4,7 @@
       <div class="section-card">
         <div class="section-toolbar">
           <div class="toolbar-left">
-            <span class="toolbar-hint">实时推送日志；{{ fileLogHint }}</span>
+            <span class="toolbar-hint">保留最近 {{ maxRows }} 条；{{ fileLogHint }}</span>
           </div>
           <div class="toolbar-actions">
             <span v-if="logCount >= maxRows * 0.9" class="toolbar-warn">
@@ -15,14 +15,16 @@
               合并今日文件日志
             </el-button>
             <el-button size="small" plain @click="openLogFolder">打开日志目录</el-button>
+            <el-button size="small" plain :loading="exportingReport" @click="exportReport">导出故障报告</el-button>
             <el-button size="small" plain :disabled="logCount === 0" @click="clearLogs">
-              清空
+              清空显示
             </el-button>
           </div>
         </div>
         <div class="table-wrap">
           <el-table
             :data="logs"
+            row-key="id"
             style="width: 100%"
             height="100%"
             stripe
@@ -32,8 +34,12 @@
           >
             <el-table-column prop="index" label="序号" width="72" align="center" />
             <el-table-column prop="time" label="时间" width="168" align="center" />
-            <el-table-column prop="sender" label="发言者" width="140" align="center" />
-            <el-table-column prop="type" label="类型" width="130" align="center" />
+            <el-table-column prop="sender" label="来源" width="160" align="center" show-overflow-tooltip />
+            <el-table-column prop="type" label="类型" width="140" align="center">
+              <template #default="{ row }">
+                <span class="log-type" :class="`log-type--${row.level}`">{{ row.type }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="message" label="消息" min-width="200" show-overflow-tooltip />
           </el-table>
         </div>
@@ -50,20 +56,26 @@
       <div class="context-menu-item" @click="onMenuClick('copy-content')">复制本条消息</div>
       <div class="context-menu-divider" />
       <div class="context-menu-item context-menu-item-danger" @click="onMenuClick('clear')">
-        清空日志内容
+        清空显示日志
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { createFeedback } from '../utils/feedback.mjs'
+const feedback = createFeedback('pages/RunLogsPage.vue')
+import { presentRunLog } from '../utils/runLogPresentation.mjs'
+const exportingReport = ref(false)
+
+import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { formatMessageContent, formatMessageTypeLabel } from '../utils/msgParser'
+import { formatMessageContent, formatMessageTypeLabel, getMsgTypeText } from '../utils/msgParser'
+import { createRunLogBuffer, logIdentity, parseFileLogEntries } from '../utils/runLogBuffer.mjs'
 import { useConfigStore } from '../stores/config'
 
 const configStore = useConfigStore()
-const logs = ref([])
+const logs = shallowRef([])
 const selectedRow = ref(null)
 const maxRows = 1000
 const loadingFileLogs = ref(false)
@@ -80,49 +92,37 @@ const fileLogHint = computed(() => {
   const save = configStore.config.sys?.save_log
   const openOn = open === 'true' || open === true
   const saveOn = save === 'true' || save === true
-  if (openOn && saveOn) return '已开启文件持久化，可与下方按钮合并查看'
-  if (openOn) return '未开启「保存日志」，仅内存显示（可在设置中开启）'
-  return '日志已关闭，请在设置中开启'
+  if (openOn && saveOn) return '文件日志已开启'
+  if (openOn) return '未开启「保存日志」，仅内存显示'
+  return '文件日志记录已关闭'
 })
 
 let removeFastapiLogListener = null
 
-const formatTime = (timestamp) => {
-  const date = new Date(timestamp * 1000)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
-
+const logBuffer = createRunLogBuffer({ limit: maxRows, onChange: rows => { logs.value = rows } })
+const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+})
 const addLog = (data) => {
-  if (logs.value.length >= maxRows) {
-    logs.value = logs.value.slice(maxRows / 2)
-  }
-
-  const timestamp = data.time_stamp || Math.floor(Date.now() / 1000)
-  const content = formatMessageContent(data)
-
-  const logEntry = {
-    index: logs.value.length + 1,
-    time: formatTime(timestamp),
-    sender: data.self_user_id || '系统提示',
-    type: formatMessageTypeLabel(data),
-    message: content,
-    rawData: data
-  }
-
-  logs.value.push(logEntry)
-
-  logs.value.forEach((log, index) => {
-    log.index = index + 1
+  if (!data || typeof data !== 'object') return
+  const candidate = Number(data.time_stamp)
+  let date = new Date(Number.isFinite(candidate) && candidate > 0 ? candidate * 1000 : Date.now())
+  if (Number.isNaN(date.getTime())) date = new Date()
+  const time = timeFormatter.format(date).replace(/\//g, '-')
+  const rawContent = formatMessageContent(data)
+  const direction = data.sys ? '系统' : data.is_self_msg === 1 ? '发出' : '收到'
+  const messageType = !data.sys && data.msg_type != null && data.msg_type !== '' ? getMsgTypeText(data.msg_type) : ''
+  const apiName = data.type === 'api_call' ? data.api_name || '账号操作' : ''
+  const identityContent = apiName ? `[${apiName}] ${rawContent}` : rawContent
+  const presentation = presentRunLog({ content: rawContent, type: formatMessageTypeLabel(data), system: !!data.sys, apiName })
+  logBuffer.append({
+    time, timestamp: date.getTime(), sender: data.sys ? '系统' : apiName ? data.user_id || '当前账号' : data.sender || data.nick_name || data.user_id || data.self_user_id || '—',
+    ...presentation,
+    fileKey: logIdentity(time, direction, messageType, data.sys ? '' : data.user_id || '', identityContent),
+    eventId: !data.sys && data.msg_id ? JSON.stringify([data.self_user_id || '', data.port || '', data.msg_id, direction]) : null
   })
 }
-
 onMounted(() => {
   addLog({
     content: '启动成功',
@@ -132,7 +132,7 @@ onMounted(() => {
   configStore.loadConfig()
   window.electronAPI?.getLogDirectory?.().then((res) => {
     if (res?.success) logDirPath.value = res.path
-  })
+  }).catch(() => {})
 
   document.addEventListener('click', closeContextMenu)
 
@@ -144,6 +144,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  logBuffer.dispose()
   document.removeEventListener('click', closeContextMenu)
   removeFastapiLogListener?.()
   removeFastapiLogListener = null
@@ -168,7 +169,7 @@ const onMenuClick = (command) => {
 
 const handleMenuCommand = (command) => {
   if (command !== 'clear' && !selectedRow.value) {
-    ElMessage.warning('请先选择一行日志')
+    feedback.warning('U001', '请先选择一行日志')
     return
   }
 
@@ -185,90 +186,52 @@ const handleMenuCommand = (command) => {
   }
 }
 
-const copyRowContent = (row) => {
-  const content = `${row.index}|${row.time}|${row.sender}|${row.type}|${row.message}`
-  navigator.clipboard.writeText(content).then(() => {
+async function copyLogText(content) {
+  try {
+    await navigator.clipboard.writeText(content)
     ElMessage.success('已复制到剪贴板')
-  })
+  } catch (error) { feedback.error('U011', '复制失败，请重试') }
 }
 
-const copyMessageContent = (row) => {
-  navigator.clipboard.writeText(row.message).then(() => {
-    ElMessage.success('已复制到剪贴板')
-  })
-}
+const copyRowContent = (row) => copyLogText(`时间：${row.time}\n来源：${row.sender}\n类型：${row.type}\n消息：${row.message}`)
+const copyMessageContent = (row) => copyLogText(row.message)
 
 const clearLogs = () => {
-  logs.value = []
-  ElMessage.success('日志已清空')
-}
-
-function parseFileLogLine(line) {
-  const sysMatch = line.match(/^\[(.+?)\]\s*\[系统\]\s*(.*)$/)
-  if (sysMatch) {
-    return {
-      index: 0,
-      time: sysMatch[1],
-      sender: '系统提示',
-      type: '系统提示',
-      message: sysMatch[2],
-      rawData: { sys: true, content: sysMatch[2] }
-    }
-  }
-  const msgMatch = line.match(/^\[(.+?)\]\s*(\[发出\]|\[收到\])\s*(.*?)(?:\(([^)]*)\))?:\s*(.*)$/)
-  if (msgMatch) {
-    const dir = msgMatch[2] === '[发出]' ? '发送' : '接收'
-    return {
-      index: 0,
-      time: msgMatch[1],
-      sender: msgMatch[4] || '—',
-      type: `${dir}-消息`,
-      message: msgMatch[5],
-      rawData: {}
-    }
-  }
-  return {
-    index: 0,
-    time: '—',
-    sender: '文件日志',
-    type: '文件',
-    message: line,
-    rawData: {}
-  }
+  logBuffer.clear()
+  selectedRow.value = null
+  closeContextMenu()
+  ElMessage.success('显示日志已清空，文件日志仍保留')
 }
 
 async function mergeTodayFileLogs() {
+  if (loadingFileLogs.value) return
   if (!window.electronAPI?.readTodayLogFile) {
-    ElMessage.warning('当前环境无法读取文件日志')
+    feedback.warning('U002', '当前环境无法读取文件日志')
     return
   }
+  const generation = logBuffer.generation
   loadingFileLogs.value = true
   try {
     const res = await window.electronAPI.readTodayLogFile({ maxLines: 300 })
+    if (generation !== logBuffer.generation) return
     if (!res?.success) {
-      ElMessage.warning('读取文件日志失败')
+      feedback.warning('U003', '读取文件日志失败')
       return
     }
     if (!res.lines?.length) {
-      ElMessage.info('今日暂无文件日志（请确认已在设置中开启「保存日志」并重启）')
+      ElMessage.info('今日暂无文件日志')
       return
     }
-    const existingKeys = new Set(logs.value.map((l) => `${l.time}|${l.message}`))
-    let added = 0
-    for (const line of res.lines) {
-      const entry = parseFileLogLine(line)
-      const key = `${entry.time}|${entry.message}`
-      if (existingKeys.has(key)) continue
-      existingKeys.add(key)
-      logs.value.push(entry)
-      added++
-    }
-    logs.value.forEach((log, index) => {
-      log.index = index + 1
+    const entries = parseFileLogEntries(res.lines).map(entry => {
+      const api = !entry.sys && !entry.messageType && entry.message.match(/^\[([^\]]+)\]\s*((?:调用|操作)(?:成功|失败).*)$/s)
+      return { ...entry, ...presentRunLog({ content: api ? api[2] : entry.message,
+        type: entry.type, system: entry.sys, apiName: api?.[1] || '' }) }
     })
+    const added = logBuffer.merge(entries, generation)
+    if (added === null) return
     ElMessage.success(added ? `已合并 ${added} 条文件日志` : '文件日志与当前列表一致，无新增')
   } catch (e) {
-    ElMessage.error(e?.message || '读取文件日志失败')
+    feedback.error('U004', e?.message || '读取文件日志失败')
   } finally {
     loadingFileLogs.value = false
   }
@@ -276,15 +239,27 @@ async function mergeTodayFileLogs() {
 
 async function openLogFolder() {
   if (!window.electronAPI?.openLogDirectory) {
-    ElMessage.warning('当前环境无法打开日志目录')
+    feedback.warning('U005', '当前环境无法打开日志目录')
     return
   }
-  const res = await window.electronAPI.openLogDirectory()
-  if (res?.success) {
-    if (res.path) logDirPath.value = res.path
-  } else {
-    ElMessage.warning(res?.error || '打开日志目录失败')
-  }
+  try {
+    const res = await window.electronAPI.openLogDirectory()
+    if (res?.success) {
+      if (res.path) logDirPath.value = res.path
+    } else feedback.warning('U006', res?.error || '打开日志目录失败')
+  } catch (error) { feedback.error('U012', '打开日志目录失败，请重试') }
+}
+
+async function exportReport() {
+  if (exportingReport.value) return
+  exportingReport.value = true
+  try {
+    const result = await window.electronAPI?.exportDiagnosticReport?.()
+    if (result?.canceled) return
+    if (result?.success) ElMessage.success('故障报告已导出，请将文件发送给技术支持')
+    else feedback.error('U009', result?.message || '导出失败，请重启应用后重试')
+  } catch (error) { feedback.error('U010', error) }
+  finally { exportingReport.value = false }
 }
 
 defineExpose({
@@ -293,6 +268,11 @@ defineExpose({
 </script>
 
 <style scoped>
+.log-type { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: var(--sp-muted); background: var(--sp-subtle-bg); }
+.log-type--success { color: var(--el-color-success); background: var(--el-color-success-light-9); }
+.log-type--error { color: var(--el-color-danger); background: var(--el-color-danger-light-9); }
+.log-type--warning { color: var(--el-color-warning); background: var(--el-color-warning-light-9); }
+.log-type--message { color: var(--sp-accent); background: var(--sp-accent-soft); }
 .page-shell {
   display: flex;
   flex-direction: column;
@@ -325,6 +305,7 @@ defineExpose({
 .section-toolbar {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -345,9 +326,10 @@ defineExpose({
 
 .toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .toolbar-badge {
@@ -363,7 +345,7 @@ defineExpose({
 
 .toolbar-warn {
   font-size: 12px;
-  color: #b45309;
+  color: var(--el-color-warning);
   font-weight: 500;
 }
 

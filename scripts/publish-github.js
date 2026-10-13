@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('publish-github.js')
 /**
  * 将 dist-electron 打包产物上传到 GitHub Release，供 electron-updater（github provider）自动更新。
  */
@@ -85,7 +87,7 @@ async function getRepoDefaultBranch(owner, repo, token) {
 
 async function createRelease(owner, repo, tag, token) {
   const targetBranch = await getRepoDefaultBranch(owner, repo, token)
-  console.log(`[publish-github] 基于远程默认分支 ${targetBranch} 创建 Release`)
+  diagnostics.info('L001', `[publish-github] 基于远程默认分支 ${targetBranch} 创建 Release`)
   return githubRequest('POST', `/repos/${owner}/${repo}/releases`, token, {
     data: {
       tag_name: tag,
@@ -146,44 +148,45 @@ async function replaceReleaseAssets(owner, repo, release, uploadPlan, token) {
       targetNames.has(asset.name) ||
       (replacingExe && (asset.name.endsWith('.exe') || asset.name.endsWith('.blockmap')))
     if (shouldDelete) {
-      console.log(`[publish-github] 删除旧附件: ${asset.name}`)
+      diagnostics.info('L002', `[publish-github] 删除旧附件: ${asset.name}`)
       await deleteReleaseAsset(owner, repo, asset.id, token)
     }
   }
 
   for (const { localPath, uploadName } of uploadPlan) {
     const sizeMb = (fs.statSync(localPath).size / 1024 / 1024).toFixed(2)
-    console.log(`[publish-github] 上传: ${uploadName} (${sizeMb} MB)`)
+    diagnostics.info('L003', `[publish-github] 上传: ${uploadName} (${sizeMb} MB)`)
     await uploadReleaseAsset(release.upload_url, localPath, token, uploadName)
-    console.log(`[publish-github] 完成: ${uploadName}`)
+    diagnostics.info('L004', `[publish-github] 完成: ${uploadName}`)
   }
 }
 
 async function main() {
+  require('./reset-pack-conf-login').disableDebug()
   const { owner, repo } = parseGithubPublishConfig()
   const token = getGithubToken()
   const rawFiles = collectReleaseFiles()
   const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles)
   const tag = `v${pkg.version}`
 
-  console.log(`[publish-github] 目标: github.com/${owner}/${repo} @ ${tag}`)
-  console.log(`[publish-github] 版本: v${pkg.version}`)
-  console.log(`[publish-github] 上传文件: ${uploadPlan.map((item) => item.uploadName).join(', ')}`)
+  diagnostics.info('L005', `[publish-github] 目标: github.com/${owner}/${repo} @ ${tag}`)
+  diagnostics.info('L006', `[publish-github] 版本: v${pkg.version}`)
+  diagnostics.info('L007', `[publish-github] 上传文件: ${uploadPlan.map((item) => item.uploadName).join(', ')}`)
 
   try {
     let release = await getReleaseByTag(owner, repo, tag, token)
     if (!release) {
-      console.log(`[publish-github] 创建 Release 标签: ${tag}`)
+      diagnostics.info('L008', `[publish-github] 创建 Release 标签: ${tag}`)
       release = await createRelease(owner, repo, tag, token)
     } else {
-      console.log(`[publish-github] 更新已有 Release 说明: ${tag}`)
+      diagnostics.info('L009', `[publish-github] 更新已有 Release 说明: ${tag}`)
       release = await updateReleaseBody(owner, repo, release.id, token)
     }
 
     await replaceReleaseAssets(owner, repo, release, uploadPlan, token)
 
-    console.log('[publish-github] 发布完成')
-    console.log(`[publish-github] 更新地址: https://github.com/${owner}/${repo}/releases/tag/${tag}`)
+    diagnostics.info('L010', '[publish-github] 发布完成')
+    diagnostics.info('L011', `[publish-github] 更新地址: https://github.com/${owner}/${repo}/releases/tag/${tag}`)
   } finally {
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true })
@@ -192,6 +195,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[publish-github] 失败:', err.message || err)
+  diagnostics.error('L012', '[publish-github] 失败:', err.message || err)
   process.exit(1)
 })

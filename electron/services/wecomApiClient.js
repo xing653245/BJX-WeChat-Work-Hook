@@ -1,216 +1,36 @@
-/**
- * 企微本地 HTTP API 客户端：同一端口所有 Hook 请求串行 + 写操作最小间隔，避免并发压垮 Hook 导致崩溃。
- */
-const { createWecomAgentAdapter } = require('./wecomAgentCompat')
-const { getWecomAgentManager } = require('./wecomAgentManager')
-
-/** 消息发送 type（3000～3011） */
-const MESSAGE_SEND_TYPES = new Set([
-  3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011
-])
-
-/** 群组写操作 type（5000～5019），群发/群公告等 */
-const GROUP_WRITE_TYPES = new Set([
-  5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008,
-  5009, 5010, 5011, 5012, 5013, 5014, 5015, 5016, 5017, 5018, 5019
-])
-
-/** 小程序/媒体/CDN 等重操作，间隔更长 */
-const HEAVY_MESSAGE_TYPES = new Set([3001, 3003, 3004, 3007, 3011, 9000])
-
-/** 小程序（3006）：群发场景 Hook 需读封面并上传，单独加长间隔与冷却 */
-const APPLET_MESSAGE_TYPE = 3006
-
-/** 标签读操作（6000 标签组、6006 标签联系人），连续调用易压 Hook */
-const TAG_READ_TYPES = new Set([6000, 6006])
-
-/** 网络好友（4008 查询、4009 加好友），Hook 敏感且可能较慢 */
-const FRIEND_NETWORK_TYPES = new Set([4008, 4009])
-
+/** 框架自身的企微 HTTP 调用，按实例串行，避免内部操作互相干扰。 */
+const axios = require('axios')
+const { validateFrameworkRequest } = require('../configs/frameworkWecomApi')
 const { heavyApiDeferMs } = require('./wecomStability')
-
-const MIN_INTERVAL_MS = {
-  message: 1000,
-  group: 1000,
-  heavy: 2000,
-  applet: 4000,
-  tagRead: 400,
-  friendNetwork: 2000
-}
-
-/** 请求结束后额外冷却（Hook 可能在 HTTP 返回后仍在处理封面/发送） */
-const POST_COMPLETION_COOLDOWN_MS = {
-  [APPLET_MESSAGE_TYPE]: 3000
-}
-
-/** 小程序请求失败/超时后额外等待，避免 Hook 仍在处理时收到下一请求 */
-const APPLET_ERROR_RECOVERY_MS = 8000
-
-/** 单端口小程序待发队列上限，超出直接拒绝，防止客户端超时重试压垮 Hook */
-const MAX_APPLET_QUEUE_DEPTH = 20
-
-/** 按 type 的请求超时（小程序封面上传可能较慢） */
-const REQUEST_TIMEOUT_MS = {
-  [APPLET_MESSAGE_TYPE]: 120000,
-  4008: 60000,
-  4009: 60000
-}
-const DEFAULT_REQUEST_TIMEOUT_MS = 30000
-const HEAVY_REQUEST_TIMEOUT_MS = 60000
-
 const portQueues = new Map()
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms))
-}
-
-function isAppletType(type) {
-  return Number(type) === APPLET_MESSAGE_TYPE
-}
-
-function getMinInterval(type) {
-  const t = Number(type)
-  if (t === APPLET_MESSAGE_TYPE) return MIN_INTERVAL_MS.applet
-  if (HEAVY_MESSAGE_TYPES.has(t)) return MIN_INTERVAL_MS.heavy
-  if (MESSAGE_SEND_TYPES.has(t)) return MIN_INTERVAL_MS.message
-  if (GROUP_WRITE_TYPES.has(t)) return MIN_INTERVAL_MS.group
-  if (TAG_READ_TYPES.has(t)) return MIN_INTERVAL_MS.tagRead
-  if (FRIEND_NETWORK_TYPES.has(t)) return MIN_INTERVAL_MS.friendNetwork
-  return 0
-}
-
-function getPostCompletionCooldown(type) {
-  return POST_COMPLETION_COOLDOWN_MS[Number(type)] || 0
-}
-
-function getRequestTimeout(type) {
-  const t = Number(type)
-  if (REQUEST_TIMEOUT_MS[t] != null) return REQUEST_TIMEOUT_MS[t]
-  if (HEAVY_MESSAGE_TYPES.has(t)) return HEAVY_REQUEST_TIMEOUT_MS
-  return DEFAULT_REQUEST_TIMEOUT_MS
-}
-
-function getPortQueue(port) {
-  const key = String(port)
-  if (!portQueues.has(key)) {
-    portQueues.set(key, {
-      tail: Promise.resolve(),
-      lastDoneAt: 0,
-      appletPending: 0
-    })
-  }
-  return portQueues.get(key)
-}
-
-/**
- * 同一端口所有 Hook 请求均串行（前序失败不阻断后续），避免群发时与登录探测等并发访问导致崩溃
- */
-function enqueuePortTask(port, type, taskFn) {
-  const q = getPortQueue(port)
-  const applet = isAppletType(type)
-
-  if (applet) {
-    if (q.appletPending >= MAX_APPLET_QUEUE_DEPTH) {
-      const err = new Error(
-        `小程序发送队列已满（${MAX_APPLET_QUEUE_DEPTH}），请降低群发并发或等待队列消化后再试`
-      )
-      err.code = 'APPLET_QUEUE_FULL'
-      return Promise.reject(err)
-    }
-    q.appletPending++
-  }
-
-  const run = async () => {
-    const stabilizingWait = heavyApiDeferMs(port, type)
-    if (stabilizingWait > 0) {
-      console.log(
-        `[Hook队列] 端口 ${port} 登录保护期内，写操作延迟 ${Math.round(stabilizingWait / 1000)}s（type ${type}）`
-      )
-      await sleep(stabilizingWait)
-    }
-
-    const interval = getMinInterval(type)
-    if (interval > 0) {
-      const wait = interval - (Date.now() - q.lastDoneAt)
-      if (wait > 0) {
-        await sleep(wait)
-      }
-    }
-
-    let failed = false
-    try {
-      return await taskFn()
-    } catch (e) {
-      failed = true
-      throw e
-    } finally {
-      if (failed && applet) {
-        console.warn(
-          `[Hook队列] 端口 ${port} 小程序发送失败，额外等待 ${APPLET_ERROR_RECOVERY_MS / 1000}s 再处理下一请求`
-        )
-        await sleep(APPLET_ERROR_RECOVERY_MS)
-      }
-
-      const cooldown = getPostCompletionCooldown(type)
-      if (cooldown > 0) {
-        await sleep(cooldown)
-      }
-
-      q.lastDoneAt = Date.now()
-
-      if (applet) {
-        q.appletPending = Math.max(0, q.appletPending - 1)
-      }
-    }
-  }
-
-  const result = q.tail.then(run, run)
-  q.tail = result.catch(() => {})
+// 授权、回调配置与固定 Hook 调用共用队列；前一次失败不阻断后续任务。
+function enqueuePortTask(port, taskFn) {
+  const key = String(Number(port))
+  const previous = portQueues.get(key) || Promise.resolve()
+  const result = previous.then(taskFn, taskFn)
+  const tail = result.catch(() => {})
+  portQueues.set(key, tail)
+  void tail.then(() => { if (portQueues.get(key) === tail) portQueues.delete(key) })
   return result
 }
 
-/**
- * POST 到企微实例本地 API（同一端口串行 + 写操作最小间隔）
- * @param {number|string} port
- * @param {object} requestData 含 type 及业务字段
- * @param {{ timeout?: number }} [options]
- */
-async function postToVWorkApi(port, requestData, options = {}) {
-  const type = Number(requestData?.type)
-  const timeout = options.timeout ?? getRequestTimeout(type)
-  const manager = getWecomAgentManager()
-  const adapter = createWecomAgentAdapter({
-    request: (requestOptions) => manager.request({
-      ...requestOptions,
-      timeout: requestOptions.timeout ?? timeout
+async function postToVWorkApi(port, input, options = {}) {
+  if (!/^\d+$/.test(String(port)) || Number(port) <= 1024 || Number(port) > 65535) {
+    throw Object.assign(new Error('企微端口必须为 1025–65535 的整数'), { code: 'INVALID_API_PARAMS' })
+  }
+  const checked = validateFrameworkRequest(input)
+  if (!checked.valid) throw Object.assign(new Error(checked.message), { code: 'INVALID_API_PARAMS' })
+  const requestData = checked.params
+  return enqueuePortTask(port, async () => {
+    const wait = heavyApiDeferMs(port, requestData.type)
+    if (wait > 0) await sleep(wait)
+    const response = await axios.post(`http://127.0.0.1:${Number(port)}/api`, requestData, {
+      timeout: options.timeout ?? 30000, proxy: false, maxRedirects: 0, family: 4
     })
-  })
-
-  return enqueuePortTask(port, type, async () => {
-    try {
-      return await adapter.call(requestData)
-    } catch (error) {
-      if (!['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(error.code)) {
-        throw error
-      }
-
-      const started = await manager.ensureStarted()
-      if (!started.success) {
-        const unavailable = new Error(started.output || '企微 Agent 启动失败')
-        unavailable.code = 'WECOM_AGENT_UNAVAILABLE'
-        throw unavailable
-      }
-      return adapter.call(requestData)
-    }
+    return response.data
   })
 }
 
-module.exports = {
-  postToVWorkApi,
-  enqueuePortTask,
-  MESSAGE_SEND_TYPES,
-  GROUP_WRITE_TYPES,
-  HEAVY_MESSAGE_TYPES,
-  APPLET_MESSAGE_TYPE,
-  MAX_APPLET_QUEUE_DEPTH
-}
+module.exports = { postToVWorkApi, enqueuePortTask }

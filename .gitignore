@@ -4,7 +4,7 @@ node_modules
 # 构建输出
 dist
 dist-electron
-conf/conf.ini
+conf/
 build/icon.png
 
 # 本地临时/测试目录

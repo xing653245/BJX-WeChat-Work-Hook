@@ -1,14 +1,21 @@
 <template>
-  <div class="page-shell vwork-manager-page">
+  <div
+    class="page-shell vwork-manager-page"
+    @contextmenu="handleTableBlankContextMenu"
+  >
     <div class="page-body">
       <div class="section-card">
         <div class="login-notice" role="status">
-          <div class="login-notice-icon" aria-hidden="true">✓</div>
           <div class="login-notice-copy">
-            <strong>无需添加企微，请直接登录</strong>
-            <span>登录成功后，此处会自动显示已登录企微；右键账号可进行授权、标签和退出管理。</span>
+            <strong>右键添加企微后登录</strong>
+            <span>检测运行中的企微，恢复可接入的账号；普通方式启动的企微需完全退出后，由框架添加启动。</span>
+            <div v-if="discoveryNotice || unmanagedPids.length" class="unmanaged-wecom-alert" role="alert">
+              <p v-if="discoveryNotice">{{ discoveryNotice }}</p>
+              <p v-if="unmanagedPids.length">已发现 {{ unmanagedPids.length }} 个尚未接入的企微进程，PID：{{ unmanagedPids.join('、') }}。重新检测不会对这些进程执行注入。</p>
+            </div>
           </div>
-          <span class="service-status">企微服务自动运行 · HTTP 8080</span>
+          <el-button v-if="addingWechat" size="small" loading disabled role="status">正在启动企微，请稍候…</el-button>
+          <el-button size="small" :loading="discovering" :disabled="addingWechat" @click="discoverRunningWecom">重新检测</el-button>
         </div>
         <div class="table-wrap">
           <el-table
@@ -22,8 +29,8 @@
           >
             <template #empty>
               <div class="login-empty">
-                <strong>等待企微登录</strong>
-                <span>请直接打开企微并完成登录，账号会自动显示在这里。</span>
+                <strong>{{ unmanagedPids.length ? '已发现企微进程，尚未接入' : '尚未添加企微' }}</strong>
+                <span>{{ unmanagedPids.length ? '请在企微托盘菜单中选择退出，再在本页右键添加企微。' : '在页面空白处右键，选择「添加企微」。' }}</span>
               </div>
             </template>
             <el-table-column prop="nick_name" label="昵称" width="150" align="center" />
@@ -43,6 +50,42 @@
         </div>
       </div>
     </div>
+
+    <el-dialog
+      v-model="showAddDialog"
+      width="420px"
+      align-center
+      class="port-add-dialog"
+      :show-close="!addingWechat"
+      :close-on-click-modal="!addingWechat"
+      :close-on-press-escape="!addingWechat"
+    >
+      <template #header>
+        <div class="port-add-head">
+          <strong>添加企微</strong>
+          <span>指定一个未被占用的 HTTP 端口</span>
+        </div>
+      </template>
+      <div class="port-add-body">
+        <label class="port-add-label" for="custom-wecom-port">端口号</label>
+        <el-input
+          id="custom-wecom-port"
+          v-model="customPort"
+          :disabled="addingWechat"
+          size="large"
+          clearable
+          placeholder="例如 6272"
+          @keyup.enter="handleAddWechat"
+        />
+        <p class="port-add-hint">可用范围 1025–10000。该端口会作为这个企微实例的 HTTP 端口。</p>
+      </div>
+      <template #footer>
+        <div class="port-add-footer">
+          <el-button :disabled="addingWechat" @click="showAddDialog = false">取消</el-button>
+          <el-button type="primary" :loading="addingWechat" @click="handleAddWechat">{{ addingWechat ? '正在启动企微…' : '确定' }}</el-button>
+        </div>
+      </template>
+    </el-dialog>
 
     <!-- 设置标签对话框 -->
     <el-dialog
@@ -97,6 +140,35 @@
         top: contextMenuPosition.y + 'px'
       }"
     >
+      <div
+        class="context-menu-item context-menu-parent"
+        :class="{ disabled: addingWechat }"
+        :aria-disabled="addingWechat"
+        @click.stop="!addingWechat && toggleSubMenu('add')"
+      >
+        添加企微
+        <span class="submenu-arrow">▶</span>
+        <div
+          v-if="activeSubMenu === 'add'"
+          class="context-submenu"
+          @click.stop
+        >
+          <div
+            class="context-menu-item"
+            :class="{ disabled: addingWechat }"
+            @click="handleMenuCommand('add-random')"
+          >
+            随机端口
+          </div>
+          <div
+            class="context-menu-item"
+            :class="{ disabled: addingWechat }"
+            @click="handleMenuCommand('add-custom')"
+          >
+            指定端口
+          </div>
+        </div>
+      </div>
       <div 
         class="context-menu-item context-menu-parent"
         @click.stop="toggleSubMenu('auth')"
@@ -166,7 +238,13 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted, onUnmounted, nextTick, defineExpose, inject, watch } from 'vue'
+import { createDiagnostics } from '../utils/diagnostics.mjs'
+const diagnostics = createDiagnostics('pages/VWorkManagerPage.vue')
+import { createFeedback } from '../utils/feedback.mjs'
+const feedback = createFeedback('pages/VWorkManagerPage.vue')
+
+import { ref, computed, reactive, onMounted, onUnmounted, nextTick, inject, watch } from 'vue'
+import { singleFlight } from '../utils/singleFlight.mjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   isAuthorizedAuthState,
@@ -185,12 +263,19 @@ import { VWorkApi } from '../utils/api'
 import { DEFAULT_SERVER_PORT_STRING } from '../utils/constants'
 import { confirmLoggedIn } from '../utils/loginStatusRetry'
 import { pickPersonalRecord } from '../utils/personalInfo'
+import { isWecomHookBodyOk } from '../utils/wecomHookBody.mjs'
 
 const configStore = useConfigStore()
-/** 来自 App.vue：HTTP /api/other/start-wecom 成功后的端口队列 */
+/** 来自 App.vue：企微注入成功后的端口队列 */
 const wecomApiInjectPorts = inject('wecomApiInjectPorts', ref([]))
 const tableData = ref([])
+const discovering = ref(false)
+const discoveryNotice = ref('')
+const unmanagedPids = ref([])
 const selectedRow = ref(null)
+const showAddDialog = ref(false)
+const customPort = ref('')
+const addingWechat = ref(false)
 const showTagDialog = ref(false)
 const tagValue = ref('')
 const showCardKeyDialog = ref(false)
@@ -201,7 +286,7 @@ const cardKeySubmitting = ref(false)
 const selectedRowIndex = ref(-1)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
-/** 右键子菜单：'auth' | null */
+/** 右键子菜单：'add' | 'auth' | null */
 const activeSubMenu = ref(null)
 /** 授权绑定 / 取消请求中（按 wxid） */
 const authBindingLoading = reactive({})
@@ -217,6 +302,11 @@ const selectedRowAuthorized = computed(() =>
 
 /** 避免同一端口重复启动登录轮询 */
 const loginPollingPorts = new Set()
+const loginPollTimers = new Map()
+const autoUpdateTimers = new Map()
+let disposed = false
+/** 已退出的端口：阻止进行中的登录轮询把行加回来 */
+const stoppedPorts = new Set()
 /** 自动接入后尚未写入配置的端口（用于恢复表格） */
 const PENDING_PORTS_KEY = 'vwork_pending_wecom_ports'
 /** 每次应用会话仅做一次启动清理，避免 HMR/重复挂载误删正在登录的企微 */
@@ -282,63 +372,22 @@ const serverPort = computed(() => configStore.config.sys?.server_port || DEFAULT
 /** 已请求关闭自动更新的企微端口，避免 completePortLogin 重复触发时打两次 */
 const autoUpdateOffRequestedPorts = new Set()
 
-/**
- * 新实例登录并写入配置后，默认调用框架接口关闭企微端自动更新（POST /api/settings/auto-update，state=0）
- */
+/** 新实例登录后直接请求该企微实例关闭自动更新。 */
 async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
-  const p = parseInt(String(wecomHttpPort), 10)
-  if (Number.isNaN(p) || p < 1) {
-    console.warn('[auto-update] 跳过：企微端口无效', { wecomHttpPort })
-    return
-  }
-  if (autoUpdateOffRequestedPorts.has(p)) {
-    return
-  }
+  const p = Number(wecomHttpPort)
+  if (!Number.isInteger(p) || p <= 1024 || p > 65535 || autoUpdateOffRequestedPorts.has(p)) return
   autoUpdateOffRequestedPorts.add(p)
-  if (!window.electronAPI?.callAPI) {
-    console.warn('[auto-update] 跳过：electronAPI.callAPI 不可用')
-    return
-  }
-
-  let sp
   try {
-    if (window.electronAPI.readConfig) {
-      const cfg = await window.electronAPI.readConfig()
-      const raw = cfg?.sys?.server_port ?? DEFAULT_SERVER_PORT_STRING
-      sp = parseInt(String(raw).trim(), 10)
+    const body = await VWorkApi.disableAutoUpdate(p)
+    if (!isWecomHookBodyOk(body)) {
+      diagnostics.warn('L005', '[auto-update] 调用失败:', body?.errmsg || body?.msg || body)
+      autoUpdateOffRequestedPorts.delete(p)
     } else {
-      sp = parseInt(String(serverPort.value || DEFAULT_SERVER_PORT_STRING).trim(), 10)
+      diagnostics.info('L006', '[auto-update] 已请求关闭企微自动更新（成功）', { wecomPort: p })
     }
   } catch (e) {
-    console.warn('[auto-update] 读取监听端口失败，使用本地缓存:', e)
-    sp = parseInt(String(serverPort.value || DEFAULT_SERVER_PORT_STRING).trim(), 10)
-  }
-
-  if (Number.isNaN(sp) || sp <= 1024 || sp > 10000) {
-    console.warn('[auto-update] 跳过：框架监听端口无效，请检查 ini 中 sys.server_port（有效区间 1025～10000）', {
-      parsed: sp
-    })
-    return
-  }
-
-  const url = `http://127.0.0.1:${sp}/api/settings/auto-update`
-  try {
-    const result = await window.electronAPI.callAPI({
-      url,
-      method: 'POST',
-      data: {
-        port: p,
-        state: 0,
-        type: 7000
-      }
-    })
-    if (!result?.success) {
-      console.warn('[auto-update] 调用失败:', result?.msg || result)
-    } else {
-      console.info('[auto-update] 已请求关闭企微自动更新（成功）', { listenPort: sp, wecomPort: p, response: result?.data })
-    }
-  } catch (e) {
-    console.warn('[auto-update] 调用异常:', e?.message || e)
+    autoUpdateOffRequestedPorts.delete(p)
+    diagnostics.warn('L007', '[auto-update] 调用异常:', e?.message || e)
   }
 }
 
@@ -409,7 +458,16 @@ const isWecomProcessAlive = async (port) => {
       /* ignore */
     }
   }
-  return false
+  // 端口消失不能证明企微已退出；必须核对记录的 PID。
+  const row = tableData.value.find(item => Number(item.port) === Number(port))
+  const saved = configStore.getLoginInfo().find(item => Number(item.port) === Number(port))
+  const pid = Number(row?.pid) > 0 ? row.pid : saved?.pid
+  try {
+    const state = await window.electronAPI?.getProcessState?.(pid)
+    return state !== 'exited'
+  } catch {
+    return true // 检测失败保留条目，不能当成进程退出。
+  }
 }
 
 // 启动时检查登录状态：未登录且进程已退出时才从配置移除（不主动杀仍在运行的进程）
@@ -439,14 +497,14 @@ const cleanupUnloggedOnMount = async () => {
     if (!port || Number.isNaN(port)) continue
 
     if (pendingPorts.has(port) || loginPollingPorts.has(port)) {
-      console.info(`[启动清理] 端口 ${port} 正在登录中，跳过清理`)
+      diagnostics.info('L008', `[启动清理] 端口 ${port} 正在登录中，跳过清理`)
       remainList.push(item)
       continue
     }
 
     const row = tableData.value.find((r) => r.port === String(port))
     if (row?.nick_name === '登录中') {
-      console.info(`[启动清理] 端口 ${port} 表格状态为登录中，跳过清理`)
+      diagnostics.info('L009', `[启动清理] 端口 ${port} 表格状态为登录中，跳过清理`)
       remainList.push(item)
       continue
     }
@@ -462,14 +520,14 @@ const cleanupUnloggedOnMount = async () => {
     }
 
     if (await isWecomProcessAlive(port)) {
-      console.warn(
+      diagnostics.warn('L010',
         `端口 ${port} 暂未登录但进程/Hook 仍在，保留配置（可能正在登录或切换账号）`
       )
       remainList.push(item)
       continue
     }
 
-    console.warn(`端口 ${port} 未登录且进程已退出，从配置中移除`)
+    diagnostics.warn('L011', `端口 ${port} 未登录且进程已退出，从配置中移除`)
     removedItems.push(item)
   }
 
@@ -510,7 +568,7 @@ const cleanupUnloggedOnMount = async () => {
         })
       }
     } catch (e) {
-      console.error('更新配置以移除未登录进程失败:', e)
+      diagnostics.error('L012', '更新配置以移除未登录进程失败:', e)
     }
   }
 
@@ -567,6 +625,28 @@ const handleContextMenu = (row, column, event) => {
   activeSubMenu.value = null
 }
 
+const handleTableBlankContextMenu = (event) => {
+  const target = event.target
+  const trElement = target.closest('tbody tr')
+  if (trElement && trElement.closest('.el-table__body')) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  selectedRow.value = null
+  selectedRowIndex.value = -1
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+  contextMenuVisible.value = true
+  activeSubMenu.value = null
+}
+
+const checkPort = async (port) => {
+  if (!window.electronAPI) return false
+  const result = await window.electronAPI.checkPort(parseInt(port))
+  return result.inUse
+}
+
 // 切换子菜单显示状态（同一时刻只展开一个）
 const toggleSubMenu = (key) => {
   activeSubMenu.value = activeSubMenu.value === key ? null : key
@@ -574,10 +654,18 @@ const toggleSubMenu = (key) => {
 
 // 菜单命令处理
 const handleMenuCommand = async (command) => {
+  if (addingWechat.value && (command === 'add-random' || command === 'add-custom')) return
   contextMenuVisible.value = false
   activeSubMenu.value = null
   
   switch (command) {
+    case 'add-random':
+      await executeAddWechat('random', null)
+      break
+    case 'add-custom':
+      customPort.value = ''
+      showAddDialog.value = true
+      break
     case 'refresh-auth':
       await handleRefreshAuth()
       break
@@ -617,10 +705,126 @@ const handleClickOutside = (event) => {
   }
 }
 
+/** type=900 掉线：仍登录或进程还在则保留，避免把正常企微从列表杀掉 */
+const handleWecomOfflineSignal = async (port) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return false
+  const loggedIn = await confirmLoggedIn(() => VWorkApi.getLoginStatus(p), {
+    attempts: 3,
+    intervalMs: 1200
+  })
+  if (loggedIn) {
+    diagnostics.warn('L013', `[企微退出] type=900 但端口 ${p} 仍已登录，忽略`)
+    return false
+  }
+  if (await isWecomProcessAlive(p)) {
+    diagnostics.warn('L014', `[企微退出] type=900 但端口 ${p} 进程/Hook 仍在，保留列表`)
+    return false
+  }
+  return removeWecomFromManager(p)
+}
+
+const removeWecomFromManager = async (port, options = {}) => {
+  const p = Number(port)
+  if (Number.isNaN(p) || p <= 0) return false
+  stoppedPorts.add(p)
+  stopLoginPolling(p)
+  untrackPendingPort(p)
+
+  const hadRow = findRowIndexByPort(p) >= 0
+  if (options.terminate === true && window.electronAPI?.killProcessByPort) {
+    try {
+      await window.electronAPI.killProcessByPort(p)
+    } catch (error) {
+      diagnostics.warn('L015', `[企微退出] 结束端口 ${p} 进程失败:`, error?.message || error)
+    }
+  }
+
+  deleteTableRowByPort(p)
+  const loginInfoList = configStore.getLoginInfo()
+  const filtered = loginInfoList.filter((item) => parseInt(item.port, 10) !== p)
+  if (filtered.length !== loginInfoList.length) {
+    await configStore.updateLoginInfo(filtered)
+  }
+
+  if (!options.quiet && hadRow) {
+    feedback.warning('U001', `企微已退出，已从列表移除端口 ${p}`)
+  }
+  return true
+}
+
+const executeAddWechat = singleFlight(async (portType, customPortValue) => {
+  addingWechat.value = true
+  try {
+    const discovery = await discoverRunningWecom()
+    if (!discovery.success || discovery.unmanagedPids.length) {
+      feedback.warning('U036', discoveryNotice.value)
+      return
+    }
+    if (discovery.recovered > 0) {
+      ElMessage.success('已找到并接入正在运行的企微，请使用列表中的账号；如需新账号，请再次添加')
+      return
+    }
+    let port
+    if (portType === 'random') {
+      if (!window.electronAPI) {
+        feedback.error('U002', '应用通信尚未就绪，请重启框架后重试')
+        return
+      }
+      const result = await window.electronAPI.findAvailablePort()
+      port = result.port
+      if (!port) {
+        feedback.error('U003', '当前没有可用端口，请关闭无用实例后重试')
+        return
+      }
+    } else {
+      port = parseInt(customPortValue)
+      if (isNaN(port) || port <= 1024 || port > 10000) {
+        feedback.warning('U004', '端口可用范围(1024, 10000]')
+        return
+      }
+      const inUse = await checkPort(port)
+      if (inUse) {
+        feedback.warning('U005', `端口 ${port} 已被系统占用，请更换其他端口`)
+        return
+      }
+    }
+
+    if (!window.electronAPI) return
+    const result = await window.electronAPI.runInjectTool({
+      port
+    })
+    if (result.success) {
+      ElMessage.success('企微启动成功，正在登录...')
+      stoppedPorts.delete(port)
+      trackPendingPort(port)
+      const rowIndex = ensureTableRowForPort(port)
+      checkLoginStatus(port, rowIndex)
+      return true
+    } else {
+      feedback.error('U006', {
+        message: result.output || '启动失败',
+        duration: 8000,
+        showClose: true
+      })
+    }
+  } catch (error) {
+    feedback.error('U007', '启动失败: ' + error.message)
+  } finally {
+    addingWechat.value = false
+  }
+})
+
+const handleAddWechat = async () => {
+  if (addingWechat.value) return
+  const success = await executeAddWechat('custom', customPort.value)
+  if (success) showAddDialog.value = false
+}
+
 // 登录完成后写入表格与配置（按端口定位行，避免 reload 后 rowIndex 失效）
 const completePortLogin = async (port, options = {}) => {
   const p = Number(port)
-  if (Number.isNaN(p) || p <= 0) return false
+  if (Number.isNaN(p) || p <= 0 || stoppedPorts.has(p) || disposed) return false
 
   let rowIndex = options.rowIndex
   if (
@@ -633,13 +837,17 @@ const completePortLogin = async (port, options = {}) => {
   }
 
   const personalInfo = await VWorkApi.getPersonalInfo(p)
+  if (stoppedPorts.has(p) || disposed) return false
   const data = pickPersonalRecord(personalInfo)
   if (!data?.user_id) {
-    console.warn('[企微管理] 已登录但 1002 返回结构异常，无法写配置', personalInfo)
+    diagnostics.warn('L016', '[企微管理] 已登录但 1002 返回结构异常，无法写配置，请稍后重新刷新')
     return false
   }
 
   const pid = await getPidByPort(p)
+  if (stoppedPorts.has(p) || disposed) return false
+  // 异步请求期间其它行可能已被移除，重新按端口定位。
+  rowIndex = ensureTableRowForPort(p)
   updateTableItem(rowIndex, {
     nick_name: data.nick_name || '-',
     user_id: data.user_id || '-',
@@ -654,8 +862,14 @@ const completePortLogin = async (port, options = {}) => {
   })
 
   untrackPendingPort(p)
-  window.electronAPI?.markWecomPortLoggedIn?.(p)
-  setTimeout(() => invokeDefaultAutoUpdateOff(p), 20000)
+  const callbackResult = await window.electronAPI?.markWecomPortLoggedIn?.(p)
+  if (callbackResult?.warning) ElMessage.warning(callbackResult.warning)
+  if (stoppedPorts.has(p) || disposed) return false
+  clearTimeout(autoUpdateTimers.get(p))
+  autoUpdateTimers.set(p, setTimeout(() => {
+    autoUpdateTimers.delete(p)
+    if (!disposed && !stoppedPorts.has(p)) invokeDefaultAutoUpdateOff(p)
+  }, 20000))
   return true
 }
 
@@ -675,14 +889,30 @@ const syncPortLogin = async (port) => {
 }
 
 // 检查登录状态
+const stopLoginPolling = (port) => {
+  const p = Number(port)
+  clearTimeout(autoUpdateTimers.get(p))
+  autoUpdateTimers.delete(p)
+  const timer = loginPollTimers.get(p)
+  if (timer) {
+    clearInterval(timer)
+    loginPollTimers.delete(p)
+  }
+  loginPollingPorts.delete(p)
+}
+
 const checkLoginStatus = async (port, rowIndex) => {
   const p = Number(port)
   if (Number.isNaN(p) || p <= 0) return
+  if (disposed) return
+  if (stoppedPorts.has(p)) return
   if (loginPollingPorts.has(p)) return
   loginPollingPorts.add(p)
 
   const finishPolling = () => {
+    if (loginPollTimers.get(p) !== checkInterval) return
     loginPollingPorts.delete(p)
+    loginPollTimers.delete(p)
   }
 
   const maxAttempts = 90 // 最多检查90次（3分钟，每2秒一次）
@@ -693,31 +923,40 @@ const checkLoginStatus = async (port, rowIndex) => {
   let aliveExtendCount = 0
   const maxAliveExtend = 3 // 进程仍在时最多延长 3 次（共约 6 分钟）
 
-  const checkInterval = setInterval(async () => {
+  const checkInterval = setInterval(singleFlight(async () => {
+    if (disposed || loginPollTimers.get(p) !== checkInterval || stoppedPorts.has(p)) {
+      clearInterval(checkInterval)
+      finishPolling()
+      return
+    }
     attempts++
 
     if (Date.now() > loginCacheExpire) {
-      if (await isWecomProcessAlive(port)) {
+      const alive = await isWecomProcessAlive(port)
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+      if (alive) {
         if (aliveExtendCount < maxAliveExtend) {
           aliveExtendCount++
           loginCacheExpire = Date.now() + 60000
-          console.warn(`[登录轮询] 端口 ${port} 超时但进程仍在，延长等待 (${aliveExtendCount}/${maxAliveExtend})`)
+          diagnostics.warn('L017', `[登录轮询] 端口 ${port} 超时但进程仍在，延长等待 (${aliveExtendCount}/${maxAliveExtend})`)
           return
         }
+        clearInterval(checkInterval)
+        finishPolling()
+        feedback.warning('U008', '暂未确认登录，已暂停检测并保留企微，请登录后刷新列表')
+        return
       }
       clearInterval(checkInterval)
       finishPolling()
-      ElMessage.warning('登录超时，已关闭')
+      feedback.warning('U009', '进程已退出，已移除登录条目')
       deleteTableRowByPort(port)
       untrackPendingPort(port)
-      if (window.electronAPI) {
-        await window.electronAPI.killProcessByPort(port)
-      }
       return
     }
 
     try {
       const result = await VWorkApi.getLoginStatus(port)
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
       consecutiveErrors = 0
       if (result?.data) {
         const status = result.data.status
@@ -727,61 +966,65 @@ const checkLoginStatus = async (port, rowIndex) => {
           finishPolling()
           const ok = await completePortLogin(port, { rowIndex })
           if (!ok) {
-            ElMessage.warning('已登录但未能写入企微管理，请右键刷新授权或重新添加')
+            feedback.warning('U010', '已登录但未能写入企微管理，请右键刷新授权或重新添加')
           }
           return
         }
       }
 
       if (attempts >= maxAttempts) {
-        if (await isWecomProcessAlive(port)) {
+        const alive = await isWecomProcessAlive(port)
+        if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+        if (alive) {
           if (aliveExtendCount < maxAliveExtend) {
             aliveExtendCount++
             attempts = 0
             loginCacheExpire = Date.now() + 60000
-            console.warn(`[登录轮询] 端口 ${port} 多次未登录但进程仍在，延长等待`)
+            diagnostics.warn('L018', `[登录轮询] 端口 ${port} 多次未登录但进程仍在，延长等待`)
             return
           }
+          clearInterval(checkInterval)
+          finishPolling()
+          feedback.warning('U011', '暂未确认登录，已暂停检测并保留企微，请登录后刷新列表')
+          return
         }
         clearInterval(checkInterval)
         finishPolling()
-        ElMessage.warning('登录超时')
+        feedback.warning('U012', '登录等待超时，请确认企微已完成登录后刷新列表')
         deleteTableRowByPort(port)
         untrackPendingPort(port)
-        if (window.electronAPI) {
-          await window.electronAPI.killProcessByPort(port)
-        }
       }
     } catch (error) {
       consecutiveErrors++
-      console.warn(
+      diagnostics.warn('L019',
         `检查登录状态失败 (${consecutiveErrors}/${maxConsecutiveErrors}):`,
         error?.message || error
       )
       if (consecutiveErrors < maxConsecutiveErrors) {
         return
       }
-      if (await isWecomProcessAlive(port)) {
+      const alive = await isWecomProcessAlive(port)
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+      if (alive) {
         consecutiveErrors = 0
-        console.warn(`[登录轮询] 端口 ${port} 探测失败但进程仍在，继续等待登录`)
+        diagnostics.warn('L020', `[登录轮询] 端口 ${port} 探测失败但进程仍在，继续等待登录`)
         return
       }
       clearInterval(checkInterval)
       finishPolling()
-      if (window.electronAPI) {
-        await window.electronAPI.killProcessByPort(port)
-      }
       deleteTableRowByPort(port)
       untrackPendingPort(port)
-      ElMessage.warning(`进程${port}登录失败，已关闭`)
+      feedback.warning('U013', `企微端口 ${port} 对应进程已退出，已移除条目`)
     }
-  }, 2000)
+  }), 2000)
+  loginPollTimers.set(p, checkInterval)
 }
 
 // 由 HTTP 接口或主进程检测到企微启动后，加行并开始轮询登录。
 const handleApiInjectPort = (port) => {
   const p = Number(port)
   if (Number.isNaN(p) || p <= 0) return
+  stoppedPorts.delete(p)
   trackPendingPort(p)
   const ps = String(p)
   const existingIndex = tableData.value.findIndex((r) => r.port === ps)
@@ -794,7 +1037,7 @@ const handleApiInjectPort = (port) => {
   checkLoginStatus(p, rowIndex)
 }
 
-/** 挂载后：Hook 已就绪但未登录的端口（如崩溃恢复注入）补开登录轮询 */
+/** 挂载后：Hook 已就绪但未登录的端口补开登录轮询 */
 const resumePendingLoginPolling = async () => {
   for (let i = 0; i < tableData.value.length; i++) {
     const row = tableData.value[i]
@@ -820,6 +1063,40 @@ const resumePendingLoginPolling = async () => {
     checkLoginStatus(port, i)
   }
 }
+
+/** 从操作系统发现实例，不依赖上一次保存的端口或登录回调。 */
+const discoverRunningWecom = singleFlight(async () => {
+  discovering.value = true
+  let recovered = 0
+  try {
+    const result = await window.electronAPI?.discoverRunningWecom?.()
+    if (!result?.success) throw new Error(result?.message || '无法检测正在运行的企微，请稍后点击重新检测')
+    if (disposed) return { success: false, unmanagedPids: [] }
+    unmanagedPids.value = result.unmanagedPids
+    discoveryNotice.value = result.unmanagedPids.length
+      ? '检测到尚未接入框架的企微。请从企微托盘菜单完全退出（仅关闭窗口不够），然后在框架中添加，避免账号重复登录。'
+      : ''
+    for (const item of result.instances) {
+      if (disposed) break
+      const existing = tableData.value.find(row => Number(row.port) === item.port)
+      if (existing && Number(existing.pid) === item.pid && existing.user_id && existing.user_id !== '-') continue
+      stoppedPorts.delete(item.port)
+      const index = ensureTableRowForPort(item.port, { pid: String(item.pid) })
+      trackPendingPort(item.port)
+      recovered++
+      let complete = false
+      if (item.loggedIn) {
+        try { complete = await completePortLogin(item.port, { rowIndex: index }) }
+        catch (error) { diagnostics.warn('L038', '恢复运行中的企微账号失败，将继续检测', error) }
+      }
+      if (!complete) checkLoginStatus(item.port, index)
+    }
+    return { ...result, recovered }
+  } catch (error) {
+    discoveryNotice.value = error.message || '检测企微失败，请稍后重试'
+    return { success: false, unmanagedPids: [], recovered }
+  } finally { discovering.value = false }
+})
 
 /** 已登录但表格缺失时恢复（配置/session 中的端口） */
 const recoverOrphanedLoggedInPorts = async () => {
@@ -851,7 +1128,7 @@ const recoverOrphanedLoggedInPorts = async () => {
 
     if (loginPollingPorts.has(port)) continue
 
-    console.info(`[企微管理] 恢复已登录端口 ${port} 到表格`)
+    diagnostics.info('L021', `[企微管理] 恢复已登录端口 ${port} 到表格`)
     await completePortLogin(port)
   }
 }
@@ -874,7 +1151,7 @@ const getPidByPort = async (port) => {
     const result = await window.electronAPI.findPidByPort(parseInt(port))
     return result > 0 ? result : null
   } catch (error) {
-    console.error('获取PID失败:', error)
+    diagnostics.error('L022', '获取PID失败:', error)
     return null
   }
 }
@@ -885,7 +1162,7 @@ const handleRefreshAuth = async () => {
   
   const row = tableData.value[selectedRowIndex.value]
   if (!row.user_id || row.user_id === '-') {
-    ElMessage.warning('该行数据无效')
+    feedback.warning('U014', '尚未获取到该企微账号的信息，请完成登录后刷新列表')
     return
   }
 
@@ -894,15 +1171,15 @@ const handleRefreshAuth = async () => {
 
 function ensureRowAuthorizedForAction(row, actionLabel) {
   if (!row) {
-    ElMessage.warning('请先选择一行企微')
+    feedback.warning('U015', '请先选择一行企微')
     return false
   }
   if (!row.user_id || row.user_id === '-') {
-    ElMessage.warning('该行数据无效')
+    feedback.warning('U016', '尚未获取到该企微账号的信息，请完成登录后刷新列表')
     return false
   }
   if (!isRowAuthorized(row)) {
-    ElMessage.warning(`当前账号未授权或授权已失效，无法${actionLabel}，请先刷新授权或购买/续费`)
+    feedback.warning('U017', `当前账号未授权或授权已失效，无法${actionLabel}，请先刷新授权或购买/续费`)
     return false
   }
   return true
@@ -933,11 +1210,11 @@ const selectedRowHasCardKey = computed(() =>
 const openCardKeyDialog = (mode) => {
   const row = selectedRow.value
   if (!row) {
-    ElMessage.warning('请先选择一行企微')
+    feedback.warning('U018', '请先选择一行企微')
     return
   }
   if (!row.user_id || row.user_id === '-') {
-    ElMessage.warning('该行数据无效')
+    feedback.warning('U019', '尚未获取到该企微账号的信息，请完成登录后刷新列表')
     return
   }
 
@@ -951,7 +1228,7 @@ const openCardKeyDialog = (mode) => {
 const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
   const key = String(cardKey || '').trim()
   if (!row || !key) {
-    ElMessage.warning('请输入卡密')
+    feedback.warning('U020', '请输入卡密')
     return false
   }
 
@@ -967,7 +1244,7 @@ const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
     const result =
       mode === 'bind' ? await bindAuthorization(payload) : await unbindAuthorization(payload)
     if (!result.success) {
-      ElMessage.warning(result.msg || `${actionLabel}失败`)
+      feedback.warning('U021', result.msg || `${actionLabel}失败`)
       return false
     }
     if (closeDialog) {
@@ -985,8 +1262,8 @@ const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
     })
     return true
   } catch (error) {
-    console.error(`[${actionLabel}] 失败:`, error)
-    ElMessage.error(error.message || `${actionLabel}失败`)
+    diagnostics.error('L023', `[${actionLabel}] 失败:`, error)
+    feedback.error('U022', error.message || `${actionLabel}失败`)
     return false
   } finally {
     cardKeySubmitting.value = false
@@ -1022,17 +1299,17 @@ const handleAuthBind = () => {
 const handleAuthUnbind = async () => {
   const row = selectedRow.value
   if (!row) {
-    ElMessage.warning('请先选择一行企微')
+    feedback.warning('U023', '请先选择一行企微')
     return
   }
   if (!row.user_id || row.user_id === '-') {
-    ElMessage.warning('该行数据无效')
+    feedback.warning('U024', '尚未获取到该企微账号的信息，请完成登录后刷新列表')
     return
   }
 
   const boundCardKey = pickBoundCardKey(row)
   if (!boundCardKey) {
-    ElMessage.warning('当前账号未绑定卡密，无法授权取消')
+    feedback.warning('U025', '当前账号未绑定卡密，无法授权取消')
     return
   }
 
@@ -1060,20 +1337,20 @@ const handleAuthConvert = async () => {
 
   authBindingLoading[wxid] = true
   try {
-    const result = await convertAuthorizationByWxid({ wxid })
+    const result = await convertAuthorizationByWxid({ wxid, port: row.port })
     const cardKey =
       pickCardKeyFromConvertResult(result?.data) ||
       pickCardKeyFromConvertResult(result)
 
     if (!result?.success || !cardKey) {
-      ElMessage.error(result?.msg || '授权迁移失败')
+      feedback.error('U026', result?.msg || '授权迁移失败')
       return
     }
 
     // 迁移成功后，用响应卡密自动解绑当前 wxid，使新卡密可再次绑定
     const unbindResult = await unbindAuthorization(buildAuthBindingPayload(row, cardKey))
     if (!unbindResult?.success) {
-      ElMessage.warning(unbindResult?.msg || '迁移成功，但自动解绑失败，请手动授权取消')
+      feedback.warning('U027', unbindResult?.msg || '迁移成功，但自动解绑失败，请手动授权取消')
     }
 
     try {
@@ -1097,8 +1374,8 @@ const handleAuthConvert = async () => {
     await persistRowCardKey(wxid, row, '', cleared)
     await refreshAuthForRow(rowIndex, wxid, { ...row, ...cleared }, { quiet: true })
   } catch (error) {
-    console.error('[授权迁移] 失败:', error)
-    ElMessage.error(error.message || '授权迁移失败')
+    diagnostics.error('L024', '[授权迁移] 失败:', error)
+    feedback.error('U028', error.message || '授权迁移失败')
   } finally {
     delete authBindingLoading[wxid]
   }
@@ -1110,7 +1387,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
   const quiet = options.quiet === true
   try {
     if (!window.electronAPI) {
-      ElMessage.error('Electron API不可用')
+      feedback.error('U029', '应用通信尚未就绪，请重启框架后重试')
       return
     }
 
@@ -1121,7 +1398,8 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
       {}
     const prevExpire = prevLoginInfo.expire
 
-    const result = await window.electronAPI.getAuthInfo(userId)
+    const result = await window.electronAPI.getAuthInfo(userId, prevLoginInfo.port)
+    if (disposed || stoppedPorts.has(Number(prevLoginInfo.port))) return
     const { expire, auth_active: authActive, card_key: resolvedCardKey } =
       resolveAuthFieldsAfterAuthFetch(result, {
         expire: prevExpire,
@@ -1137,15 +1415,15 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
     if (result.success && result.data?.data) {
       if (!quiet && !isAuthorizedAuthState(expire, authActive)) {
         if (authActive === false) {
-          ElMessage.warning(`账号 ${userId} 授权已停用`)
+          feedback.warning('U030', `账号 ${userId} 授权已停用`)
         } else if (expire === '未授权') {
-          ElMessage.warning(`账号 ${userId} 在授权服务器上未查到有效授权，请确认已购买/续费后再刷新`)
+          feedback.warning('U031', `账号 ${userId} 在授权服务器上未查到有效授权，请确认已购买/续费后再刷新`)
         } else {
-          ElMessage.warning(`账号 ${userId} 授权未生效，请确认后台状态后刷新`)
+          feedback.warning('U032', `账号 ${userId} 授权未生效，请确认后台状态后刷新`)
         }
       }
     } else if (!quiet) {
-      ElMessage.error(result.msg || '获取授权信息失败，请检查网络或代理设置后重试')
+      feedback.error('U033', result.msg || '获取授权信息失败，请检查网络或代理设置后重试')
     }
     
     updateTableItem(rowIndex, { expire, auth_active: authActive, card_key: cardKey })
@@ -1196,64 +1474,27 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
       time_stamp: Math.floor(Date.now() / 1000)
     }
 
-    // 读取配置以获取日志和回调设置
+    // 读取本地日志设置，授权回调由企微原生推送
     const config = configStore.config
     const openLog = config.sys?.open_log === 'true' || config.sys?.open_log === true
     const saveLog = config.sys?.save_log === 'true' || config.sys?.save_log === true
-    const callback = config.sys?.callback || ''
-    const validAuth = isValidAuthDatetime(expire, authActive)
 
     // 如果开启了日志，保存日志到文件
     if (openLog && saveLog) {
       try {
         await window.electronAPI.saveLogToFile(logData)
       } catch (error) {
-        console.error('保存授权刷新日志失败:', error)
+        diagnostics.error('L025', '保存授权刷新日志失败:', error)
       }
     }
 
-    // 如果授权有效且配置了回调地址，发送回调
-    if (validAuth && callback && callback.includes('http') && callback.includes('://')) {
-      try {
-        // 构建回调数据（包含授权信息）
-        const callbackData = {
-          type: 'auth_refresh',
-          user_id: userId,
-          nick_name: nickName,
-          port: port,
-          expire: expire,
-          time_stamp: Math.floor(Date.now() / 1000)
-        }
-        
-        const callbackResult = await window.electronAPI.sendCallback(callback, callbackData)
-        
-        // 如果开启了日志且回调失败，记录回调失败日志
-        if (openLog && !callbackResult.success) {
-          const callbackLogData = {
-            content: `回调发送失败: ${callbackResult.message}`,
-            sys: true,
-            time_stamp: Math.floor(Date.now() / 1000)
-          }
-          
-          if (saveLog) {
-            try {
-              await window.electronAPI.saveLogToFile(callbackLogData)
-            } catch (error) {
-              console.error('保存回调失败日志失败:', error)
-            }
-          }
-        }
-      } catch (error) {
-        console.error('发送授权刷新回调失败:', error)
-      }
-    }
   } catch (error) {
     const prevLoginInfo =
       loginInfo ||
       tableData.value[rowIndex] ||
       configStore.getLoginInfo().find((item) => item.user_id === userId) ||
       {}
-    ElMessage.error('获取授权信息失败: ' + (error.message || '请检查网络或代理设置后重试'))
+    feedback.error('U034', '获取授权信息失败: ' + (error.message || '请检查网络或代理设置后重试'))
     const { expire, auth_active: authActive, card_key: cardKey } =
       resolveAuthFieldsAfterAuthFetch(
         { success: false },
@@ -1318,35 +1559,21 @@ const handleExitWechat = async () => {
     })
 
     const row = tableData.value[selectedRowIndex.value]
-    const port = parseInt(row.port)
+    const port = parseInt(row.port, 10)
 
-    // 先尝试调用退出登录API
     try {
       if (row.user_id && row.user_id !== '-') {
-        await VWorkApi.logout(port, row.user_id)
+        await VWorkApi.logout(port)
       }
     } catch (error) {
-      console.error('调用退出登录API失败:', error)
+      diagnostics.error('L028', '调用退出登录API失败:', error)
     }
-    
-    // 杀死进程
-    if (window.electronAPI) {
-      const killed = await window.electronAPI.killProcessByPort(port)
-      if (!killed) {
-        console.warn('杀死进程失败，可能进程已不存在')
-      }
-    }
-    
-    // 从配置中移除
-    const loginInfoList = configStore.getLoginInfo()
-    const filtered = loginInfoList.filter(item => item.user_id !== row.user_id)
-    await configStore.updateLoginInfo(filtered)
-    
-    deleteTableItem(selectedRowIndex.value)
+
+    await removeWecomFromManager(port, { quiet: true, terminate: true })
     ElMessage.success('已退出微信')
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('退出失败: ' + error.message)
+      feedback.error('U035', '退出失败: ' + error.message)
     }
   }
 }
@@ -1358,6 +1585,8 @@ onMounted(async () => {
   }
 
   await loadLoginInfo()
+
+  await discoverRunningWecom()
 
   // 先恢复「登录中」/pending 端口，再启动清理，避免与自动登录竞态。
   if (wecomApiInjectPorts.value.length) {
@@ -1382,6 +1611,12 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  for (const timer of loginPollTimers.values()) clearInterval(timer)
+  loginPollTimers.clear()
+  loginPollingPorts.clear()
+  for (const timer of autoUpdateTimers.values()) clearTimeout(timer)
+  autoUpdateTimers.clear()
   // 移除监听
   document.removeEventListener('click', handleClickOutside)
   document.removeEventListener('contextmenu', handleClickOutside)
@@ -1393,6 +1628,7 @@ const refreshList = async () => {
   await configStore.loadConfig()
   // 从配置中加载登录信息
   await loadLoginInfo()
+  await discoverRunningWecom()
   
   // 验证表格中的进程是否还在运行，移除已退出的进程
   if (window.electronAPI) {
@@ -1432,15 +1668,15 @@ const refreshList = async () => {
                 attempts: 5,
                 intervalMs: 2000
               })
-              if (mayReturn || (await isWecomPortReachable(port))) {
+              if (mayReturn || (await isWecomPortReachable(port)) || (await isWecomProcessAlive(port))) {
                 validRows.push(row)
               } else {
-                console.log(`端口 ${port} 已不再使用，从表格中移除`)
+                diagnostics.info('L029', `端口 ${port} 已不再使用，从表格中移除`)
               }
             }
           }
         } catch (error) {
-          console.error(`检查端口 ${port} 状态失败:`, error)
+          diagnostics.error('L030', `检查端口 ${port} 状态失败:`, error)
           // 检查失败时，保留该行（可能是临时网络问题）
           validRows.push(row)
         }
@@ -1478,6 +1714,8 @@ defineExpose({
   reloadLoginInfoFromConfig,
   syncPortLogin,
   recoverOrphanedLoggedInPorts,
+  removeWecomFromManager,
+  handleWecomOfflineSignal,
   /** 供调试或父组件直接触发，与 HTTP 回调等价 */
   handleInjectStartedFromApi: handleApiInjectPort
 })
@@ -1526,6 +1764,14 @@ defineExpose({
   background: linear-gradient(135deg, var(--sp-accent-soft), var(--sp-surface));
 }
 
+.login-notice:has(.unmanaged-wecom-alert) {
+  align-items: flex-start;
+}
+
+.login-notice:has(.unmanaged-wecom-alert) :deep(.el-button) {
+  margin-top: 8px;
+}
+
 .login-notice-icon {
   display: grid;
   place-items: center;
@@ -1555,6 +1801,30 @@ defineExpose({
   color: var(--sp-text);
   font-size: 15px;
   font-weight: 700;
+}
+
+.unmanaged-wecom-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--sp-warning-border);
+  border-left: 3px solid #d97706;
+  border-radius: 8px;
+  background: var(--sp-warning-bg);
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.unmanaged-wecom-alert p {
+  margin: 0;
+}
+
+:global(html.dark) .unmanaged-wecom-alert {
+  color: var(--sp-warning-text);
+  border-left-color: #fbbf24;
 }
 
 .service-status {
@@ -1639,7 +1909,7 @@ defineExpose({
 }
 
 .context-menu-item.disabled {
-  color: #c0c4cc;
+  color: var(--sp-disabled);
   cursor: not-allowed;
 }
 
@@ -1704,6 +1974,93 @@ defineExpose({
   .service-status {
     margin-left: 50px;
   }
+}
+</style>
+
+<style>
+.port-add-dialog.el-dialog {
+  padding: 0;
+  border: 1px solid var(--sp-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--sp-surface);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+}
+
+.port-add-dialog .el-dialog__header {
+  margin: 0;
+  padding: 18px 48px 0 20px;
+}
+
+.port-add-dialog .el-dialog__headerbtn {
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.port-add-dialog .el-dialog__headerbtn:hover {
+  background: var(--sp-subtle-bg);
+}
+
+.port-add-dialog .el-dialog__body {
+  padding: 16px 20px 4px;
+}
+
+.port-add-dialog .el-dialog__footer {
+  padding: 12px 20px 18px;
+}
+
+.port-add-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.port-add-head strong {
+  color: var(--sp-text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.port-add-head span {
+  color: var(--sp-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.port-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.port-add-label {
+  color: var(--sp-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.port-add-hint {
+  margin: 0;
+  color: var(--sp-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.port-add-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.port-add-footer .el-button {
+  min-width: 76px;
+  margin: 0;
 }
 </style>
 

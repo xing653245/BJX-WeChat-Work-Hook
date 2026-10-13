@@ -1,3 +1,5 @@
+const { createDiagnostics } = require('../electron/commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('convert-icon.js')
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
@@ -34,13 +36,13 @@ async function convertPngToIco() {
     
     // 写入 ICO 文件
     fs.writeFileSync(icoPath, icoBuffer);
-    console.log('图标转换成功:', icoPath);
+    diagnostics.info('L001', '图标转换成功:', icoPath);
     
     // 同时保留 PNG 文件
     fs.copyFileSync(pngPath, path.join(buildDir, 'icon.png'));
-    console.log('PNG 文件已复制:', path.join(buildDir, 'icon.png'));
+    diagnostics.info('L002', 'PNG 文件已复制:', path.join(buildDir, 'icon.png'));
   } catch (err) {
-    console.error('转换 ICO 失败:', err);
+    diagnostics.error('L003', '转换 ICO 失败:', err);
     process.exit(1);
   }
 }

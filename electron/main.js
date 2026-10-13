@@ -1,4 +1,7 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, dialog, Tray, nativeImage } = require('electron')
+const { createDiagnostics } = require('./commons/diagnostics.cjs')
+const diagnostics = createDiagnostics('main.js')
+const { app, BrowserWindow, ipcMain, shell, Menu, dialog, Tray, nativeImage, nativeTheme } = require('electron')
+require('./commons/diagnostics.cjs').setConsoleDiagnosticsEnabled(!app.isPackaged)
 const path = require('path')
 const { spawn } = require('child_process')
 const fs = require('fs')
@@ -9,90 +12,41 @@ const {
   formatUpdateError,
   getActiveFeed,
   initUpdateFeeds,
-  shouldSuppressErrorEvent
+  shouldSuppressUpdateEvent
 } = require('./services/updateService')
-let ini
-try {
-  ini = require('ini')
-} catch (e) {
-  // 如果ini包不存在，使用简单的解析器
-  ini = {
-    parse: (str) => {
-      const result = {}
-      let currentSection = null
-      str.split('\n').forEach(line => {
-        line = line.trim()
-        if (line.startsWith('[') && line.endsWith(']')) {
-          currentSection = line.slice(1, -1)
-          result[currentSection] = {}
-        } else if (line.includes('=') && currentSection) {
-          // 只分割第一个 =，以支持值中包含 = 的情况（如URL）
-          const equalIndex = line.indexOf('=')
-          const key = line.substring(0, equalIndex).trim()
-          let value = line.substring(equalIndex + 1).trim()
-          // 如果值被引号包裹，移除引号并处理转义的引号
-          if ((value.startsWith('"') && value.endsWith('"')) || 
-              (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'")
-          }
-          result[currentSection][key] = value
-        }
-      })
-      return result
-    },
-    stringify: (obj) => {
-      let result = ''
-      Object.keys(obj).forEach(section => {
-        result += `[${section}]\n`
-        Object.keys(obj[section]).forEach(key => {
-          const value = obj[section][key]
-          // 如果值是字符串且包含特殊字符、空格或JSON数组/对象，则添加引号并转义内部引号
-          if (typeof value === 'string' && (value.startsWith('[') || value.startsWith('{') || value.includes(' ') || value.includes('='))) {
-            // 转义字符串中的引号
-            const escapedValue = value.replace(/"/g, '\\"')
-            result += `${key}="${escapedValue}"\n`
-          } else {
-            result += `${key}=${value}\n`
-          }
-        })
-        result += '\n'
-      })
-      return result
-    }
-  }
-}
+const ini = require('ini')
 const axios = require('axios')
-const { saveLogToFile, getConfigPath, readIni, sendCallback, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
-const { assertMainWindow, isAllowedCallApiUrl, isAllowedExternalUrl } = require('./commons/ipcSecurity')
+const { saveLogToFile, getConfigPath, readIni, getBusinessCallbackUrl, validAuthDatetime, isAuthorizedAuthState, killProcessByPort, writeConfigAtomic, readConfigTextWithBackup, getRunLogDirectory, readTodayRunLogTail } = require('./commons/common')
+const { assertMainWindow, isAllowedExternalUrl } = require('./commons/ipcSecurity')
 const { ensureMessageServerToken, isValidMessageServerRequest, messageServerAxiosConfig } = require('./commons/messageBridge')
 const { initDesktopNotifications, showDesktopNotification } = require('./services/desktopNotifications')
 const { initCrashDiagnostics, attachWebContentsDiagnostics } = require('./services/crashDiagnostics')
-const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING, DEFAULT_INJECT_KEY } = require('./configs/defaults')
+const { DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STRING } = require('./configs/defaults')
 const {
   collectHookCompatListenPorts,
   applyListenPortChangeToConfig
 } = require('./commons/hookCompatPorts')
 const {
   checkPortListenAvailable,
-  runInjectTool: runInjectToolService,
-  readInjectConfig
+  findAvailablePort: findAvailablePortForInject,
+  runInjectTool: runInjectToolService
 } = require('./services/wecomInject')
-const { pollCrashDialogOnce } = require('./services/wecomCrashDialog')
-const { createWecomRecovery } = require('./services/wecomRecovery')
+const { getInjectBinDir } = require('./commons/resourcePaths')
+const { discoverWecom } = require('./services/wecomDiscovery')
 const { postToVWorkApi } = require('./services/wecomApiClient')
-const { AGENT_HTTP_PORT, AGENT_WS_PORT, getWecomAgentManager } = require('./services/wecomAgentManager')
-const { notifyWecomInjectStarted } = require('./services/wecomNotify')
+const { callFrameworkWecomApi } = require('./services/frameworkWecomApi')
+const { FRAMEWORK_API_NAMES } = require('./configs/frameworkWecomApi')
 const {
   canInjectPort,
   markPortStabilizing,
   markPortLoggedIn,
   markPortAccountSwitch,
-  recordInjectAttempt,
-  isPortSafeForCrashRecoveryInject
+  recordInjectAttempt
 } = require('./services/wecomStability')
 
 /** 开发模式：未打包运行（npm run electron:dev） */
 const isDev = !app.isPackaged
+const devServerUrl = process.env.VWORK_DEV_SERVER_URL || 'http://localhost:5173'
 
 let mainWindow
 /** 系统托盘（「最小化到托盘」时创建，任务栏隐藏图标区显示的是 Tray，不是 minimize） */
@@ -100,26 +54,21 @@ let tray = null
 /** 为 true 时允许主窗口真正关闭（避免关闭确认与再次拦截） */
 let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
+const instanceCallbacks = require('./services/instanceCallbacks').createInstanceCallbacks({
+  getSettingsFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
+  onMessage: (port, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastapi-message', { ...data, port })
+  }
+})
 let loginStatusCheckInterval = null // 定时检查登录状态
-let wecomCrashDialogInterval = null // Windows：监视企微「错误报告」崩溃窗口
-/** 同一端口注入互斥：避免定时检查、崩溃恢复、手动添加并发 it.exe */
+/** 同一端口注入互斥：避免手动添加并发执行 it.exe */
 const injectInProgressPorts = new Set()
 const TIMED_CHECK_INTERVAL_MS = 30000 // 定时登录探测间隔 30 秒
-/** 崩溃恢复退避：60s → 120s → 300s */
-const CRASH_RECOVERY_DELAYS_MS = [60000, 120000, 300000, 300000]
-let crashRecoveryBackoffLevel = 0
-let crashRecoveryTimer = null
-/** 崩溃恢复倒计时期间暂停定时探测，避免与退避恢复叠加注入 */
-let timedCheckPausedUntil = 0
-/** 连续崩溃恢复后仍未登录则暂停自动注入，避免无限拉起 */
-const MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN = 3
-let crashRecoveryCyclesWithoutLogin = 0
-let crashRecoveryAutoInjectSuspended = false
-
 /** 单实例：避免多开导致端口冲突 */
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
-  app.quit()
+  console.error('[启动] 框架已有实例运行，已请求显示现有窗口。如需启动开发版，请先从系统托盘退出已有框架。')
+  app.exit(23)
 }
 
 function focusMainWindow() {
@@ -136,10 +85,11 @@ function notifyPortError({ port, service, detail }) {
     detail ||
     `端口 ${port} 已被占用或无法绑定。\n\n请检查：\n1. 是否重复打开了本应用（应只保留一个实例）\n2. 是否有其他程序占用该端口\n3. 可在设置中更换 HTTP 监听端口后重启框架`
 
-  console.error(`[端口错误] ${title}: ${message}`)
+  diagnostics.error('L001', `[端口错误] ${title}: ${message}`)
+  const userDetail = require('./commons/diagnostics.cjs').userMessage(message, '服务暂时无法启动，请关闭重复打开的应用后重试；如仍然失败，请联系技术支持')
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('service-error', { port, service, message: title, detail: message })
+    mainWindow.webContents.send('service-error', { port, service, message: '服务启动失败', detail: userDetail })
   }
 
   showDesktopNotification({
@@ -148,7 +98,7 @@ function notifyPortError({ port, service, detail }) {
     onClick: () => {
       focusMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('service-error', { port, service, message: title, detail: message })
+        mainWindow.webContents.send('service-error', { port, service, message: '服务启动失败', detail: userDetail })
       }
     }
   })
@@ -158,86 +108,22 @@ function notifyPortError({ port, service, detail }) {
       type: 'error',
       title: '服务启动失败',
       message: title,
-      detail: message,
+      detail: userDetail,
       buttons: ['知道了']
     })
     .catch(() => {})
 }
 
-const isAutoInjectReason = (reason) => reason === '崩溃恢复' || reason === '定时检查'
-
-const resetCrashRecoveryProtection = () => {
-  crashRecoveryCyclesWithoutLogin = 0
-  crashRecoveryAutoInjectSuspended = false
-  crashRecoveryBackoffLevel = 0
-}
-
-const notifyCrashRecoverySuspended = () => {
-  const ports = getTimedCheckPorts()
-  const portHint = ports.length ? ports.join(', ') : '（无配置端口）'
-  const detail =
-    `已连续 ${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次崩溃恢复仍未登录。\n` +
-    `已暂停自动注入（端口：${portHint}）。\n\n` +
-    `请先在任务管理器中结束所有 WXWork.exe，关闭错误报告窗口，排查 Hook/企微版本兼容问题后，在「企微管理」中手动重新添加。`
-  console.warn('[企微崩溃] 自动恢复已暂停:', detail.replace(/\n/g, ' '))
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show()
-    mainWindow.focus()
-    mainWindow.webContents.send('crash-recovery-suspended', {
-      message: detail,
-      ports,
-      cycles: crashRecoveryCyclesWithoutLogin
-    })
-  }
-  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-  dialog
-    .showMessageBox(parent, {
-      type: 'warning',
-      title: '企微崩溃恢复已暂停',
-      message: '检测到企微反复崩溃，已停止自动重新注入。',
-      detail,
-      buttons: ['我知道了']
-    })
-    .catch(() => {})
-}
-
-const recordCrashRecoveryCycleResult = async () => {
-  const ports = getTimedCheckPorts()
-  if (ports.length === 0) return
-
-  for (const robotPort of ports) {
-    if (await probeLoggedIn(robotPort)) {
-      resetCrashRecoveryProtection()
-      return
-    }
-  }
-
-  crashRecoveryCyclesWithoutLogin++
-  console.log(
-    `[企微崩溃] 本轮恢复后仍未登录（连续 ${crashRecoveryCyclesWithoutLogin}/${MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN} 次）`
-  )
-  if (
-    crashRecoveryCyclesWithoutLogin >= MAX_CRASH_RECOVERY_CYCLES_WITHOUT_LOGIN &&
-    !crashRecoveryAutoInjectSuspended
-  ) {
-    crashRecoveryAutoInjectSuspended = true
-    if (crashRecoveryTimer) {
-      clearTimeout(crashRecoveryTimer)
-      crashRecoveryTimer = null
-    }
-    notifyCrashRecoverySuspended()
-  }
-}
-
 // 更新配置：优先 Gitee，失败后回退 GitHub（见 electron/configs/updateFeeds.js）
 // 发布命令: npm run electron:build:publish
 autoUpdater.autoDownload = false // 默认不自动下载，需要用户确认
+autoUpdater.disableDifferentialDownload = true // 完整包采用高压缩，不生成差分更新包。
 autoUpdater.autoInstallOnAppQuit = true // 应用退出时自动安装更新
 initUpdateFeeds()
 
 // 更新事件处理
 autoUpdater.on('checking-for-update', () => {
-  console.log('正在检查更新...')
+  diagnostics.info('L004', '正在检查更新...')
   if (mainWindow) {
     mainWindow.webContents.send('update-status', { status: 'checking', message: '正在检查更新...' })
   }
@@ -260,7 +146,7 @@ function normalizeReleaseNotes(releaseNotes) {
 }
 
 autoUpdater.on('update-available', (info) => {
-  console.log('发现新版本:', info.version)
+  diagnostics.info('L005', '发现新版本:', info.version)
   showDesktopNotification({
     title: '发现新版本',
     body: `版本 ${info.version} 可用，打开「设置 → 更新」可下载安装。`
@@ -276,22 +162,23 @@ autoUpdater.on('update-available', (info) => {
 })
 
 autoUpdater.on('update-not-available', (info) => {
-  console.log('当前已是最新版本:', info.version)
+  if (shouldSuppressUpdateEvent()) return
+  diagnostics.info('L006', '当前已是最新版本:', info.version)
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'not-available',
-      message: `当前已是最新版本 (${info.version})，无需更新`,
+      message: `已检查 Gitee 和 GitHub，当前已是最新版本 (${app.getVersion()})，无需更新`,
       version: info.version
     })
   }
 })
 
 autoUpdater.on('error', (err) => {
-  if (shouldSuppressErrorEvent()) {
-    console.warn('[update] 当前更新源失败，尝试备用源:', err?.message || err)
+  if (shouldSuppressUpdateEvent()) {
+    diagnostics.warn('L007', '[update] 当前更新源失败，尝试备用源:', err?.message || err)
     return
   }
-  console.error('更新检查失败:', err)
+  diagnostics.error('L008', '更新检查失败:', err)
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'error',
@@ -315,7 +202,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 })
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('更新下载完成:', info.version)
+  diagnostics.info('L009', '更新下载完成:', info.version)
   showDesktopNotification({
     title: '更新已就绪',
     body: `版本 ${info.version} 已下载完成，打开设置可立即重启安装。`
@@ -329,18 +216,7 @@ autoUpdater.on('update-downloaded', (info) => {
   }
 })
 
-// 获取应用资源路径（处理打包后的路径）
-const getAppPath = () => {
-  // 使用 app.isPackaged 判断是否是打包后的应用
-  if (app.isPackaged) {
-    // 打包后：process.resourcesPath 指向 resources 目录
-    // extraResources 中的 bin 和 conf 目录在 resources 目录中（与 app.asar 同级）
-    // 所以直接返回 resources 目录
-    return process.resourcesPath
-  }
-  // 开发环境：返回 electron 目录的父目录（项目根目录）
-  return path.join(__dirname, '..')
-}
+
 
 // 启动消息接收服务器（用于接收FastAPI推送的消息）
 const startMessageServer = () => {
@@ -374,7 +250,7 @@ const startMessageServer = () => {
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: true }))
         } catch (e) {
-          console.error('解析消息失败:', e)
+          diagnostics.error('L010', '解析消息失败:', e)
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: false, error: e.message }))
         }
@@ -386,7 +262,7 @@ const startMessageServer = () => {
   })
   
   messageServer.listen(messagePort, '127.0.0.1', () => {
-    console.log(`消息接收服务器启动在端口 ${messagePort}`)
+    diagnostics.info('L011', `消息接收服务器启动在端口 ${messagePort}`)
     process.env.MESSAGE_SERVER_URL = `http://127.0.0.1:${messagePort}/message`
   })
 
@@ -398,7 +274,7 @@ const startMessageServer = () => {
         detail: `端口 ${messagePort} 已被占用，运行日志/消息推送可能无法正常工作。\n\n若已打开另一个本框架实例，请关闭多余窗口；否则请结束占用该端口的进程后重启应用。`
       })
     } else {
-      console.error('消息服务器错误:', error)
+      diagnostics.error('L012', '消息服务器错误:', error)
       notifyPortError({
         port: messagePort,
         service: '消息推送服务',
@@ -419,14 +295,14 @@ function closeHttpServer(server) {
     }
     try {
       server.close((err) => {
-        if (err) console.error('停止Express失败:', err)
+        if (err) diagnostics.error('L013', '停止Express失败:', err)
         resolve()
       })
       if (typeof server.closeAllConnections === 'function') {
         server.closeAllConnections()
       }
     } catch (e) {
-      console.error('停止Express失败:', e)
+      diagnostics.error('L014', '停止Express失败:', e)
       resolve()
     }
   })
@@ -437,7 +313,7 @@ async function closeAllExpressServers() {
   expressServers = []
   if (oldServers.length === 0) return
   await Promise.all(oldServers.map((server) => closeHttpServer(server)))
-  console.log('Express服务器已关闭')
+  diagnostics.info('L015', 'Express服务器已关闭')
 }
 
 /**
@@ -450,14 +326,14 @@ const startExpressServer = async (port) => {
   const p = parseInt(port, 10)
   if (Number.isNaN(p) || p <= 1024 || p > 10000) {
     const msg = `监听端口无效: ${port}（有效范围 1025～10000）`
-    console.error(msg)
+    diagnostics.error('L016', msg)
     return { success: false, message: msg }
   }
 
-  const reservedPorts = new Set([AGENT_HTTP_PORT, AGENT_WS_PORT, 9999])
+  const reservedPorts = new Set([9999])
   if (reservedPorts.has(p)) {
     const msg = `监听端口 ${p} 已由框架内部服务保留，请使用其他端口（推荐 ${DEFAULT_SERVER_PORT}）`
-    console.error(msg)
+    diagnostics.error('L017', msg)
     return { success: false, message: msg }
   }
 
@@ -469,15 +345,15 @@ const startExpressServer = async (port) => {
   process.env.MESSAGE_SERVER_URL = 'http://127.0.0.1:9999/message'
   ensureMessageServerToken()
   const { runServer, listenAppOnPort } = require('./express_server')
-  console.log(`启动Express服务器，端口: ${p}`)
+  diagnostics.info('L018', `启动Express服务器，端口: ${p}`)
 
   try {
     const server = await runServer(p)
     expressServers.push(server)
-    console.log(`Express服务器启动成功，监听端口 ${p}`)
+    diagnostics.important('L019', `[Express服务] 启动成功，端口 ${p}`)
   } catch (error) {
     const msg = error.message || String(error)
-    console.error('启动Express服务器失败:', msg)
+    diagnostics.error('L020', '启动Express服务器失败:', msg)
     expressServers = []
     if (/EADDRINUSE|已被占用|address already in use/i.test(msg)) {
       notifyPortError({
@@ -494,9 +370,9 @@ const startExpressServer = async (port) => {
     try {
       const extraServer = await listenAppOnPort(extraPort)
       expressServers.push(extraServer)
-      console.log(`Hook 兼容监听已启动: ${extraPort}（已注入企微仍向旧 --my_port 回包）`)
+      diagnostics.info('L021', `Hook 兼容监听已启动: ${extraPort}（已注入企微仍向旧 --my_port 回包）`)
     } catch (error) {
-      console.warn(
+      diagnostics.warn('L022',
         `Hook 兼容端口 ${extraPort} 无法监听: ${error.message}。已登录企微若仍指向该端口，接口可能超时。`
       )
     }
@@ -510,23 +386,19 @@ const findPidByPort = (port) => {
   return new Promise((resolve) => {
     if (process.platform === 'win32') {
       const { exec } = require('child_process')
-      exec(`netstat -ano | findstr :${port}`, (error, stdout) => {
+      const { parseNetstatListeningPids, parseNetstatLocalPids } = require('./commons/portProcess.cjs')
+      exec('netstat -ano -p tcp', (error, stdout) => {
         if (error || !stdout) {
           resolve(-1)
           return
         }
-        const lines = stdout.trim().split('\n')
-        for (const line of lines) {
-          const parts = line.trim().split(/\s+/)
-          if (parts.length >= 5 && parts[1].includes(`:${port}`)) {
-            const pid = parseInt(parts[parts.length - 1])
-            if (!isNaN(pid)) {
-              resolve(pid)
-              return
-            }
-          }
+        const listening = parseNetstatListeningPids(stdout, port)
+        if (listening[0]) {
+          resolve(listening[0])
+          return
         }
-        resolve(-1)
+        const local = parseNetstatLocalPids(stdout, port)
+        resolve(local[0] || -1)
       })
     } else {
       // Linux/Mac
@@ -550,13 +422,11 @@ const readConfig = () => {
     const content = readConfigTextWithBackup(configPath)
     return ini.parse(content)
   } catch (error) {
-    console.error('读取配置失败:', error)
+    diagnostics.error('L023', '读取配置失败:', error)
     return {
       sys: {
         server_port: DEFAULT_SERVER_PORT_STRING,
         callback: '',
-        callback_encrypt: 'false',
-        callback_encrypt_key: '',
         open_log: 'true',
         save_log: 'true',
         auto_check_update: 'true',
@@ -590,7 +460,7 @@ const saveConfig = (config) => {
     }
     return { success: true, backupPath: result.backupPath }
   } catch (error) {
-    console.error('保存配置失败:', error)
+    diagnostics.error('L024', '保存配置失败:', error)
     return { success: false, msg: error.message }
   }
 }
@@ -610,16 +480,6 @@ const getTimedCheckPorts = () => {
       .filter((p) => !Number.isNaN(p) && p > 0)
   } catch (e) {
     return []
-  }
-}
-
-/** 企微 Hook HTTP 是否可访问（不要求已登录） */
-const isWecomHookReachable = async (robotPort) => {
-  try {
-    const data = await postToVWorkApi(robotPort, { type: 1000 }, { timeout: 5000 })
-    return data != null
-  } catch {
-    return false
   }
 }
 
@@ -646,83 +506,52 @@ const probeLoggedIn = async (robotPort) => {
  * 对单端口执行注入（含互斥锁与单端口冷却）
  * @returns {Promise<boolean>} 是否已发起注入
  */
-const runInjectForPort = async (robotPort, serverPort, injectKey, reason) => {
-  if (isAutoInjectReason(reason) && crashRecoveryAutoInjectSuspended) {
-    console.log(`[注入] 自动恢复已暂停，跳过端口 ${robotPort}（${reason}）`)
-    return { success: false, output: '自动恢复已暂停', blocked: true }
-  }
+const runInjectForPort = async (robotPort, reason) => {
   if (injectInProgressPorts.has(robotPort)) {
-    console.log(`[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
+    diagnostics.info('L026', `[注入] 端口 ${robotPort} 注入进行中，跳过（${reason}）`)
     return { success: false, output: '该端口注入进行中', blocked: true }
   }
 
-  const safety = await canInjectPort(robotPort, { reason })
-  if (!safety.allowed) {
-    console.log(`[注入] 端口 ${robotPort} 跳过（${reason}）: ${safety.reason}`)
-    return { success: false, output: safety.reason, blocked: true }
-  }
-
+  // 必须在首次 await 前占用端口锁，避免两个调用同时通过前置检查。
   injectInProgressPorts.add(robotPort)
   try {
-    const { wecomVersion } = readInjectConfig()
-    const result = await runInjectToolService({
-      port: robotPort,
-      serverPort,
-      key: injectKey,
-      wecomVersion
-    })
+    const running = await discoverWecom()
+    if (running.unmanagedPids.length) {
+      return { success: false, blocked: true, output: '检测到已运行但尚未接入框架的企微，请从企微托盘菜单完全退出后，再在框架中添加；框架不会自动结束您的企微。' }
+    }
+    const safety = await canInjectPort(robotPort)
+    if (!safety.allowed) {
+      return { success: false, output: safety.reason, blocked: true }
+    }
+    const callbackUrl = await instanceCallbacks.prepare(robotPort, readInjectSettings(getInjectBinDir()))
+    const result = await runInjectToolService({ port: robotPort, callbackUrl })
+    if (!result.success) await instanceCallbacks.remove(robotPort)
     const ok = result.success === true
     recordInjectAttempt(robotPort, ok)
-    console.log(
-      `[注入] 端口 ${robotPort} 已执行注入（${reason}，${wecomVersion}），成功: ${ok}${result.output ? `，输出: ${String(result.output).trim().slice(0, 200)}` : ''}`
-    )
+    const summary = require('./commons/injectConsole.cjs').formatInjectSummary({
+      port: robotPort, reason, success: ok, callbackUrl
+    })
+    if (ok) diagnostics.important('L027', summary)
+    else diagnostics.error('L027', summary, '\n' + (result.output || '注入工具未提供错误详情'))
     if (ok) {
       markPortStabilizing(robotPort)
-      if (isAutoInjectReason(reason)) {
-        notifyWecomInjectStarted(robotPort, reason)
-      }
     }
     return { success: ok, output: result.output || '' }
   } catch (e) {
     recordInjectAttempt(robotPort, false)
-    console.error(`[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
+    diagnostics.error('L028', `[注入] 端口 ${robotPort} 执行失败（${reason}）:`, e.message)
     return { success: false, output: e.message }
   } finally {
     injectInProgressPorts.delete(robotPort)
   }
 }
 
-/**
- * 单次执行：对配置中的每个企微端口检查登录状态；
- * 仅在「未登录且进程/Hook 均已不可用」时才注入，避免误判重复启动。
- */
-const timedGetLoginStatus = async ({ fromCrashRecovery = false } = {}) => {
-  const { serverPort, key: injectKey } = readInjectConfig()
-  const ports = getTimedCheckPorts()
-  if (ports.length === 0) return
-
-  for (const robotPort of ports) {
-    const loggedIn = await probeLoggedIn(robotPort)
-    if (loggedIn) {
-      resetCrashRecoveryProtection()
-      continue
-    }
-
-    const safeToInject = await isPortSafeForCrashRecoveryInject(robotPort)
-    if (!safeToInject) {
-      const pid = await findPidByPort(robotPort)
-      console.log(
-        `[登录探测] 端口 ${robotPort} 未登录但进程或 Hook 仍存活（pid=${pid}），跳过注入`
-      )
-      continue
-    }
-
-    if (fromCrashRecovery) {
-      await runInjectForPort(robotPort, serverPort, injectKey, '崩溃恢复')
-    } else {
-      console.log(
-        `[登录探测] 端口 ${robotPort} 未登录且进程已退出，不自动拉起企微；请在「企微管理」中手动添加`
-      )
+/** 定时探测只记录状态，不结束进程或自动注入。 */
+const { singleFlight } = require('./commons/singleFlight.cjs')
+const timedGetLoginStatus = async () => {
+  for (const robotPort of getTimedCheckPorts()) {
+    if (!(await probeLoggedIn(robotPort))) {
+      diagnostics.info('L030', `[登录探测] 端口 ${robotPort} 暂未确认登录，请在企微管理中检查`)
     }
   }
 }
@@ -735,92 +564,12 @@ const startTimedLoginStatusCheck = () => {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
   }
-  loginStatusCheckInterval = setInterval(() => {
-    if (Date.now() < timedCheckPausedUntil) {
-      return
-    }
-    timedGetLoginStatus().catch((e) => {
-      console.error('定时检查登录状态异常:', e.message)
+  loginStatusCheckInterval = setInterval(singleFlight(async () => {
+    await timedGetLoginStatus().catch((e) => {
+      diagnostics.error('L031', '定时检查登录状态异常:', e.message)
     })
-  }, TIMED_CHECK_INTERVAL_MS)
-  console.log(`定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
-}
-
-const recoverWecomAfterCrash = async () => {
-  const config = readConfig()
-  const frameworkPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
-  const recovery = createWecomRecovery({ readConfig })
-  const result = await recovery.recover({
-    callbackUrl: `http://127.0.0.1:${frameworkPort}/msg`
-  })
-  if (!result.success) {
-    throw new Error(result.message || '企业微信恢复失败')
-  }
-  console.log(`[企微崩溃] ${result.message}`)
-  return result
-}
-
-/** 崩溃后按退避策略延迟触发注入恢复 */
-const scheduleCrashRecovery = () => {
-  if (crashRecoveryTimer) {
-    return
-  }
-  if (crashRecoveryAutoInjectSuspended) {
-    console.log('[企微崩溃] 检测到崩溃弹窗，自动恢复已暂停，仅关闭弹窗不再注入')
-    return
-  }
-  const delayMs =
-    CRASH_RECOVERY_DELAYS_MS[
-      Math.min(crashRecoveryBackoffLevel, CRASH_RECOVERY_DELAYS_MS.length - 1)
-    ]
-  timedCheckPausedUntil = Date.now() + delayMs
-  console.log(
-    `[企微崩溃] 已检测到崩溃，${delayMs / 1000} 秒后尝试注入恢复（退避级别 ${crashRecoveryBackoffLevel}）`
-  )
-  crashRecoveryTimer = setTimeout(() => {
-    crashRecoveryTimer = null
-    console.log('[企微崩溃] 退避结束，开始重启企微并重连 Agent')
-    recoverWecomAfterCrash()
-      .catch((e) => {
-        console.error('[企微崩溃] 自动恢复失败:', e.message)
-      })
-      .finally(async () => {
-        await recordCrashRecoveryCycleResult()
-        if (!crashRecoveryAutoInjectSuspended) {
-          crashRecoveryBackoffLevel = Math.min(
-            crashRecoveryBackoffLevel + 1,
-            CRASH_RECOVERY_DELAYS_MS.length - 1
-          )
-        }
-      })
-  }, delayMs)
-}
-
-/**
- * Windows：周期性查找企微「错误报告」窗口并发送关闭，随后按退避策略触发注入恢复
- */
-const startWecomCrashDialogWatch = () => {
-  if (process.platform !== 'win32') return
-  if (wecomCrashDialogInterval) {
-    clearInterval(wecomCrashDialogInterval)
-    wecomCrashDialogInterval = null
-  }
-  const intervalMs = 8000
-  wecomCrashDialogInterval = setInterval(() => {
-    pollCrashDialogOnce({
-      onCrash: (closed) => {
-        console.log(`[企微崩溃] 已关闭 ${closed} 个企业微信错误报告窗口`)
-        scheduleCrashRecovery()
-      }
-    })
-      .then((closed) => {
-        if (closed <= 0) return
-      })
-      .catch((e) => {
-        console.warn('[企微崩溃] 监视脚本异常:', e.message)
-      })
-  }, intervalMs)
-  console.log(`企微崩溃报告窗口监视已启动，每 ${intervalMs / 1000} 秒检查一次`)
+  }), TIMED_CHECK_INTERVAL_MS)
+  diagnostics.info('L032', `定时检查登录状态已启动，间隔 ${TIMED_CHECK_INTERVAL_MS / 1000} 秒`)
 }
 
 /** 与应用窗口相同的图标路径，供托盘等复用 */
@@ -842,7 +591,7 @@ function destroyTray() {
     try {
       tray.destroy()
     } catch (e) {
-      console.warn('destroyTray:', e.message)
+      diagnostics.warn('L040', '释放托盘图标失败：', e.message)
     }
     tray = null
   }
@@ -851,12 +600,12 @@ function destroyTray() {
 function createTrayIconImage() {
   const iconPath = resolveAppIconPath()
   if (!fs.existsSync(iconPath)) {
-    console.warn('托盘图标文件不存在:', iconPath)
+    diagnostics.warn('L041', '托盘图标文件不存在:', iconPath)
     return nativeImage.createEmpty()
   }
   let image = nativeImage.createFromPath(iconPath)
   if (image.isEmpty()) {
-    console.warn('托盘图标无法解码:', iconPath)
+    diagnostics.warn('L042', '托盘图标无法解码:', iconPath)
     return nativeImage.createEmpty()
   }
   // Windows 通知区像素小，缩放到 16 避免显示为空白方块
@@ -911,7 +660,7 @@ function ensureTray() {
     })
     return true
   } catch (e) {
-    console.error('创建系统托盘失败:', e)
+    diagnostics.error('L043', '创建系统托盘失败:', e)
     return false
   }
 }
@@ -922,7 +671,7 @@ function ensureTray() {
 function minimizeToTray() {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (!ensureTray()) {
-    console.warn('托盘不可用，退化为普通最小化到任务栏')
+    diagnostics.warn('L044', '托盘不可用，退化为普通最小化到任务栏')
     mainWindow.minimize()
     return
   }
@@ -962,12 +711,12 @@ function createWindow() {
   }
 
   const loadPackagedFrontend = () => {
-    console.log('Loading production build from:', distPath)
+    diagnostics.info('L045', '正在加载应用界面：', distPath)
     if (fs.existsSync(distPath)) {
       mainWindow.loadFile(distPath)
     } else {
-      console.error('dist/index.html 不存在，请先执行 npm run build')
-      mainWindow.loadURL('http://localhost:5173')
+      diagnostics.error('L046', '应用界面文件缺失，请重新安装；开发环境请先执行 npm run build')
+      mainWindow.loadURL(devServerUrl)
     }
   }
 
@@ -978,12 +727,12 @@ function createWindow() {
 
     const checkServer = () => {
       const http = require('http')
-      console.log(`Checking Vite server... (attempt ${retryCount + 1}/${maxRetries})`)
+      diagnostics.info('L047', `正在等待开发服务就绪（第 ${retryCount + 1}/${maxRetries})`)
 
-      const req = http.get('http://localhost:5173', (res) => {
+      const req = http.get(devServerUrl, (res) => {
         if (res.statusCode === 200) {
-          console.log('Loading http://localhost:5173')
-          mainWindow.loadURL('http://localhost:5173')
+          diagnostics.info('L048', `正在连接本地开发界面 ${devServerUrl}`)
+          mainWindow.loadURL(devServerUrl)
         } else {
           retryCount++
           if (retryCount < maxRetries) {
@@ -1021,27 +770,24 @@ function createWindow() {
 
   // 监听页面加载错误
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    console.error('Failed to load:', validatedURL, 'Error:', errorCode, errorDescription)
+    diagnostics.error('L049', '界面加载失败，请重启应用；地址：', validatedURL, 'Error:', errorCode, errorDescription)
   })
 
   mainWindow.webContents.on('did-finish-load', () => {
-    console.log('Page loaded successfully')
-    getWecomAgentManager().isHealthy().then((healthy) => {
-      if (healthy) notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
-    }).catch(() => {})
+    diagnostics.info('L050', '应用界面加载完成')
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) {
       shell.openExternal(url)
     } else {
-      console.warn('[security] 阻止打开外部窗口:', url)
+      diagnostics.warn('L051', '[security] 阻止打开外部窗口:', url)
     }
     return { action: 'deny' }
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (isDev && url.startsWith('http://localhost:5173')) return
+    if (isDev && new URL(url).origin === new URL(devServerUrl).origin) return
     if (url.startsWith('file://')) return
     event.preventDefault()
     if (isAllowedExternalUrl(url)) {
@@ -1110,7 +856,7 @@ function createWindow() {
     mainWindow = null
     if (expressServers.length > 0) {
       closeAllExpressServers().catch((e) => {
-        console.error('关闭Express失败:', e)
+        diagnostics.error('L052', '关闭Express失败:', e)
       })
     }
     if (messageServer) {
@@ -1188,8 +934,46 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
+  const { setDiagnosticSink } = require('./commons/diagnostics.cjs')
+  const { loadReportPublicKey, sealReport } = require('./commons/reportEncryption.cjs')
+  const reportKey = loadReportPublicKey()
+  const writer = require('./services/diagnosticFile').createDiagnosticWriter(path.join(app.getPath('userData'), 'diagnostics'), { publicKey: reportKey })
+  setDiagnosticSink(writer.write)
+  try {
+    await require('./services/legacyDiagnostics').migrateLegacyDiagnostics(app.getPath('userData'), reportKey)
+  } catch (error) {
+    diagnostics.error('D003', '旧版诊断日志迁移未完成，需开发人员检查旧文件', error)
+  }
+  let exportingReport = false
+  ipcMain.handle('export-diagnostic-report', async (event) => {
+    assertMainWindow(event, mainWindow)
+    if (exportingReport) return { success: false, message: '正在导出，请稍候' }
+    exportingReport = true
+    try {
+      const choice = await dialog.showSaveDialog(mainWindow, {
+        title: '导出故障报告', defaultPath: `故障报告-${new Date().toISOString().replace(/[:.]/g, '-')}.vdiag`,
+        filters: [{ name: '加密故障报告', extensions: ['vdiag'] }]
+      })
+      if (choice.canceled || !choice.filePath) return { canceled: true }
+      const payload = { kind: 'report', version: 1, createdAt: new Date().toISOString(), appVersion: app.getVersion(), platform: process.platform, arch: process.arch, logs: await writer.snapshot() }
+      const encrypted = sealReport(payload, reportKey)
+      // 临时文件中也只有密文；成功后原子替换用户选择的导出文件。
+      require('./commons/atomicFile').writeTextAtomic(choice.filePath, JSON.stringify(encrypted))
+      return { success: true }
+    } catch (error) {
+      diagnostics.error('D002', '故障报告导出失败', error)
+      return { success: false, message: '导出失败，请选择可写入的文件夹后重试' }
+    } finally { exportingReport = false }
+  })
+  ipcMain.on('write-diagnostic', (event, record) => {
+    try {
+      assertMainWindow(event, mainWindow)
+      if (record && ['warn', 'error'].includes(record.level)) writer.write(record)
+    } catch { /* 非主窗口的诊断消息不接收 */ }
+  })
+  if (!gotSingleInstanceLock) return
 
-  initCrashDiagnostics({ getMainWindow: () => mainWindow })
+  initCrashDiagnostics({ getMainWindow: () => mainWindow, writer })
   initDesktopNotifications({
     icon: resolveAppIconPath(),
     focusMainWindow
@@ -1199,6 +983,15 @@ app.whenReady().then(async () => {
     focusMainWindow()
   })
 
+  try {
+    const result = await require('./services/wecomInstallations').autoSaveWecomInstallation(getInjectBinDir())
+    diagnostics.info('C008', '启动时自动检测企微安装路径', result)
+    if (result.status === 'multiple') diagnostics.warn('C009', '找到多个兼容企微安装位置，请在设置中选择客户端路径')
+    if (result.status === 'not-found') diagnostics.warn('C010', '未找到兼容企微安装位置，已保留原客户端路径')
+  } catch (error) {
+    diagnostics.warn('C011', '启动时自动配置企微路径失败，保留原配置并继续启动', error)
+  }
+
   createWindow()
 
   startMessageServer()
@@ -1207,7 +1000,7 @@ app.whenReady().then(async () => {
   const frameworkPort = parseInt(config.sys?.server_port || DEFAULT_SERVER_PORT, 10)
   const expressResult = await startExpressServer(frameworkPort)
   if (!expressResult.success) {
-    console.error('启动Express失败:', expressResult.message)
+    diagnostics.error('L053', '启动Express失败:', expressResult.message)
     if (!/EADDRINUSE|已被占用|address already in use/i.test(expressResult.message || '')) {
       notifyPortError({
         port: frameworkPort,
@@ -1217,24 +1010,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  const agentManager = getWecomAgentManager()
-  const agentResult = await agentManager.ensureStarted({
-    callbackUrl: expressResult.success
-      ? `http://127.0.0.1:${frameworkPort}/msg`
-      : undefined
-  })
-  if (agentResult.success) {
-    console.log(`[企微 Agent] 已托管，HTTP 端口 ${AGENT_HTTP_PORT}`)
-    notifyWecomInjectStarted(AGENT_HTTP_PORT, '框架自动启动')
-  } else {
-    notifyPortError({
-      port: AGENT_HTTP_PORT,
-      service: '企微 Agent',
-      detail: agentResult.output || '企微 Agent 启动失败'
-    })
-  }
-
-  startWecomCrashDialogWatch()
+  startTimedLoginStatusCheck()
 
   // 如果是生产环境且开启了自动更新，则启动时检查更新
   if (app.isPackaged) {
@@ -1248,7 +1024,7 @@ app.whenReady().then(async () => {
       // 延迟3秒后检查更新，避免影响应用启动速度
       setTimeout(() => {
         checkForUpdatesWithFallback().catch((err) => {
-          console.error('自动检查更新失败:', err)
+          diagnostics.error('L054', '自动检查更新失败:', err)
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-status', {
               status: 'error',
@@ -1274,23 +1050,25 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  void instanceCallbacks.close()
   destroyTray()
-  getWecomAgentManager().stop()
   if (loginStatusCheckInterval) {
     clearInterval(loginStatusCheckInterval)
     loginStatusCheckInterval = null
   }
-  if (wecomCrashDialogInterval) {
-    clearInterval(wecomCrashDialogInterval)
-    wecomCrashDialogInterval = null
-  }
-  if (crashRecoveryTimer) {
-    clearTimeout(crashRecoveryTimer)
-    crashRecoveryTimer = null
-  }
 })
 
 // IPC 通信处理
+// 将页面外观同步到原生窗口标题栏；system 保留系统自动切换能力。
+ipcMain.handle('set-native-theme', (event, mode) => {
+  assertMainWindow(event, mainWindow)
+  if (!['light', 'dark', 'system'].includes(mode)) {
+    throw new Error('无效的外观模式')
+  }
+  nativeTheme.themeSource = mode
+  return { success: true }
+})
+
 ipcMain.handle('respond-close-confirm', (event, action) => {
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     return { ok: false }
@@ -1307,64 +1085,132 @@ ipcMain.handle('respond-close-confirm', (event, action) => {
   return { ok: true }
 })
 
+const { readInjectSettings, saveInjectSettings } = require('./services/injectSettings')
+const injectSettingsDir = getInjectBinDir
+
+ipcMain.handle('find-wecom-installations', async event => {
+  assertMainWindow(event, mainWindow)
+  try {
+    let host = ''
+    try { host = readInjectSettings(injectSettingsDir()).host || '' } catch { /* 仍可查找安装位置 */ }
+    const candidates = await require('./services/wecomInstallations').findWecomInstallations(injectSettingsDir(), host)
+    return { success: true, candidates }
+  } catch (error) {
+    diagnostics.warn('C007', '自动查找企微安装位置失败', error)
+    return { success: false, msg: '自动查找失败，请重试或手动填写企微客户端路径' }
+  }
+})
+
+ipcMain.handle('discover-running-wecom', async event => {
+  assertMainWindow(event, mainWindow)
+  try { return { success: true, ...await discoverWecom() } }
+  catch (error) {
+    diagnostics.warn('C006', '检测已运行企微失败', error)
+    return { success: false, message: '无法检测正在运行的企微，请稍后点击重新检测；请勿重复启动同一账号。' }
+  }
+})
+
+async function listCallbackInstances() {
+  const rows = new Map(instanceCallbacks.ports().map(port => [port, { port }]))
+  for (const row of readIni().login_info || []) rows.set(Number(row.port), row)
+  const result = []
+  for (const [port, row] of rows) {
+    if (!Number.isInteger(port) || port <= 1024 || port > 10000) continue
+    const pid = await findPidByPort(port)
+    if (pid <= 0 || (row.pid && Number(row.pid) !== pid)) continue
+    const userId = row.user_id == null || row.user_id === '-' ? '' : String(row.user_id).trim()
+    if (userId) await instanceCallbacks.applySaved(port, userId)
+    let restored
+    try { restored = instanceCallbacks.get(port, userId) }
+    catch (error) { diagnostics.error('C005', '读取账号回调配置失败', error); restored = { storageWarning: '读取 callbackSetting.json 失败，请检查文件格式或读取权限' } }
+    result.push({ port, pid, user_id: userId, nick_name: row.nick_name || '', ...restored })
+  }
+  return result
+}
+ipcMain.handle('list-callback-instances', async event => {
+  assertMainWindow(event, mainWindow)
+  return listCallbackInstances()
+})
+ipcMain.handle('update-instance-callback', async (event, { port, settings, pid, user_id }) => {
+  assertMainWindow(event, mainWindow)
+  try {
+    const rows = await listCallbackInstances()
+    const row = rows.find(row => row.port === Number(port) && row.pid === Number(pid) && row.user_id && row.user_id === user_id)
+    if (!row) throw new Error('无法确认当前企微账号，请登录企微并刷新实例列表后重试')
+    const updated = await instanceCallbacks.update(port, settings, row.user_id)
+    return { success: true, settings: updated, warning: instanceCallbacks.get(port)?.storageWarning || '' }
+  } catch (error) {
+    diagnostics.error('C001', '更新企微实例回调配置失败', error)
+    return { success: false, msg: error.response?.data?.msg || error.message }
+  }
+})
+ipcMain.handle('save-inject-host', (event, host) => {
+  assertMainWindow(event, mainWindow)
+  try { saveInjectSettings(injectSettingsDir(), { host }); return { success: true } }
+  catch (error) { return { success: false, msg: error.message } }
+})
+
+ipcMain.handle('read-inject-settings', (event) => {
+  assertMainWindow(event, mainWindow)
+  try { return { success: true, data: readInjectSettings(injectSettingsDir()) } }
+  catch (error) { return { success: false, msg: error.message } }
+})
+
 ipcMain.handle('read-config', () => {
   const config = readConfig()
+  const sys = { ...(config.sys || {}) }
   return {
     ...config,
     sys: {
-      ...(config.sys || {}),
-      inject_key: DEFAULT_INJECT_KEY
+      ...sys,
+      callback: getBusinessCallbackUrl()
     }
   }
 })
 
-ipcMain.handle('save-config', (event, config) => {
+ipcMain.handle('save-config', async (event, config) => {
   assertMainWindow(event, mainWindow)
   const prev = readConfig()
+  const mergedSys = { ...(prev.sys || {}), ...((config && config.sys) || {}) }
+  // 注入相关字段只属于 bin/settings.json，不再写回 INI。
+  for (const key of ['callback', 'callback_encrypt', 'callback_encrypt_key', 'callback_encrypt_private_key',
+    'inject_key', 'wecom_version', 'wecom_version_selected', 'wecom_exe_path', 'wecom_exe_path_v5']) delete mergedSys[key]
   const merged = {
-    sys: { ...(prev.sys || {}), ...((config && config.sys) || {}) },
+    sys: mergedSys,
     custom: { ...(prev.custom || {}), ...((config && config.custom) || {}) }
   }
-  return saveConfig(applyListenPortChangeToConfig(prev, merged))
+  let rollback
+  try {
+    if (config.injectTool) {
+      rollback = saveInjectSettings(injectSettingsDir(), config.injectTool)
+    }
+    const result = saveConfig(applyListenPortChangeToConfig(prev, merged))
+    if (!result.success && rollback) rollback()
+    if (!result.success) return result
+    return result
+  } catch (error) {
+    if (rollback) rollback()
+    return { success: false, msg: error.message }
+  }
 })
 
-ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
+// 只供框架界面调用固定操作，不接收 URL，也不经框架 HTTP 端口转发。
+ipcMain.handle('call-framework-wecom', async (event, input) => {
   assertMainWindow(event, mainWindow)
-  if (!isAllowedCallApiUrl(url)) {
-    return { success: false, msg: '仅允许访问本机 HTTP 接口 (127.0.0.1 / localhost)' }
-  }
   try {
-    // 仅 http://127.0.0.1:{企微端口}/api 走直连；带路径的为框架 REST（如 /api/message/text）
-    const directWecomMatch = url.match(/^http:\/\/127\.0\.0\.1:(\d+)\/api\/?$/)
-    const directWecomPort = directWecomMatch ? parseInt(directWecomMatch[1], 10) : null
-
-    let responseData
-    if (directWecomPort && method === 'POST' && data) {
-      responseData = await postToVWorkApi(directWecomPort, data)
-    } else {
-      const isAppletCall =
-        (data && Number(data.type) === 3006) ||
-        (typeof url === 'string' && url.includes('/api/message/applet'))
-      const isUserTagsCall = typeof url === 'string' && url.includes('/api/tag/user-tags')
-      const isMessageCall = typeof url === 'string' && url.includes('/api/message/')
-      // 与 wecomApiClient 默认 30s Hook 超时对齐；外层过短会导致「消息已发出但设置页报 timeout」
-      const frameworkTimeout = isAppletCall
-        ? 180000
-        : (isUserTagsCall ? 120000 : (isMessageCall ? 35000 : 10000))
-      const response = await axios({
-        method,
-        url,
-        data,
-        timeout: frameworkTimeout,
-        proxy: false,
-        family: 4
-      })
-      responseData = response.data
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('企微调用参数无效')
+    const { port, ...request } = input
+    const logPort = Number(port)
+    if (!/^\d+$/.test(String(port)) || !Number.isInteger(logPort) || logPort <= 1024 || logPort > 65535) {
+      throw new Error('请选择有效的企微实例 HTTP 端口')
     }
+    const apiConfig = readConfig()
+    const frameworkPort = Number(apiConfig.sys?.server_port || DEFAULT_SERVER_PORT)
+    const frameworkPorts = new Set([frameworkPort, ...collectHookCompatListenPorts(apiConfig, frameworkPort)])
+    if (frameworkPorts.has(logPort)) throw new Error('请选择企微实例端口，不能使用框架监听端口')
+    const responseData = await callFrameworkWecomApi(logPort, request)
 
-    const logPort = directWecomPort || (data && data.port != null ? parseInt(data.port, 10) : null)
-
-    // 如果成功获取响应，记录日志并发送回调
+    // 如果成功获取响应，仅记录本地日志；业务回调由企微原生推送
     if (logPort && responseData) {
       try {
         // 读取配置
@@ -1381,104 +1227,9 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           }
         }
         
-        // 构建API调用日志数据（框架 REST 请求体常无 type，从 URL 推断）
-        const { resolveApiTypeForLog } = require('./configs/apiLogResolve')
-        const apiType = resolveApiTypeForLog(url, data)
-        // 与 electron/routes 保持一致，用于 API 调用日志展示
-        const apiTypeNames = {
-          // login
-          1000: '获取登录状态',
-          1001: '获取登录二维码',
-          1002: '获取个人信息',
-          1003: '退出登录',
-          1004: '获取个人二维码',
-          1005: '输入登录验证码',
-          // contact
-          2000: '获取联系人列表',
-          2001: '获取好友列表',
-          2002: '获取群列表',
-          2003: '获取群成员列表',
-          2004: '获取公司列表',
-          2005: '获取部门列表',
-          // message
-          3000: '发送文本消息',
-          3001: '发送图片消息',
-          3002: '发送GIF表情',
-          3003: '发送文件消息',
-          3004: '发送视频消息',
-          3005: '发送名片',
-          3006: '发送小程序',
-          3007: '发送视频号',
-          3008: '发送卡片链接',
-          3009: '发送群@消息',
-          3010: '发送位置消息',
-          3011: '发送语音消息',
-          // friend
-          4000: '添加好友',
-          4001: '删除好友',
-          4002: '同意好友请求',
-          4003: '设置好友备注',
-          4004: '设置好友描述',
-          4005: '设置好友公司',
-          4006: '设置好友手机号',
-          4007: '本地查询好友信息',
-          4008: '网络查询陌生人信息',
-          4009: '添加好友【网络查询】',
-          // group
-          5000: '创建群聊【外部】',
-          5001: '创建群聊【内部】',
-          5002: '修改群名称',
-          5003: '发送群公告',
-          5004: '邀请好友进群（40人以下）',
-          5005: '邀请好友进群（40人以上）',
-          5006: '移除群成员',
-          5007: '获取群二维码',
-          5008: '获取群信息',
-          5009: '获取欢迎语列表',
-          5010: '获取欢迎语',
-          5011: '设置欢迎语',
-          5012: '删除欢迎语',
-          5013: '添加管理员',
-          5014: '删除管理员',
-          5015: '转让群主',
-          5016: '退出群聊',
-          5017: '解散群聊',
-          5018: '允许/禁止修改群名',
-          5019: '开启/关闭邀请确认',
-          // tag
-          6000: '获取标签组列表',
-          6001: '添加标签',
-          6002: '修改标签',
-          6003: '删除标签',
-          6004: '一个好友打多个标签',
-          6005: '一个标签打多个好友',
-          6006: '获取标签下的联系人',
-          6007: '删除标签下的联系人',
-          'user-tags': '获取用户标签',
-          // settings
-          7000: '开启/关闭自动更新',
-          7001: '开启/关闭自动登录',
-          7002: '开启/关闭消息免打扰',
-          7003: '开启/关闭自动下载',
-          // id-convert
-          8000: '企业用户ID转开放平台ID',
-          8001: '企业群ID转开放平台ID',
-          8002: '开放平台ID转企业用户ID',
-          8003: '开放平台ID转企业群ID',
-          // cdn
-          9000: 'CDN上传文件',
-          9001: 'CDN下载企微图片',
-          9002: 'CDN下载视频',
-          9003: 'CDN下载文件',
-          9004: 'CDN下载个微文件',
-          // other
-          10000: '清空聊天记录',
-          10003: '语音转文字',
-          10004: '获取当前微信进程的PID',
-          10005: '获取当前聊天窗口信息'
-        }
-        const apiName = apiTypeNames[apiType] || `API调用(type:${apiType})`
-        
+        const apiType = request.type
+        const apiName = FRAMEWORK_API_NAMES[apiType]
+
         // 检查授权是否有效
         const expire = target_item ? target_item.expire : ''
         const valid_auth = validAuthDatetime(expire, target_item?.auth_active)
@@ -1525,23 +1276,13 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
           sys: false
         }
         
-        // 构建用于回调的完整数据（包含详细请求和响应）
-        const callbackLogData = {
-          type: 'api_call',
-          api_name: apiName,
-          port: logPort,
-          user_id: user_id,
-          response_data: responseDataForLog,
-          time_stamp: displayLogData.time_stamp
-        }
-        
         // 如果应该记录日志，推送消息到Electron主进程
         if (shouldLog) {
           try {
             const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
             await axios.post(MESSAGE_SERVER_URL, displayLogData, messageServerAxiosConfig({ timeout: 1000 }))
           } catch (error) {
-            console.error(`推送API调用日志到Electron失败: ${error.message}`)
+            diagnostics.error('L055', `推送API调用日志到Electron失败: ${error.message}`)
           }
           
           // 如果开启了保存日志功能，保存日志到文件
@@ -1555,53 +1296,20 @@ ipcMain.handle('call-api', async (event, { url, method = 'POST', data }) => {
               nick_name: target_item ? target_item.nick_name : ''
             }
             saveLogToFile(fileLogData).catch(err => {
-              console.error(`保存API调用日志到文件失败: ${err.message}`)
+              diagnostics.error('L056', `保存API调用日志到文件失败: ${err.message}`)
             })
           }
         }
         
-        // 判断是否应该发送回调：
-        // 1. 登录相关的API（1000, 1002）无论授权状态如何都发送回调
-        // 2. 其他API需要授权有效才发送回调
-        const shouldSendCallback = LOGIN_RELATED_API_TYPES.has(apiType) || valid_auth
-        
-        if (shouldSendCallback) {
-          if (ini_config.callback && ini_config.callback.includes('http') && ini_config.callback.includes('://')) {
-            const callbackResult = await sendCallback(ini_config.callback, callbackLogData)
-            
-            // 如果开启了日志且回调失败，将回调失败信息推送到前端
-            if (ini_config.open_log && !callbackResult.success) {
-              const callbackErrorLogData = {
-                content: callbackResult.message,
-                sys: true,
-                time_stamp: Math.floor(Date.now() / 1000)
-              }
-              
-              try {
-                const MESSAGE_SERVER_URL = process.env.MESSAGE_SERVER_URL || 'http://127.0.0.1:9999/message'
-                await axios.post(MESSAGE_SERVER_URL, callbackErrorLogData, messageServerAxiosConfig({ timeout: 1000 }))
-              } catch (error) {
-                console.error(`推送回调日志到Electron失败: ${error.message}`)
-              }
-              
-              // 如果开启了保存日志功能，保存回调日志到文件
-              if (ini_config.save_log) {
-                saveLogToFile(callbackErrorLogData).catch(err => {
-                  console.error(`保存回调日志到文件失败: ${err.message}`)
-                })
-              }
-            }
-          }
-        }
       } catch (logError) {
         // 日志记录失败不影响API调用结果
-        console.error(`记录API调用日志失败: ${logError.message}`)
+        diagnostics.error('L059', `记录API调用日志失败: ${logError.message}`)
       }
     }
     
     return { success: true, data: responseData }
   } catch (error) {
-    return { success: false, msg: error.message, data: null }
+    return { success: false, msg: error.message, code: error.code, reason: error.reason, data: null }
   }
 })
 
@@ -1612,16 +1320,13 @@ ipcMain.handle('check-port', async (event, port) => {
 
 // 查找可用端口（随机生成并检查是否被占用，范围 1025～10000）
 ipcMain.handle('find-available-port', async (event, startPort, endPort) => {
-  return { port: AGENT_HTTP_PORT }
+  return findAvailablePortForInject(startPort, endPort)
 })
 
-// 执行注入工具（统一走 runInjectForPort，含重复注入防护）
-ipcMain.handle('run-inject-tool', async (event, { port, serverPort, key }) => {
-  const sp = parseInt(serverPort, 10) || readInjectConfig().serverPort
-  const result = await getWecomAgentManager().ensureStarted({
-    callbackUrl: `http://127.0.0.1:${sp}/msg`
-  })
-  return { ...result, port: AGENT_HTTP_PORT }
+// 注入分配独立回调接收端口；宿主路径由 bin/settings.json 提供。
+ipcMain.handle('run-inject-tool', async (event, { port }) => {
+  assertMainWindow(event, mainWindow)
+  return runInjectForPort(Number(port), '手动')
 })
 
 ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {
@@ -1629,8 +1334,14 @@ ipcMain.handle('mark-wecom-port-stabilizing', (_event, port) => {
   return { success: true }
 })
 
-ipcMain.handle('mark-wecom-port-logged-in', (_event, port) => {
+ipcMain.handle('mark-wecom-port-logged-in', async (event, port) => {
+  assertMainWindow(event, mainWindow)
   markPortLoggedIn(port)
+  const row = (readIni().login_info || []).find(item => Number(item.port) === Number(port))
+  if (row?.user_id && row.user_id !== '-') {
+    const result = await instanceCallbacks.applySaved(port, String(row.user_id))
+    return { success: true, ...result }
+  }
   return { success: true }
 })
 
@@ -1639,24 +1350,14 @@ ipcMain.handle('mark-wecom-port-account-switch', (_event, port) => {
   return { success: true }
 })
 
-ipcMain.handle('reset-crash-recovery-protection', () => {
-  resetCrashRecoveryProtection()
-  return { success: true }
-})
-
 // 获取授权信息
 const { formatAuthFetchError } = require('./commons/authFetchError')
-const { getPolarBearBaseUrl, buildPolarBearAuthHeaders } = require('./configs/polarBearBackend')
-const { bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
+const { getAuthInfo, bindCard, unbindCard, convertCardByWxid } = require('./commons/polarBearClient.cjs')
 
-ipcMain.handle('get-auth-info', async (event, wxid) => {
-  const authUrl = `${getPolarBearBaseUrl()}/polarBear/getAuthInfo?wxid=${encodeURIComponent(wxid)}`
+ipcMain.handle('get-auth-info', async (event, wxid, port) => {
   try {
-    const response = await axios.get(authUrl, {
-      timeout: 10000,
-      headers: buildPolarBearAuthHeaders()
-    });
-    const result = { success: true, data: response.data }
+    const data = await getAuthInfo(wxid, port)
+    const result = { success: true, data }
     
     // 读取配置，检查是否开启日志
     const config = readConfig()
@@ -1681,7 +1382,7 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
       
       // 异步写入日志，不阻塞返回值
       saveLogToFile(logData).catch(err => {
-        console.error(`保存授权刷新日志失败: ${err.message}`)
+        diagnostics.error('L060', `保存授权刷新日志失败: ${err.message}`)
       })
       
       // 同时推送到前端显示（如果开启了日志推送）
@@ -1715,7 +1416,7 @@ ipcMain.handle('get-auth-info', async (event, wxid) => {
       
       // 异步写入日志，不阻塞返回值
       saveLogToFile(logData).catch(err => {
-        console.error(`保存授权刷新错误日志失败: ${err.message}`)
+        diagnostics.error('L061', `保存授权刷新错误日志失败: ${err.message}`)
       })
       
       // 同时推送到前端显示（如果开启了日志推送）
@@ -1747,6 +1448,11 @@ ipcMain.handle('open-external', async (event, url) => {
 // 根据端口查找PID
 ipcMain.handle('find-pid-by-port', async (event, port) => {
   return await findPidByPort(port)
+})
+
+ipcMain.handle('get-process-state', (event, pid) => {
+  assertMainWindow(event, mainWindow)
+  return require('./commons/processLiveness.cjs').getProcessState(pid)
 })
 
 // 根据端口杀死进程
@@ -1793,7 +1499,7 @@ ipcMain.handle('check-for-updates', async () => {
     const { feed, usedFallback } = await checkForUpdatesWithFallback()
     let message = '正在检查更新，请稍候...'
     if (usedFallback) {
-      message = `Gitee 更新源不可用，已改用 ${feed.label} 检查更新`
+      message = `Gitee 无新版本或检查失败，已继续检查 ${feed.label}`
     }
     return { success: true, message, feed: feed.id, usedFallback }
   } catch (error) {
@@ -1813,6 +1519,7 @@ ipcMain.handle('download-update', async () => {
     if (!app.isPackaged) {
       return { success: false, message: '开发环境下无法下载更新' }
     }
+    if (shouldSuppressUpdateEvent()) return { success: false, message: '正在检查更新，请检查完成后再下载' }
     await autoUpdater.downloadUpdate()
     return { success: true, message: '开始下载更新，请稍候...' }
   } catch (error) {
@@ -1865,19 +1572,7 @@ ipcMain.handle('save-log-to-file', async (event, data) => {
     const result = await saveLogToFile(data)
     return { success: result }
   } catch (error) {
-    console.error('保存日志失败:', error)
+    diagnostics.error('L062', '保存日志失败:', error)
     return { success: false, message: error.message }
   }
 })
-
-// 发送回调
-ipcMain.handle('send-callback', async (event, { url, data }) => {
-  try {
-    const result = await sendCallback(url, data)
-    return result
-  } catch (error) {
-    console.error('发送回调失败:', error)
-    return { success: false, message: error.message }
-  }
-})
-
