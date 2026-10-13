@@ -82,8 +82,8 @@
         "to": "bin",
         "filter": [
           "it.exe",
-          "HookBridge.dll",
-          "VworkLogger.dll",
+          "BJXBridge.dll",
+          "BJX.dll",
           "versions.json"
         ]
       },

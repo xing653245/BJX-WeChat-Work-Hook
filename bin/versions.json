@@ -19,7 +19,7 @@
     }
   ],
   "files": {
-    "VworkLogger.dll": "dfe9a2084699775cd9ba36ecc06a9e52b2871c6b3e40ae1bf3ea4dc565262b12",
-    "HookBridge.dll": "f3df69e8db4effddb18348e6368632b538e42e634ee49dcdf78abdae25db385a"
+    "BJX.dll": "cc71e560cdc38c07a035305fc2bff64d6c77265bda61da43f2ca2457fd420e55",
+    "BJXBridge.dll": "0d24363169250c199ded5e10b072e268ca08253bf2bb04f5d03f983a2a8357f4"
   }
 }
