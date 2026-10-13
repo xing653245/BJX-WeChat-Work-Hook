@@ -1,0 +1,40 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+const { assertGiteeAssetSizes } = require('../../scripts/publish-utils')
+const { normalizeReleaseFilesForPublish } = require('../../scripts/publish-utils')
+const crypto = require('crypto')
+
+test('完整安装包未提供 size 时补全真实大小，拒绝校验值不匹配的发布', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-release-manifest-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const exe = path.join(root, 'setup.exe'), yml = path.join(root, 'latest.yml')
+  fs.writeFileSync(exe, 'installer fixture')
+  const hash = crypto.createHash('sha512').update(fs.readFileSync(exe)).digest('base64')
+  const manifest = `version: 2.2.6\npath: setup.exe\nsha512: ${hash}\n`
+  fs.writeFileSync(yml, manifest)
+  const result = normalizeReleaseFilesForPublish([yml, exe], '2.2.6')
+  t.after(() => fs.rmSync(result.tempDir, { recursive: true, force: true }))
+  assert.match(fs.readFileSync(result.uploadPlan[0].localPath, 'utf8'), /size: 17/)
+  fs.writeFileSync(yml, manifest + 'size: 999\n')
+  assert.throws(() => normalizeReleaseFilesForPublish([yml, exe], '2.2.6'), /不一致/)
+  fs.writeFileSync(yml, manifest.replace(hash, 'bad-hash'))
+  assert.throws(() => normalizeReleaseFilesForPublish([yml, exe], '2.2.6'), /不一致/)
+})
+
+test('发布附件必须小于体积上限，检查每个文件并拒绝缺失文件', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-release-size-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const small = path.join(root, 'latest.yml')
+  const installer = path.join(root, 'setup.exe')
+  fs.writeFileSync(small, 'ok')
+  fs.writeFileSync(installer, Buffer.alloc(99))
+  assert.doesNotThrow(() => assertGiteeAssetSizes([small, installer], 100))
+  for (const size of [100, 101]) {
+    fs.writeFileSync(installer, Buffer.alloc(size))
+    assert.throws(() => assertGiteeAssetSizes([small, installer], 100), /附件超限：setup.exe/)
+  }
+  assert.throws(() => assertGiteeAssetSizes([path.join(root, 'missing.exe')]), /ENOENT/)
+})

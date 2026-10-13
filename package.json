@@ -1,6 +1,6 @@
 {
   "name": "vwork-electron",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "北极熊企微框架Pro",
   "main": "electron/main.js",
   "scripts": {
@@ -49,9 +49,14 @@
     "vue": "^3.4.15"
   },
   "build": {
+    "compression": "maximum",
     "beforePack": "scripts/before-pack.js",
     "appId": "com.vwork.framework",
-    "electronLanguages": ["zh-CN", "zh-TW", "en-US"],
+    "electronLanguages": [
+      "zh-CN",
+      "zh-TW",
+      "en-US"
+    ],
     "productName": "北极熊企微框架Pro",
     "artifactName": "vwork-electron-setup-${version}.${ext}",
     "icon": "build/icon.ico",
@@ -60,6 +65,7 @@
       "buildResources": "build"
     },
     "nsis": {
+      "differentialPackage": false,
       "oneClick": false,
       "language": "2052",
       "perMachine": true,
@@ -103,7 +109,14 @@
       }
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "ia32"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "signAndEditExecutable": true,
       "sign": null,

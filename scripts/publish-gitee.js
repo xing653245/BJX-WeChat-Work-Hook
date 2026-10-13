@@ -17,7 +17,7 @@ const axios = require('axios')
 const {
   pkg,
   collectReleaseFiles,
-  getDefaultBranch,
+  assertGiteeAssetSizes,
   getEnvToken,
   normalizeReleaseFilesForPublish,
   buildReleaseBody
@@ -88,10 +88,13 @@ async function getReleaseByTag(owner, repo, tag, token) {
 async function createRelease(owner, repo, tag, token, { title, version } = {}) {
   const ver = version || pkg.version
   const name = title || tag
+  // 本地开发分支可能并不存在于发布仓库，使用远端默认分支创建标签。
+  const repoInfo = await giteeRequest('GET', `/repos/${owner}/${repo}`, token)
+  if (!repoInfo.default_branch) throw new Error('无法确定 Gitee 仓库的默认分支')
   return giteeRequest('POST', `/repos/${owner}/${repo}/releases`, token, {
     data: {
       tag_name: tag,
-      target_commitish: getDefaultBranch(),
+      target_commitish: repoInfo.default_branch,
       name,
       body: buildReleaseBody(ver),
       prerelease: false
@@ -176,6 +179,7 @@ async function publishToTag(owner, repo, tag, token, rawFiles, { title, version 
   const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles, ver)
 
   try {
+    assertGiteeAssetSizes(uploadPlan.map(item => item.localPath))
     let release = await getReleaseByTag(owner, repo, tag, token)
     if (!release) {
       diagnostics.info('L005', `[publish-gitee] 创建 Release: ${tag}`)

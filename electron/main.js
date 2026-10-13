@@ -12,7 +12,7 @@ const {
   formatUpdateError,
   getActiveFeed,
   initUpdateFeeds,
-  shouldSuppressErrorEvent
+  shouldSuppressUpdateEvent
 } = require('./services/updateService')
 const ini = require('ini')
 const axios = require('axios')
@@ -117,6 +117,7 @@ function notifyPortError({ port, service, detail }) {
 // 更新配置：优先 Gitee，失败后回退 GitHub（见 electron/configs/updateFeeds.js）
 // 发布命令: npm run electron:build:publish
 autoUpdater.autoDownload = false // 默认不自动下载，需要用户确认
+autoUpdater.disableDifferentialDownload = true // 完整包采用高压缩，不生成差分更新包。
 autoUpdater.autoInstallOnAppQuit = true // 应用退出时自动安装更新
 initUpdateFeeds()
 
@@ -161,18 +162,19 @@ autoUpdater.on('update-available', (info) => {
 })
 
 autoUpdater.on('update-not-available', (info) => {
+  if (shouldSuppressUpdateEvent()) return
   diagnostics.info('L006', '当前已是最新版本:', info.version)
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'not-available',
-      message: `当前已是最新版本 (${info.version})，无需更新`,
+      message: `已检查 Gitee 和 GitHub，当前已是最新版本 (${app.getVersion()})，无需更新`,
       version: info.version
     })
   }
 })
 
 autoUpdater.on('error', (err) => {
-  if (shouldSuppressErrorEvent()) {
+  if (shouldSuppressUpdateEvent()) {
     diagnostics.warn('L007', '[update] 当前更新源失败，尝试备用源:', err?.message || err)
     return
   }
@@ -1497,7 +1499,7 @@ ipcMain.handle('check-for-updates', async () => {
     const { feed, usedFallback } = await checkForUpdatesWithFallback()
     let message = '正在检查更新，请稍候...'
     if (usedFallback) {
-      message = `Gitee 更新源不可用，已改用 ${feed.label} 检查更新`
+      message = `Gitee 无新版本或检查失败，已继续检查 ${feed.label}`
     }
     return { success: true, message, feed: feed.id, usedFallback }
   } catch (error) {
@@ -1517,6 +1519,7 @@ ipcMain.handle('download-update', async () => {
     if (!app.isPackaged) {
       return { success: false, message: '开发环境下无法下载更新' }
     }
+    if (shouldSuppressUpdateEvent()) return { success: false, message: '正在检查更新，请检查完成后再下载' }
     await autoUpdater.downloadUpdate()
     return { success: true, message: '开始下载更新，请稍候...' }
   } catch (error) {
