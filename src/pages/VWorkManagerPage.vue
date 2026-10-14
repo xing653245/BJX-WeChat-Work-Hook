@@ -391,7 +391,7 @@ async function invokeDefaultAutoUpdateOff(wecomHttpPort) {
   }
 }
 
-// 从配置加载并合并表格：保留「登录中」/轮询中的行，避免 reload 把刚添加的企微清掉
+// 从配置加载并合并表格：保留登录、同步账号信息及轮询中的行。
 const loadLoginInfo = async () => {
   const loginInfo = configStore.getLoginInfo()
   const byPort = new Map()
@@ -400,7 +400,7 @@ const loadLoginInfo = async () => {
     const port = row?.port
     if (!port || port === '-') continue
     const p = parseInt(port, 10)
-    if (row.nick_name === '登录中' || loginPollingPorts.has(p)) {
+    if (row.nick_name === '登录中' || row.nick_name === '同步账号信息中' || loginPollingPorts.has(p)) {
       byPort.set(String(port), { ...row })
     }
   }
@@ -503,7 +503,7 @@ const cleanupUnloggedOnMount = async () => {
     }
 
     const row = tableData.value.find((r) => r.port === String(port))
-    if (row?.nick_name === '登录中') {
+    if (row?.nick_name === '登录中' || row?.nick_name === '同步账号信息中') {
       diagnostics.info('L009', `[启动清理] 端口 ${port} 表格状态为登录中，跳过清理`)
       remainList.push(item)
       continue
@@ -824,7 +824,8 @@ const handleAddWechat = async () => {
 // 登录完成后写入表格与配置（按端口定位行，避免 reload 后 rowIndex 失效）
 const completePortLogin = async (port, options = {}) => {
   const p = Number(port)
-  if (Number.isNaN(p) || p <= 0 || stoppedPorts.has(p) || disposed) return false
+  const isCancelled = () => stoppedPorts.has(p) || disposed || options.isCancelled?.() === true
+  if (Number.isNaN(p) || p <= 0 || isCancelled()) return false
 
   let rowIndex = options.rowIndex
   if (
@@ -836,16 +837,19 @@ const completePortLogin = async (port, options = {}) => {
     rowIndex = ensureTableRowForPort(p)
   }
 
+  if (!tableData.value[rowIndex]?.user_id || tableData.value[rowIndex].user_id === '-') {
+    updateTableItem(rowIndex, { nick_name: '同步账号信息中' })
+  }
   const personalInfo = await VWorkApi.getPersonalInfo(p)
-  if (stoppedPorts.has(p) || disposed) return false
+  if (isCancelled()) return false
   const data = pickPersonalRecord(personalInfo)
   if (!data?.user_id) {
-    diagnostics.warn('L016', '[企微管理] 已登录但 1002 返回结构异常，无法写配置，请稍后重新刷新')
+    diagnostics.warn('L016', `[企微管理] 端口 ${p} 已登录，但账号信息尚未就绪或响应不兼容，继续检测`)
     return false
   }
 
   const pid = await getPidByPort(p)
-  if (stoppedPorts.has(p) || disposed) return false
+  if (isCancelled()) return false
   // 异步请求期间其它行可能已被移除，重新按端口定位。
   rowIndex = ensureTableRowForPort(p)
   updateTableItem(rowIndex, {
@@ -860,11 +864,12 @@ const completePortLogin = async (port, options = {}) => {
     port: p,
     pid
   })
+  if (isCancelled()) return false
 
   untrackPendingPort(p)
   const callbackResult = await window.electronAPI?.markWecomPortLoggedIn?.(p)
   if (callbackResult?.warning) ElMessage.warning(callbackResult.warning)
-  if (stoppedPorts.has(p) || disposed) return false
+  if (isCancelled()) return false
   clearTimeout(autoUpdateTimers.get(p))
   autoUpdateTimers.set(p, setTimeout(() => {
     autoUpdateTimers.delete(p)
@@ -918,10 +923,14 @@ const checkLoginStatus = async (port, rowIndex) => {
   const maxAttempts = 90 // 最多检查90次（3分钟，每2秒一次）
   let attempts = 0
   let consecutiveErrors = 0
+  let loginConfirmed = false
   const maxConsecutiveErrors = 20 // 连续 20 次失败（约 40 秒）才判定不可用
   let loginCacheExpire = Date.now() + 180000 // 3分钟缓存
   let aliveExtendCount = 0
   const maxAliveExtend = 3 // 进程仍在时最多延长 3 次（共约 6 分钟）
+  const pausedMessage = () => loginConfirmed
+    ? '企微已登录，但账号信息同步超时，已保留实例，请点击“重新检测”重试'
+    : '暂未确认登录，已暂停检测并保留企微，请完成登录后点击“重新检测”'
 
   const checkInterval = setInterval(singleFlight(async () => {
     if (disposed || loginPollTimers.get(p) !== checkInterval || stoppedPorts.has(p)) {
@@ -943,7 +952,7 @@ const checkLoginStatus = async (port, rowIndex) => {
         }
         clearInterval(checkInterval)
         finishPolling()
-        feedback.warning('U008', '暂未确认登录，已暂停检测并保留企微，请登录后刷新列表')
+        feedback.warning('U008', pausedMessage())
         return
       }
       clearInterval(checkInterval)
@@ -957,20 +966,26 @@ const checkLoginStatus = async (port, rowIndex) => {
     try {
       const result = await VWorkApi.getLoginStatus(port)
       if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
-      consecutiveErrors = 0
       if (result?.data) {
         const status = result.data.status
         const loggedIn = Number(status) === 1 || status === true
+        loginConfirmed = loggedIn
         if (loggedIn) {
-          clearInterval(checkInterval)
-          finishPolling()
-          const ok = await completePortLogin(port, { rowIndex })
-          if (!ok) {
-            feedback.warning('U010', '已登录但未能写入企微管理，请右键刷新授权或重新添加')
+          // 1000 已登录不代表 1002 的账号信息已就绪，同步成功后才停止轮询。
+          const ok = await completePortLogin(port, {
+            rowIndex,
+            isCancelled: () => loginPollTimers.get(p) !== checkInterval
+          })
+          if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
+          consecutiveErrors = 0
+          if (ok) {
+            clearInterval(checkInterval)
+            finishPolling()
           }
           return
         }
       }
+      consecutiveErrors = 0
 
       if (attempts >= maxAttempts) {
         const alive = await isWecomProcessAlive(port)
@@ -985,7 +1000,7 @@ const checkLoginStatus = async (port, rowIndex) => {
           }
           clearInterval(checkInterval)
           finishPolling()
-          feedback.warning('U011', '暂未确认登录，已暂停检测并保留企微，请登录后刷新列表')
+          feedback.warning('U011', pausedMessage())
           return
         }
         clearInterval(checkInterval)
@@ -995,6 +1010,7 @@ const checkLoginStatus = async (port, rowIndex) => {
         untrackPendingPort(port)
       }
     } catch (error) {
+      if (disposed || stoppedPorts.has(p) || loginPollTimers.get(p) !== checkInterval) return
       consecutiveErrors++
       diagnostics.warn('L019',
         `检查登录状态失败 (${consecutiveErrors}/${maxConsecutiveErrors}):`,
@@ -1638,7 +1654,7 @@ const refreshList = async () => {
       const port = parseInt(row.port)
 
       // 正在登录中的行不清理（避免登录/重启过程中被误删）
-      if (row.nick_name === '登录中' || loginPollingPorts.has(port)) {
+      if (row.nick_name === '登录中' || row.nick_name === '同步账号信息中' || loginPollingPorts.has(port)) {
         validRows.push(row)
         continue
       }
