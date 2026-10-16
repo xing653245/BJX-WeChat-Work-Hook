@@ -2,6 +2,11 @@
 
 发布时会自动读取当前 `package.json` 版本对应的章节，写入 Gitee / GitHub Release，以及 `latest.yml` 的 `releaseNotes`（设置页「更新说明」）。
 
+## 2.2.8
+
+### 问题修复
+- 修复回调接收不到企微撤回消息的通知
+
 ## 2.2.7
 
 ### 问题修复
