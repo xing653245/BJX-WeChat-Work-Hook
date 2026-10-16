@@ -167,7 +167,7 @@ autoUpdater.on('update-not-available', (info) => {
   if (mainWindow) {
     mainWindow.webContents.send('update-status', {
       status: 'not-available',
-      message: `已检查 Gitee 和 GitHub，当前已是最新版本 (${app.getVersion()})，无需更新`,
+      message: `当前已是最新版本 (${app.getVersion()})，无需更新`,
       version: info.version
     })
   }
@@ -1497,9 +1497,9 @@ ipcMain.handle('check-for-updates', async () => {
       return { success: false, message: '开发环境下无法检查更新' }
     }
     const { feed, usedFallback } = await checkForUpdatesWithFallback()
-    let message = '正在检查更新，请稍候...'
+    let message;
     if (usedFallback) {
-      message = `Gitee 无新版本或检查失败，已继续检查 ${feed.label}`
+      message = `正在检查更新，请稍候...`
     }
     return { success: true, message, feed: feed.id, usedFallback }
   } catch (error) {
