@@ -114,7 +114,7 @@ function notifyPortError({ port, service, detail }) {
     .catch(() => {})
 }
 
-// 更新配置：优先 Gitee，失败后回退 GitHub（见 electron/configs/updateFeeds.js）
+// 更新配置：优先 Gitee，仅当 Gitee 检查失败时回退 GitHub（见 electron/configs/updateFeeds.js）
 // 发布命令: npm run electron:build:publish
 autoUpdater.autoDownload = false // 默认不自动下载，需要用户确认
 autoUpdater.disableDifferentialDownload = true // 完整包采用高压缩，不生成差分更新包。

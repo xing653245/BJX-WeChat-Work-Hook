@@ -1102,7 +1102,8 @@ const handleCheckUpdate = async () => {
         '检查更新失败',
         result.message || '检查更新失败'
       )
-      feedback.warning('U011', result.message || '检查更新失败')
+      // 主进程会同时通过 update-status 推送详细错误，由状态监听统一弹窗。
+      // 这里只保留面板状态，避免同一次失败连续显示两条提示。
     } else if (result.usedFallback) {
       ElMessage.info(result.message || '已改用备用更新源检查更新')
     }

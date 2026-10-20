@@ -1,7 +1,7 @@
 const { createDiagnostics } = require('../commons/diagnostics.cjs')
 const diagnostics = createDiagnostics('services/updateService.js')
 /**
- * 自动更新：优先 Gitee，无新版本或检查失败时继续尝试 GitHub
+ * 自动更新：优先 Gitee，仅当 Gitee 检查失败时回退到 GitHub
  */
 const { autoUpdater } = require('electron-updater')
 const { UPDATE_FEEDS } = require('../configs/updateFeeds')
@@ -60,6 +60,7 @@ function isNetworkUnreachableError(message) {
     lower.includes('network error') ||
     lower.includes('socket hang up') ||
     lower.includes('net::err_connection_timed_out') ||
+    lower.includes('net::err_connection_closed') ||
     lower.includes('net::err_connection_reset') ||
     lower.includes('net::err_name_not_resolved') ||
     lower.includes('net::err_internet_disconnected') ||
@@ -74,7 +75,7 @@ function isGithubFeed(feed) {
 
 function formatFeedNetworkError(feed, action = '检查') {
   if (isGithubFeed(feed)) {
-    return `无法${action} GitHub 更新（连接超时），国内网络通常需开启 VPN/代理 后重试`
+    return `无法${action} GitHub 更新（连接失败），国内网络通常需开启 VPN/代理后重试`
   }
   if (feed?.id === 'gitee') {
     return `无法${action} Gitee 更新，请检查网络连接后重试`
@@ -173,7 +174,6 @@ function checkForUpdatesWithFallback() {
 async function checkFeeds() {
   suppressErrorEvents = true
   const failures = []
-  let lastResult
 
   try {
     for (let i = 0; i < UPDATE_FEEDS.length; i++) {
@@ -185,23 +185,23 @@ async function checkFeeds() {
         if (!result || typeof result.isUpdateAvailable !== 'boolean') {
           throw new Error('更新源未返回有效检查结果')
         }
-        lastResult = { feed, usedFallback: i > 0, result }
-        if (result.isUpdateAvailable) return lastResult
-        // 无新版本仍需检查下一个源，不向界面发送中间的“已是最新版”。
+        const checked = { feed, usedFallback: i > 0, result }
+        if (result.isUpdateAvailable) return checked
+
+        // 更新源是同一版本的镜像：主源成功返回“无更新”即可采信。
+        // 只有当前源检查失败时才访问备用源，避免 Gitee 正常时
+        // 因 GitHub 在国内网络不可达而误报整体更新检查失败。
+        suppressErrorEvents = false
+        autoUpdater.emit('update-not-available', result.updateInfo)
+        return checked
       } catch (err) {
         failures.push({ feed, err })
         diagnostics.warn('L003', '[update] ' + feed.label + ' 检查失败:', err?.message || err)
       }
     }
 
-    if (failures.length) {
-      // 任一源未能检查，且其余源没有更新，不能断言已是最新版。
-      throw buildCombinedError(failures, '检查')
-    }
-    if (!lastResult) throw new Error('未配置可用的更新源')
-    suppressErrorEvents = false
-    autoUpdater.emit('update-not-available', lastResult.result.updateInfo)
-    return lastResult
+    if (failures.length) throw buildCombinedError(failures, '检查')
+    throw new Error('未配置可用的更新源')
   } finally {
     suppressErrorEvents = false
   }

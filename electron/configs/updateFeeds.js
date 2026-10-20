@@ -1,5 +1,5 @@
 /**
- * 自动更新源配置：优先 Gitee，无新版本或检查失败后回退 GitHub
+ * 自动更新源配置：优先 Gitee，仅当 Gitee 检查失败时回退 GitHub
  *
  * Gitee：generic 源，URL 来自 package.json build.publish
  * GitHub：与 v1.1.4 一致，使用 electron-updater 的 github provider

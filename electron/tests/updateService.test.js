@@ -45,17 +45,12 @@ test('Gitee 有更新时保留其下载源，不检查 GitHub', async () => {
   assert.deepEqual(f.calls, ['generic'])
   assert.equal(f.service.getActiveFeed().id, 'gitee')
 })
-test('Gitee 无更新时检查 GitHub，保持 GitHub 下载源且不提前提示最新版', async () => {
+test('Gitee 成功返回无更新时不再访问 GitHub', async () => {
   const f = fixture([none, available])
-  assert.equal((await f.service.checkForUpdatesWithFallback()).feed.id, 'github')
-  assert.deepEqual(f.calls, ['generic', 'github'])
-  assert.deepEqual(f.notifications, ['available'])
-  assert.equal(f.service.getActiveFeed().id, 'github')
-})
-test('两个源均无更新时只通知一次', async () => {
-  const f = fixture([none, none])
-  await f.service.checkForUpdatesWithFallback()
+  assert.equal((await f.service.checkForUpdatesWithFallback()).feed.id, 'gitee')
+  assert.deepEqual(f.calls, ['generic'])
   assert.deepEqual(f.notifications, ['none'])
+  assert.equal(f.service.getActiveFeed().id, 'gitee')
 })
 for (const failure of [new Error('ETIMEDOUT'), new Error('404 Not Found'), new Error('Invalid YAML'), null]) {
   test(`Gitee 失败也尝试 GitHub：${failure?.message || '空结果'}`, async () => {
@@ -65,15 +60,28 @@ for (const failure of [new Error('ETIMEDOUT'), new Error('404 Not Found'), new E
     assert.equal(f.service.shouldSuppressUpdateEvent(), false)
   })
 }
-for (const steps of [[none, new Error('ETIMEDOUT')], [new Error('404'), none], [new Error('404'), new Error('404')]]) {
-  test('未能完整检查且未发现更新时返回失败，不能提示已是最新版', async () => {
-    const f = fixture([...steps])
-    await assert.rejects(f.service.checkForUpdatesWithFallback())
-    assert.deepEqual(f.calls, ['generic', 'github'])
-    assert.deepEqual(f.notifications, [])
-    assert.equal(f.service.shouldSuppressUpdateEvent(), false)
+test('Gitee 失败后 GitHub 无更新时正常提示最新版', async () => {
+  const f = fixture([new Error('404'), none])
+  assert.equal((await f.service.checkForUpdatesWithFallback()).feed.id, 'github')
+  assert.deepEqual(f.calls, ['generic', 'github'])
+  assert.deepEqual(f.notifications, ['none'])
+})
+test('所有更新源均失败时才返回失败', async () => {
+  const f = fixture([new Error('404'), new Error('net::ERR_CONNECTION_CLOSED')])
+  await assert.rejects(f.service.checkForUpdatesWithFallback())
+  assert.deepEqual(f.calls, ['generic', 'github'])
+  assert.deepEqual(f.notifications, [])
+  assert.equal(f.service.shouldSuppressUpdateEvent(), false)
+})
+test('ERR_CONNECTION_CLOSED 显示为 GitHub 网络连接失败', () => {
+  const f = fixture([])
+  const message = f.service.formatUpdateError(new Error('net::ERR_CONNECTION_CLOSED'), {
+    action: '检查',
+    feed: { id: 'github', provider: 'github' }
   })
-}
+  assert.match(message, /GitHub 更新（连接失败）/)
+  assert.doesNotMatch(message, /ERR_CONNECTION_CLOSED/)
+})
 test('并发共用检查任务，下次检查仍从 Gitee 开始', async () => {
   let finish
   const pending = new Promise(resolve => { finish = resolve })
@@ -83,5 +91,5 @@ test('并发共用检查任务，下次检查仍从 Gitee 开始', async () => {
   finish(none)
   await first
   await f.service.checkForUpdatesWithFallback()
-  assert.deepEqual(f.calls, ['generic', 'github', 'generic'])
+  assert.deepEqual(f.calls, ['generic', 'generic'])
 })
