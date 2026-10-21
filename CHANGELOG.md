@@ -2,6 +2,11 @@
 
 发布时会自动读取当前 `package.json` 版本对应的章节，写入 Gitee / GitHub Release，以及 `latest.yml` 的 `releaseNotes`（设置页「更新说明」）。
 
+## 2.2.9
+
+### 问题修复
+- 修复调用 type=2002 获取群列表报 errno -1001 database query failed 的问题
+
 ## 2.2.8
 
 ### 问题修复
