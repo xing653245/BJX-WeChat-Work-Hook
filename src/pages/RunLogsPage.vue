@@ -190,7 +190,7 @@ async function copyLogText(content) {
   try {
     await navigator.clipboard.writeText(content)
     ElMessage.success('已复制到剪贴板')
-  } catch (error) { feedback.error('U011', '复制失败，请重试') }
+  } catch (error) { feedback.error('U011', error) }
 }
 
 const copyRowContent = (row) => copyLogText(`时间：${row.time}\n来源：${row.sender}\n类型：${row.type}\n消息：${row.message}`)
@@ -231,7 +231,7 @@ async function mergeTodayFileLogs() {
     if (added === null) return
     ElMessage.success(added ? `已合并 ${added} 条文件日志` : '文件日志与当前列表一致，无新增')
   } catch (e) {
-    feedback.error('U004', e?.message || '读取文件日志失败')
+    feedback.error('U004', e)
   } finally {
     loadingFileLogs.value = false
   }
@@ -247,7 +247,7 @@ async function openLogFolder() {
     if (res?.success) {
       if (res.path) logDirPath.value = res.path
     } else feedback.warning('U006', res?.error || '打开日志目录失败')
-  } catch (error) { feedback.error('U012', '打开日志目录失败，请重试') }
+  } catch (error) { feedback.error('U012', error) }
 }
 
 async function exportReport() {
@@ -256,7 +256,7 @@ async function exportReport() {
   try {
     const result = await window.electronAPI?.exportDiagnosticReport?.()
     if (result?.canceled) return
-    if (result?.success) ElMessage.success('故障报告已导出，请将文件发送给技术支持')
+    if (result?.success) ElMessage.success('故障报告已导出并通过完整性校验，请将文件发送给技术支持')
     else feedback.error('U009', result?.message || '导出失败，请重启应用后重试')
   } catch (error) { feedback.error('U010', error) }
   finally { exportingReport.value = false }

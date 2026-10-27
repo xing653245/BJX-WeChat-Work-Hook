@@ -935,7 +935,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
   const { setDiagnosticSink } = require('./commons/diagnostics.cjs')
-  const { loadReportPublicKey, sealReport } = require('./commons/reportEncryption.cjs')
+  const { loadReportPublicKey } = require('./commons/reportEncryption.cjs')
   const reportKey = loadReportPublicKey()
   const writer = require('./services/diagnosticFile').createDiagnosticWriter(path.join(app.getPath('userData'), 'diagnostics'), { publicKey: reportKey })
   setDiagnosticSink(writer.write)
@@ -956,13 +956,11 @@ app.whenReady().then(async () => {
       })
       if (choice.canceled || !choice.filePath) return { canceled: true }
       const payload = { kind: 'report', version: 1, createdAt: new Date().toISOString(), appVersion: app.getVersion(), platform: process.platform, arch: process.arch, logs: await writer.snapshot() }
-      const encrypted = sealReport(payload, reportKey)
-      // 临时文件中也只有密文；成功后原子替换用户选择的导出文件。
-      require('./commons/atomicFile').writeTextAtomic(choice.filePath, JSON.stringify(encrypted))
-      return { success: true }
+      const integrity = require('./services/diagnosticExport').exportDiagnosticReport(choice.filePath, payload, reportKey)
+      return { success: true, ...integrity }
     } catch (error) {
       diagnostics.error('D002', '故障报告导出失败', error)
-      return { success: false, message: '导出失败，请选择可写入的文件夹后重试' }
+      return { success: false, code: error.code, message: require('./services/diagnosticExport').exportFailureMessage(error) }
     } finally { exportingReport = false }
   })
   ipcMain.on('write-diagnostic', (event, record) => {

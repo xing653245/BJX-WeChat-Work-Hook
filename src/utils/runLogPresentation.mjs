@@ -6,12 +6,12 @@ export function presentRunLog({ content, type, system = false, apiName = '' }) {
     const failed = /^(调用|操作)失败/.test(content)
     const succeeded = /^(调用|操作)成功$/.test(content.trim())
     const result = failed
-      ? `操作失败：${userMessage(content.replace(/^(调用|操作)失败[:：]?\s*/, ''), '请稍后重试；如问题持续，请联系技术支持')}`
+      ? `操作失败：${userMessage(content.replace(/^(调用|操作)失败[:：]?\s*/, ''), '接口未返回可识别的失败原因，请导出故障报告并联系技术支持')}`
       : succeeded ? '操作成功' : userMessage(content, '操作结果暂未确认，请检查账号状态')
     return { type: '账号操作', message: `${apiName}：${result}`, level: failed ? 'error' : succeeded ? 'success' : 'info' }
   }
   if (system) {
-    return { type: '系统提示', message: userMessage(content, '操作未完成，请稍后重试；如问题持续，请联系技术支持'),
+    return { type: '系统提示', message: userMessage(content, '系统操作失败，未能识别具体原因，请导出故障报告并联系技术支持'),
       level: /失败|异常|错误|超时|ECONN|EACCES|EPERM|ENOENT|Error/.test(content) ? 'error'
         : /未授权|到期|暂停|占用/.test(content) ? 'warning' : 'info' }
   }

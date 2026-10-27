@@ -813,7 +813,7 @@ async function refreshCallbackInstances() {
     }
     callbackInstances.value = rows
     if (!rows.some(row => String(row.port) === selectedCallbackPort.value)) selectedCallbackPort.value = rows.length ? String(rows[0].port) : ''
-  } catch (error) { feedback.error('C002', '读取企微实例失败：' + error.message) }
+  } catch (error) { feedback.error('C002', error) }
   finally {
     loadingInstances.value = false
     if (callbackRefreshPending) void refreshCallbackInstances()
@@ -838,7 +838,7 @@ async function updateCallbackInstance() {
     draft.storageWarning = result.warning || ''
     if (result.warning) { ElMessage.warning(result.warning); return }
     ElMessage.success('当前企微已更新，配置已按账号 ID 保存')
-  } catch (error) { feedback.error('C003', error.message || '更新失败') }
+  } catch (error) { feedback.error('C003', error) }
   finally {
     updatingInstance.value = false
     if (callbackRefreshPending) void refreshCallbackInstances()
@@ -1046,7 +1046,7 @@ async function handleTestMessageText() {
       message: e?.message || String(e)
     }
     textTestResponseRaw.value = JSON.stringify(wrap, null, 2)
-    feedback.error('U009', e?.message || String(e))
+    feedback.error('U009', e)
   } finally {
     testingTextMsg.value = false
   }
@@ -1114,7 +1114,7 @@ const handleCheckUpdate = async () => {
       '检查更新失败',
       error.message
     )
-    feedback.error('U012', '检查更新失败: ' + error.message)
+    feedback.error('U012', error)
   } finally {
     checkingUpdate.value = false
   }
@@ -1134,7 +1134,7 @@ const handleDownloadUpdate = async () => {
       resetUpdateState()
     }
   } catch (error) {
-    feedback.error('U014', '下载更新失败: ' + error.message)
+    feedback.error('U014', error)
     resetUpdateState()
   }
 }
@@ -1152,7 +1152,7 @@ const handleInstallUpdate = async () => {
       installingUpdate.value = false
     }
   } catch (error) {
-    feedback.error('U016', '安装更新失败: ' + error.message)
+    feedback.error('U016', error)
     installingUpdate.value = false
   }
 }
@@ -1262,7 +1262,7 @@ async function savePreference(key, value) {
     ElMessage.success('偏好已保存')
   } catch (error) {
     formData[key] = key === 'auto_check_update' ? previous == null || previous === true || previous === 'true' : previous || 'ask'
-    feedback.error('P001', error.message || '保存偏好失败，请重试')
+    feedback.error('P001', error)
   } finally { savingPreference.value = false }
 }
 
@@ -1298,7 +1298,7 @@ const handleSave = async ({ detectedVersion } = {}) => {
     return true
   } catch (error) {
     pathSaveError.value = error.message || '请检查路径和文件权限后重试。'
-    feedback.error('U023', '客户端路径保存失败：' + pathSaveError.value)
+    feedback.error('U023', error)
     return false
   }
   finally { saving.value = false }

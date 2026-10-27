@@ -804,12 +804,13 @@ const executeAddWechat = singleFlight(async (portType, customPortValue) => {
     } else {
       feedback.error('U006', {
         message: result.output || '启动失败',
+        code: result.code,
         duration: 8000,
         showClose: true
       })
     }
   } catch (error) {
-    feedback.error('U007', '启动失败: ' + error.message)
+    feedback.error('U007', error)
   } finally {
     addingWechat.value = false
   }
@@ -1279,7 +1280,7 @@ const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
     return true
   } catch (error) {
     diagnostics.error('L023', `[${actionLabel}] 失败:`, error)
-    feedback.error('U022', error.message || `${actionLabel}失败`)
+    feedback.error('U022', error)
     return false
   } finally {
     cardKeySubmitting.value = false
@@ -1391,7 +1392,7 @@ const handleAuthConvert = async () => {
     await refreshAuthForRow(rowIndex, wxid, { ...row, ...cleared }, { quiet: true })
   } catch (error) {
     diagnostics.error('L024', '[授权迁移] 失败:', error)
-    feedback.error('U028', error.message || '授权迁移失败')
+    feedback.error('U028', error)
   } finally {
     delete authBindingLoading[wxid]
   }
@@ -1510,7 +1511,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
       tableData.value[rowIndex] ||
       configStore.getLoginInfo().find((item) => item.user_id === userId) ||
       {}
-    feedback.error('U034', '获取授权信息失败: ' + (error.message || '请检查网络或代理设置后重试'))
+    feedback.error('U034', error)
     const { expire, auth_active: authActive, card_key: cardKey } =
       resolveAuthFieldsAfterAuthFetch(
         { success: false },
@@ -1589,7 +1590,7 @@ const handleExitWechat = async () => {
     ElMessage.success('已退出微信')
   } catch (error) {
     if (error !== 'cancel') {
-      feedback.error('U035', '退出失败: ' + error.message)
+      feedback.error('U035', error)
     }
   }
 }
