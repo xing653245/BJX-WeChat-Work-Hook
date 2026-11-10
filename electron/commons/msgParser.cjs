@@ -23,6 +23,12 @@ const MSG_TYPE_MAP = {
 const TEXT_MSG_TYPE = 2
 const UNKNOWN_MSG_LABEL = '未知消息'
 
+function getLogTimestamp(value, fallback = Date.now()) {
+  const n = Number(value)
+  const ms = n >= 1e12 ? n : n * 1000
+  return Number.isFinite(n) && n > 0 && Number.isFinite(new Date(ms).getTime()) ? ms : fallback
+}
+
 function getMsgTypeText(msgType) {
   const code = Number(msgType)
 
@@ -47,6 +53,7 @@ function isKnownMsgType(msgType) {
 
 function formatMessageContent(data) {
   if (!data || typeof data !== 'object') return ''
+  if (data.encrypted === true) return '收到加密回调，框架无法读取正文；请在设置中点击“更新当前企微”恢复本地日志。'
 
   if (data.sys || data.type === 'api_call') {
     return typeof data.content === 'string' ? data.content : String(data.content ?? '')
@@ -94,6 +101,7 @@ function enrichWecomMessage(data) {
 }
 
 module.exports = {
+  getLogTimestamp,
   getMsgTypeText,
   formatMessageContent,
   enrichWecomMessage

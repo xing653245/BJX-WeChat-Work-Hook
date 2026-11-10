@@ -14,7 +14,7 @@ const { exec } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
 const { DEFAULT_SERVER_PORT_STRING } = require('../configs/defaults')
-const { formatMessageContent, getMsgTypeText } = require('./msgParser.cjs')
+const { formatMessageContent, getMsgTypeText, getLogTimestamp } = require('./msgParser.cjs')
 const { parseNetstatListeningPids } = require('./portProcess.cjs')
 
 
@@ -214,8 +214,7 @@ async function saveLogToFile(data) {
       const logFilePath = path.join(logDir, logFileName)
       
       // 格式化时间戳
-      const timestamp = data.time_stamp || Math.floor(now.getTime() / 1000)
-      const logTime = new Date(timestamp * 1000)
+      const logTime = new Date(getLogTimestamp(data.time_stamp, now.getTime()))
       const timeStr = logTime.toLocaleString('zh-CN', {
         year: 'numeric',
         month: '2-digit',
@@ -237,7 +236,7 @@ async function saveLogToFile(data) {
         const userId = data.user_id || ''
         const content = formatMessageContent(data)
         const direction = data.is_self_msg === 1 ? '[发出]' : '[收到]'
-        const typeHint = data.msg_type != null && data.msg_type !== ''
+        const typeHint = data.encrypted === true ? '[加密消息]' : data.msg_type != null && data.msg_type !== ''
           ? `[${getMsgTypeText(data.msg_type)}]`
           : ''
         logContent = `[${timeStr}] ${direction}${typeHint} ${sender}(${userId}): ${content}\n`

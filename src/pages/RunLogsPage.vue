@@ -70,7 +70,7 @@ const exportingReport = ref(false)
 
 import { ref, shallowRef, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { formatMessageContent, formatMessageTypeLabel, getMsgTypeText } from '../utils/msgParser'
+import { formatMessageContent, formatMessageTypeLabel, getMsgTypeText, getLogTimestamp } from '../utils/msgParser'
 import { createRunLogBuffer, logIdentity, parseFileLogEntries } from '../utils/runLogBuffer.mjs'
 import { useConfigStore } from '../stores/config'
 
@@ -106,9 +106,7 @@ const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
 })
 const addLog = (data) => {
   if (!data || typeof data !== 'object') return
-  const candidate = Number(data.time_stamp)
-  let date = new Date(Number.isFinite(candidate) && candidate > 0 ? candidate * 1000 : Date.now())
-  if (Number.isNaN(date.getTime())) date = new Date()
+  const date = new Date(getLogTimestamp(data.time_stamp))
   const time = timeFormatter.format(date).replace(/\//g, '-')
   const rawContent = formatMessageContent(data)
   const direction = data.sys ? '系统' : data.is_self_msg === 1 ? '发出' : '收到'

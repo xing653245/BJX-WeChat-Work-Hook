@@ -23,6 +23,13 @@ export const MSG_TYPE_MAP = {
 export const TEXT_MSG_TYPE = 2
 export const UNKNOWN_MSG_LABEL = '未知消息'
 
+/** Hook 回调可能使用毫秒，框架系统记录使用秒。 */
+export const getLogTimestamp = (value, fallback = Date.now()) => {
+  const n = Number(value)
+  const ms = n >= 1e12 ? n : n * 1000
+  return Number.isFinite(n) && n > 0 && Number.isFinite(new Date(ms).getTime()) ? ms : fallback
+}
+
 /**
  * 根据 msg_type 返回消息类型中文说明
  * @param {number|string} msgType 消息类型（数值或字符串）
@@ -61,6 +68,7 @@ export const getMessageDirectionText = (data) => {
 
 /** 运行日志「类型」列文案 */
 export const formatMessageTypeLabel = (data) => {
+  if (data?.encrypted === true) return '加密消息'
   if (data?.sys) return '系统提示'
   if (data?.type === 'api_call') return 'API调用'
 
@@ -72,6 +80,7 @@ export const formatMessageTypeLabel = (data) => {
 /** 格式化消息正文（含未知 msg_type） */
 export const formatMessageContent = (data) => {
   if (!data || typeof data !== 'object') return ''
+  if (data.encrypted === true) return '收到加密回调，框架无法读取正文；请在设置中点击“更新当前企微”恢复本地日志。'
 
   if (data.sys || data.type === 'api_call') {
     return typeof data.content === 'string' ? data.content : String(data.content ?? '')

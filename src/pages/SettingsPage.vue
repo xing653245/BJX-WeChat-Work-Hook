@@ -53,13 +53,13 @@
               </div>
               <p class="instance-status" role="status">{{ instanceStatus }}</p>
               <div class="field-grid">
-                <label class="field-label" for="settings-push-url">原生回调地址</label>
+                <label class="field-label" for="settings-push-url">外部回调地址</label>
                 <div class="field-control">
                   <el-input :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-url" v-model="instanceForm.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
-                  <p class="field-hint">企微向此地址推送后续回调；更新只影响当前选择的实例</p>
+                  <p class="field-hint">框架记录消息后按配置推送到此地址；请保持框架运行。更新只影响当前选择的实例</p>
                 </div>
 
-                <label class="field-label" for="settings-push-enabled">开启原生回调</label>
+                <label class="field-label" for="settings-push-enabled">开启外部回调</label>
                 <div class="field-control control-inline">
                   <el-switch :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-enabled" v-model="instanceForm.push_enabled" />
                   <span class="field-hint inline-hint">{{ instanceForm.push_enabled ? '更新后开启推送' : '更新后关闭推送' }}</span>

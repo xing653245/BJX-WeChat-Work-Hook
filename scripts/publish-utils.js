@@ -164,7 +164,6 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   diagnostics.info('L003', `[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
 
   const uploadPlan = [
-    { localPath: normalizedYmlPath, uploadName: 'latest.yml' },
     { localPath: normalizedExePath, uploadName: installerName }
   ]
 
@@ -191,6 +190,8 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
     )
   }
 
+  // 安装包和说明就绪后再发布更新清单，避免客户端提前下载尚未上传的文件。
+  uploadPlan.push({ localPath: normalizedYmlPath, uploadName: 'latest.yml' })
   return { uploadPlan, tempDir, installerName }
 }
 
@@ -229,7 +230,7 @@ function readWindowsUserEnv(name) {
   if (process.platform !== 'win32') return ''
   try {
     return execSync(
-      `powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable('${name}', 'User')]"`,
+      `powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable('${name}', 'User')"`,
       { encoding: 'utf-8' }
     ).trim()
   } catch {

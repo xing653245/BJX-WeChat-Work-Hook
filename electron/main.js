@@ -56,8 +56,11 @@ let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
 const instanceCallbacks = require('./services/instanceCallbacks').createInstanceCallbacks({
   getSettingsFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
+  getInitialSettings: () => readInjectSettings(getInjectBinDir()),
   onMessage: (port, data) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastapi-message', { ...data, port })
+    const config = readIni()
+    if (config.open_log && config.save_log) void saveLogToFile(data).catch(error => diagnostics.warn('C008', '保存企微消息日志失败', error))
   }
 })
 let loginStatusCheckInterval = null // 定时检查登录状态
@@ -527,6 +530,10 @@ const runInjectForPort = async (robotPort, reason) => {
     const result = await runInjectToolService({ port: robotPort, callbackUrl })
     if (!result.success) await instanceCallbacks.remove(robotPort)
     const ok = result.success === true
+    if (ok) {
+      try { await instanceCallbacks.connect(robotPort) }
+      catch (error) { diagnostics.warn('C009', '初始化本地消息接收失败，登录后将再次尝试；可在设置中更新当前企微重试', error) }
+    }
     recordInjectAttempt(robotPort, ok)
     const summary = require('./commons/injectConsole.cjs').formatInjectSummary({
       port: robotPort, reason, success: ok, callbackUrl
@@ -1208,7 +1215,7 @@ ipcMain.handle('call-framework-wecom', async (event, input) => {
     if (frameworkPorts.has(logPort)) throw new Error('请选择企微实例端口，不能使用框架监听端口')
     const responseData = await callFrameworkWecomApi(logPort, request)
 
-    // 如果成功获取响应，仅记录本地日志；业务回调由企微原生推送
+    // 如果成功获取响应，仅记录本地日志；业务回调由实例接收器单独处理
     if (logPort && responseData) {
       try {
         // 读取配置
