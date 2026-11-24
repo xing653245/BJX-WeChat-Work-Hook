@@ -16,7 +16,8 @@ function lookup(status, data) {
   return module.exports.lookup('owner', 'repo', 'v2.2.12', 'test-token')
 }
 
-test('Gitee 新版本尚无 Release 时，兼容 HTTP 200 空数组及 404', async () => {
+test('Gitee 新版本尚无 Release 时，兼容 HTTP 200 空值、空数组及 404', async () => {
+  assert.equal(await lookup(200, null), null)
   assert.equal(await lookup(200, []), null)
   assert.equal(await lookup(404, { message: 'Not Found' }), null)
 })
