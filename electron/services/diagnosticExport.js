@@ -27,11 +27,14 @@ function exportDiagnosticReport(file, payload, publicKey) {
 
 function exportFailureMessage(error) {
   if (error instanceof ReportError) return `故障报告导出失败：${error.message}`
-  if (error?.code === 'ENOSPC') return '故障报告导出失败：磁盘空间不足，请清理空间或更换保存目录'
-  if (['EACCES', 'EPERM', 'EBUSY'].includes(error?.code)) return '故障报告导出失败：保存位置无权限或文件被占用，请更换目录后重试'
-  if (error?.code === 'ENOENT') return '故障报告导出失败：保存目录或诊断源文件不存在，请确认目录后重试'
-  if (error instanceof SyntaxError) return '故障报告导出失败：本地诊断记录格式损坏，请联系技术支持检查源日志'
-  return '故障报告生成、写入或校验失败，请更换保存目录后重试；仍失败请联系技术支持'
+  if (error?.code === 'ENOSPC') return '故障报告导出失败：磁盘空间不足，无法继续写入'
+  if (error?.code === 'EACCES') return '故障报告导出失败：没有写入权限'
+  if (error?.code === 'EPERM') return '故障报告导出失败：系统拒绝写入'
+  if (error?.code === 'EBUSY') return '故障报告导出失败：目标文件正被占用'
+  if (error?.code === 'ENOENT') return '故障报告导出失败：保存目录不存在'
+  if (error?.code === 'EROFS') return '故障报告导出失败：保存位置只读'
+  if (error instanceof SyntaxError) return '故障报告导出失败：本地诊断记录不是合法的数据格式'
+  return '故障报告导出失败：' + require('../commons/diagnostics.cjs').userMessage(error, '没有得到具体原因')
 }
 
 module.exports = { exportDiagnosticReport, exportFailureMessage }

@@ -10,4 +10,10 @@ function getResourceRoot() {
 function getInjectBinDir() { return path.join(getResourceRoot(), 'bin') }
 function getInjectToolPath() { return path.join(getInjectBinDir(), 'it.exe') }
 
-module.exports = { getInjectBinDir, getInjectToolPath }
+function getCallbackSettingsPath() {
+  const { app } = require('electron')
+  if (!app.isPackaged) return path.resolve(__dirname, '../../bin/callbackSetting.json')
+  return path.join(app.getPath('userData'), 'callbackSetting.json')
+}
+
+module.exports = { getInjectBinDir, getInjectToolPath, getCallbackSettingsPath }

@@ -919,7 +919,7 @@ const autoFindWecom = async () => {
   installationCandidates.value = []
   try {
     const result = await window.electronAPI?.findWecomInstallations?.()
-    if (!result?.success) throw new Error(result?.msg || '自动查找不可用，请重启框架后重试')
+    if (!result?.success) throw new Error(result?.msg || '自动查找没有返回具体原因')
     const compatible = result.candidates.filter(item => item.supported)
     installationCandidates.value = compatible
     if (compatible.length === 1) await useInstallation(compatible[0])
@@ -928,7 +928,7 @@ const autoFindWecom = async () => {
       : '未找到企微安装位置，未修改路径。可先打开企微再查找，或手动填写 WXWork.exe 的完整路径。'
   } catch (error) {
     installationHintType.value = 'error'
-    installationHint.value = error.message || '自动查找失败，请重试或手动填写客户端路径。'
+    installationHint.value = error.message || '自动查找失败，没有返回具体原因'
     feedback.error('U024', installationHint.value)
   }
   finally { findingInstallations.value = false }

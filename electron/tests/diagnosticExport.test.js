@@ -125,6 +125,10 @@ test('嵌套日志损坏时提示具体文件序号和记录序号', () => {
 
 test('导出失败提示区分磁盘空间、访问权限及本地源日志损坏', () => {
   assert.match(exportFailureMessage({ code: 'ENOSPC' }), /磁盘空间不足/)
-  assert.match(exportFailureMessage({ code: 'EACCES' }), /无权限或文件被占用/)
-  assert.match(exportFailureMessage(new SyntaxError('raw file details')), /本地诊断记录格式损坏/)
+  assert.match(exportFailureMessage({ code: 'EACCES' }), /没有写入权限/)
+  assert.match(exportFailureMessage({ code: 'EPERM' }), /系统拒绝写入/)
+  assert.match(exportFailureMessage({ code: 'EBUSY' }), /正被占用/)
+  assert.match(exportFailureMessage({ code: 'ENOENT' }), /保存目录不存在/)
+  assert.doesNotMatch(exportFailureMessage({ code: 'EACCES' }) + exportFailureMessage({ code: 'EBUSY' }), /无权限或文件被占用/)
+  assert.match(exportFailureMessage(new SyntaxError('raw file details')), /不是合法的数据格式/)
 })

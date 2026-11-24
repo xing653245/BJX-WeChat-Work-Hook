@@ -140,9 +140,8 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   }
   const actualSize = fs.statSync(exePath).size
   const actualSha512 = crypto.createHash('sha512').update(fs.readFileSync(exePath)).digest('base64')
-  if (parsed.sha512 !== actualSha512 || (parsed.size && Number(parsed.size) !== actualSize)) {
-    throw new Error('latest.yml 的校验值或大小与安装包不一致，请重新打包')
-  }
+  if (parsed.sha512 !== actualSha512) throw new Error('latest.yml 的校验值与安装包不一致，请重新打包')
+  if (parsed.size && Number(parsed.size) !== actualSize) throw new Error('latest.yml 记录的大小与安装包不一致，请重新打包')
   // 关闭差分包后 electron-builder 可能省略 size，发布时从实际文件补全。
   parsed.size = actualSize
 

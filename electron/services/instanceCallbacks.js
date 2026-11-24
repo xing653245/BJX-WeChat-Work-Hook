@@ -6,15 +6,18 @@ const { validatePkcs1Rsa1024PublicKey } = require('../commons/pkcs1PublicKey.cjs
 const { createCallbackForwarder } = require('./callbackForwarder')
 
 function validateSettings(input) {
-  if (typeof input?.enabled !== 'boolean' || typeof input.Message_Encryption !== 'boolean') throw new Error('回调和加密开关必须为布尔值')
+  if (typeof input?.enabled !== 'boolean') throw new Error('回调开关必须为布尔值')
+  if (typeof input?.Message_Encryption !== 'boolean') throw new Error('消息加密开关必须为布尔值')
   const url = String(input.url || '').trim()
   if (url || input.enabled) {
     let parsed
     try { parsed = new URL(url) } catch { throw new Error('请输入有效的回调地址') }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('回调地址必须使用 HTTP 或 HTTPS')
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('回调地址必须使用 HTTP 或 HTTPS')
+    if (parsed.username || parsed.password) throw new Error('回调地址不能携带登录凭据')
   }
   const timeout = Number(input.timeout_ms), retries = Number(input.retries)
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 2147483647 || !Number.isInteger(retries) || retries < 0 || retries > 2147483647) throw new Error('超时时间或重试次数无效')
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 2147483647) throw new Error('超时时间无效')
+  if (!Number.isInteger(retries) || retries < 0 || retries > 2147483647) throw new Error('重试次数无效')
   let key = String(input.RSA_PublicKey || '').trim()
   if (key || input.Message_Encryption) {
     const check = validatePkcs1Rsa1024PublicKey(key)
@@ -24,14 +27,14 @@ function validateSettings(input) {
   return { enabled: input.enabled, url, timeout_ms: timeout, retries, Message_Encryption: input.Message_Encryption, RSA_PublicKey: key }
 }
 
-function createInstanceCallbacks({ getSettingsFile, getInitialSettings = () => ({}), onMessage = () => {}, forward, post = (port, body) => enqueuePortTask(port, async () => {
+function createInstanceCallbacks({ getSettingsFile, getLegacyFile, getInitialSettings = () => ({}), onMessage = () => {}, forward, post = (port, body) => enqueuePortTask(port, async () => {
   const response = await axios.post(`http://127.0.0.1:${port}/updatesettings`, body, { timeout: 10000, proxy: false, maxRedirects: 0 })
   return response.data
 }) } = {}) {
   const instances = new Map()
   const preparations = new Map()
-  const { createCallbackSettingStore, normalizeAccountId } = require('./callbackSettingStore')
-  const store = createCallbackSettingStore(getSettingsFile)
+  const { createCallbackSettingStore, normalizeAccountId, formatStorageWarning } = require('./callbackSettingStore')
+  const store = createCallbackSettingStore(getSettingsFile, { getLegacyFile })
   async function startReceiver(port, listenPort = 0) {
     const server = http.createServer((req, res) => {
       if (req.method !== 'POST' || req.url !== '/msg') { res.writeHead(404); res.end(); return }
@@ -185,8 +188,12 @@ function createInstanceCallbacks({ getSettingsFile, getInitialSettings = () => (
     try {
       store.put(userId, { settings, savedAt: updated.savedAt })
       updated.storageWarning = ''
-    } catch {
-      updated.storageWarning = '企微已更新，但 callbackSetting.json 保存失败；下次无法回显本次设置，请检查文件格式或写入权限后重试'
+    } catch (error) {
+      diagnostics.error('C006', '保存账号回调配置失败', {
+        port, stage: 'persist-callback-settings', systemCode: error?.code, file: error?.path,
+        operation: error?.syscall
+      }, error)
+      updated.storageWarning = formatStorageWarning(error)
     }
     return settings
   }

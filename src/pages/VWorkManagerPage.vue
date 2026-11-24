@@ -1261,7 +1261,7 @@ const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
     const result =
       mode === 'bind' ? await bindAuthorization(payload) : await unbindAuthorization(payload)
     if (!result.success) {
-      feedback.warning('U021', result.msg || `${actionLabel}失败`)
+      feedback.warning('U021', { message: result.msg || `${actionLabel}失败`, action: actionLabel, actionFailure: true })
       return false
     }
     if (closeDialog) {
@@ -1280,7 +1280,7 @@ const runAuthBindingAction = async (row, mode, cardKey, options = {}) => {
     return true
   } catch (error) {
     diagnostics.error('L023', `[${actionLabel}] 失败:`, error)
-    feedback.error('U022', error)
+    feedback.error('U022', { message: error.message, code: error.code, name: error.name, action: actionLabel, actionFailure: true })
     return false
   } finally {
     cardKeySubmitting.value = false
@@ -1367,7 +1367,7 @@ const handleAuthConvert = async () => {
     // 迁移成功后，用响应卡密自动解绑当前 wxid，使新卡密可再次绑定
     const unbindResult = await unbindAuthorization(buildAuthBindingPayload(row, cardKey))
     if (!unbindResult?.success) {
-      feedback.warning('U027', unbindResult?.msg || '迁移成功，但自动解绑失败，请手动授权取消')
+      feedback.warning('U027', { message: unbindResult?.msg || '迁移成功，但自动解绑失败，请手动授权取消', actionFailure: true })
     }
 
     try {
@@ -1440,7 +1440,7 @@ const refreshAuthForRow = async (rowIndex, userId, loginInfo, options = {}) => {
         }
       }
     } else if (!quiet) {
-      feedback.error('U033', result.msg || '获取授权信息失败，请检查网络或代理设置后重试')
+      feedback.error('U033', result.msg || '获取授权信息失败，授权接口没有返回具体原因')
     }
     
     updateTableItem(rowIndex, { expire, auth_active: authActive, card_key: cardKey })

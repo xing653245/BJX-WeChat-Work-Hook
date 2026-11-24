@@ -6,12 +6,18 @@ class ReportError extends Error {
 }
 
 function decodeBase64(value, field, size) {
-  if (typeof value !== 'string' || !value.length || value.length > 48 * 1024 * 1024) {
-    throw new ReportError('REPORT_FIELD_INVALID', `报告字段 ${field} 缺失或长度无效`)
+  if (typeof value !== 'string' || !value.length) {
+    throw new ReportError('REPORT_FIELD_INVALID', `报告字段 ${field} 缺失`)
+  }
+  if (value.length > 48 * 1024 * 1024) {
+    throw new ReportError('REPORT_FIELD_INVALID', `报告字段 ${field} 超出长度限制`)
   }
   const bytes = Buffer.from(value, 'base64')
-  if (bytes.toString('base64') !== value || (size && bytes.length !== size)) {
-    throw new ReportError('REPORT_FIELD_INVALID', `报告字段 ${field} 的 Base64 编码或长度无效，文件可能不完整`)
+  if (bytes.toString('base64') !== value) {
+    throw new ReportError('REPORT_FIELD_INVALID', `报告字段 ${field} 不是有效的 Base64`)
+  }
+  if (size && bytes.length !== size) {
+    throw new ReportError('REPORT_FIELD_INVALID', `报告字段 ${field} 解码后长度为 ${bytes.length}，应为 ${size}`)
   }
   return bytes
 }
@@ -21,9 +27,12 @@ function validateEnvelope(envelope) {
     throw new ReportError('REPORT_FORMAT_INVALID', '文件不是受支持的 vwork 加密故障报告，请确认选择的是原始 .vdiag 文件')
   }
   if (envelope.version !== 1) throw new ReportError('REPORT_VERSION_UNSUPPORTED', '报告版本不受支持，请使用与框架版本匹配的解密工具')
-  if (envelope.algorithm !== ALGORITHM) throw new ReportError('REPORT_ALGORITHM_UNSUPPORTED', '报告加密算法不受支持或算法字段被修改')
-  if (typeof envelope.keyId !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.keyId)) {
-    throw new ReportError('REPORT_FIELD_INVALID', '报告的密钥标识 keyId 缺失或格式无效')
+  if (envelope.algorithm !== ALGORITHM) throw new ReportError('REPORT_ALGORITHM_UNSUPPORTED', '报告加密算法不受支持')
+  if (typeof envelope.keyId !== 'string' || !envelope.keyId) {
+    throw new ReportError('REPORT_FIELD_INVALID', '报告缺少密钥标识 keyId')
+  }
+  if (!/^[a-f0-9]{64}$/.test(envelope.keyId)) {
+    throw new ReportError('REPORT_FIELD_INVALID', '报告的密钥标识 keyId 格式无效')
   }
   decodeBase64(envelope.wrappedKey, 'wrappedKey')
   decodeBase64(envelope.nonce, 'nonce', 12)
@@ -41,7 +50,7 @@ function parseReportBytes(bytes) {
   }
   let envelope
   try { envelope = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) }
-  catch { throw new ReportError('REPORT_JSON_INVALID', '报告不是完整的 JSON，可能被截断、损坏或并非原始报告文件') }
+  catch { throw new ReportError('REPORT_JSON_INVALID', '报告内容不是合法的 JSON') }
   return validateEnvelope(envelope)
 }
 

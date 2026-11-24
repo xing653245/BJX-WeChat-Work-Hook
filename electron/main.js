@@ -31,7 +31,7 @@ const {
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService
 } = require('./services/wecomInject')
-const { getInjectBinDir } = require('./commons/resourcePaths')
+const { getInjectBinDir, getCallbackSettingsPath } = require('./commons/resourcePaths')
 const { discoverWecom } = require('./services/wecomDiscovery')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { callFrameworkWecomApi } = require('./services/frameworkWecomApi')
@@ -55,7 +55,8 @@ let tray = null
 let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
 const instanceCallbacks = require('./services/instanceCallbacks').createInstanceCallbacks({
-  getSettingsFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
+  getSettingsFile: getCallbackSettingsPath,
+  getLegacyFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
   getInitialSettings: () => readInjectSettings(getInjectBinDir()),
   onMessage: (port, data) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastapi-message', { ...data, port })
@@ -84,9 +85,7 @@ function focusMainWindow() {
 
 function notifyPortError({ port, service, detail }) {
   const title = `${service} 端口 ${port} 不可用`
-  const message =
-    detail ||
-    `端口 ${port} 已被占用或无法绑定。\n\n请检查：\n1. 是否重复打开了本应用（应只保留一个实例）\n2. 是否有其他程序占用该端口\n3. 可在设置中更换 HTTP 监听端口后重启框架`
+  const message = detail || `端口 ${port} 无法绑定`
 
   diagnostics.error('L001', `[端口错误] ${title}: ${message}`)
   const userDetail = require('./commons/diagnostics.cjs').userMessage(message, '服务暂时无法启动，请关闭重复打开的应用后重试；如仍然失败，请联系技术支持')
@@ -1102,7 +1101,7 @@ ipcMain.handle('find-wecom-installations', async event => {
     return { success: true, candidates }
   } catch (error) {
     diagnostics.warn('C007', '自动查找企微安装位置失败', error)
-    return { success: false, msg: '自动查找失败，请重试或手动填写企微客户端路径' }
+    return { success: false, msg: require('./commons/diagnostics.cjs').userMessage(error, '自动查找企微安装位置失败') }
   }
 })
 
@@ -1111,7 +1110,7 @@ ipcMain.handle('discover-running-wecom', async event => {
   try { return { success: true, ...await discoverWecom() } }
   catch (error) {
     diagnostics.warn('C006', '检测已运行企微失败', error)
-    return { success: false, message: '无法检测正在运行的企微，请稍后点击重新检测；请勿重复启动同一账号。' }
+    return { success: false, message: require('./commons/diagnostics.cjs').userMessage(error, '检测正在运行的企微失败') }
   }
 })
 
@@ -1127,7 +1126,10 @@ async function listCallbackInstances() {
     if (userId) await instanceCallbacks.applySaved(port, userId)
     let restored
     try { restored = instanceCallbacks.get(port, userId) }
-    catch (error) { diagnostics.error('C005', '读取账号回调配置失败', error); restored = { storageWarning: '读取 callbackSetting.json 失败，请检查文件格式或读取权限' } }
+    catch (error) {
+      diagnostics.error('C005', '读取账号回调配置失败', error)
+      restored = { storageWarning: '读取 callbackSetting.json 失败：' + require('./commons/diagnostics.cjs').userMessage(error, '没有得到具体原因') }
+    }
     result.push({ port, pid, user_id: userId, nick_name: row.nick_name || '', ...restored })
   }
   return result

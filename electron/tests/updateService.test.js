@@ -26,7 +26,9 @@ function fixture(steps) {
     require: name => {
       if (name === 'electron-updater') return { autoUpdater: updater }
       if (name === '../configs/updateFeeds') return { UPDATE_FEEDS: feeds }
-      if (name === '../commons/diagnostics.cjs') return { createDiagnostics: () => ({ info() {}, warn() {} }) }
+      if (name === '../commons/diagnostics.cjs') return {
+        ...require('../commons/diagnostics.cjs'), createDiagnostics: () => ({ info() {}, warn() {} })
+      }
       throw new Error(name)
     }
   })
@@ -79,7 +81,7 @@ test('ERR_CONNECTION_CLOSED 显示为 GitHub 网络连接失败', () => {
     action: '检查',
     feed: { id: 'github', provider: 'github' }
   })
-  assert.match(message, /GitHub 更新（连接失败）/)
+  assert.match(message, /GitHub 更新（连接在完成前被关闭）/)
   assert.doesNotMatch(message, /ERR_CONNECTION_CLOSED/)
 })
 test('并发共用检查任务，下次检查仍从 Gitee 开始', async () => {
@@ -92,4 +94,33 @@ test('并发共用检查任务，下次检查仍从 Gitee 开始', async () => {
   await first
   await f.service.checkForUpdatesWithFallback()
   assert.deepEqual(f.calls, ['generic', 'generic'])
+})
+
+test('多源 HTTP 失败经两端用户提示后保留各源和各状态', async () => {
+  const { userMessage } = require('../commons/diagnostics.cjs')
+  const browser = await import('../../src/utils/diagnostics.mjs')
+  const f = fixture([new Error('HTTP 403 Forbidden'), new Error('HTTP 500 Internal Server Error')])
+  await assert.rejects(f.service.checkForUpdatesWithFallback(), error => {
+    const message = f.service.formatUpdateError(error)
+    assert.match(message, /所有更新源均不可用.*Gitee.*403.*GitHub.*500/)
+    assert.equal(userMessage(message), message)
+    assert.equal(browser.userMessage(message), message)
+    return true
+  })
+})
+
+test('更新代理错误分清连接、隧道、证书，不能统一判定拒绝请求', () => {
+  const f = fixture([])
+  for (const [code, expected] of [
+    ['ERR_PROXY_CONNECTION_FAILED', /无法连接代理服务器/],
+    ['ERR_TUNNEL_CONNECTION_FAILED', /代理隧道建立失败/],
+    ['ERR_PROXY_CERTIFICATE_INVALID', /代理服务器证书无效/]
+  ]) {
+    const message = f.service.formatUpdateError(new Error('net::' + code), { feed: { id: 'gitee', label: 'Gitee' } })
+    assert.match(message, expected)
+    assert.doesNotMatch(message, /代理拒绝了更新请求/)
+  }
+  assert.match(f.service.formatUpdateError(Object.assign(new Error('lookup failed'), { code: 'EAI_AGAIN' }), {
+    feed: { id: 'gitee', label: 'Gitee' }
+  }), /解析暂时失败/)
 })

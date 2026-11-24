@@ -46,7 +46,7 @@ function checkAuthExpire(expire, ctx = {}) {
     return {
       valid: false,
       reason: AUTH_REASON.AUTH_FETCH_FAILED,
-      message: `${accountHint}授权状态未能确认（网络或代理异常），请关闭 VPN/代理 或检查网络后右键「刷新授权」`
+      message: `${accountHint}授权查询没有成功，当前不能确认授权状态，请右键「刷新授权」`
     }
   }
 
@@ -96,7 +96,7 @@ function checkAuthExpire(expire, ctx = {}) {
   return {
     valid: false,
     reason: AUTH_REASON.NOT_AUTHORIZED,
-    message: `${accountHint}授权未激活或状态未确认，请在「企微管理」中右键「刷新授权」`
+    message: `${accountHint}授权到期时间仍有效，但服务器未确认该授权已激活，请右键「刷新授权」`
   }
 }
 
@@ -120,7 +120,7 @@ function checkAuthByPort(port, loginInfoList) {
     return {
       valid: false,
       reason: AUTH_REASON.PORT_NOT_FOUND,
-      message: `端口 ${port} 未在本地配置中找到对应账号，请在「企微管理」中重新添加或右键「刷新授权」`
+      message: `端口 ${port} 在本地账号列表中不存在，请在「企微管理」中刷新该实例`
     }
   }
 

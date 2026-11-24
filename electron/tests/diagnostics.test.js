@@ -17,7 +17,7 @@ test('诊断包含模块和定位编号，保留错误栈且隐藏密钥及请�
   assert.match(output, /stack/)
   assert.doesNotMatch(output, /secret-value|card-value|public-value/)
   assert.doesNotMatch(safeDetail('{"token":"secret-value"}'), /secret-value/)
-  assert.match(friendlyMessage(error), /服务已启动/)
+  assert.match(friendlyMessage(error), /连接被拒绝/)
   const cyclic = {}; cyclic.self = cyclic
   assert.equal(safeDetail(cyclic).self, '[循环引用]')
 })
@@ -32,22 +32,28 @@ test('前端 ESM 与主进程使用一致的提示和脱敏规则', async () => 
 test('两端区分网络、HTTP、进程、权限及内部错误，同时隐藏敏感原始信息', async () => {
   const browser = await import('../../src/utils/diagnostics.mjs')
   const samples = [
-    ['connect ECONNREFUSED 127.0.0.1:5529', /本地端口 5529.*连接被拒绝/],
+    ['connect ECONNREFUSED 127.0.0.1:5529', /连接被拒绝（本地端口 5529）/],
     ['EADDRINUSE 127.0.0.1:6272', /端口已被占用/],
-    ['ETIMEDOUT', /请求超时/], ['getaddrinfo ENOTFOUND host', /无法解析/],
-    ['ECONNRESET', /中断或重置/], ['Network Error', /网络请求失败/],
-    ['CERT_HAS_EXPIRED', /证书校验失败/], ['ENOSPC', /磁盘空间不足/],
-    ['EACCES E:\\private\\file', /没有操作权限/], ['EBUSY', /资源被占用/], ['EROFS', /只读/],
-    ['ENOENT E:\\private\\file', /所需文件不存在/], ['Cannot find module hidden', /运行组件缺失/],
-    ['注入工具不存在: E:\\private\\it.exe', /启动组件缺失/],
-    ['宿主文件校验失败: E:\\private\\WXWork.exe', /客户端文件校验失败/],
-    ['设置目标环境失败', /启动环境设置失败/], ['加载日志 DLL 失败', /组件加载失败/],
-    ['unsupported client version', /版本不兼容/], ['Hook type=1002 failed', /企微接入失败/],
+    ['ETIMEDOUT', /等待响应超时/], ['ECONNABORTED', /完成前被中止/],
+    ['getaddrinfo ENOTFOUND host', /无法解析目标地址/], ['EAI_AGAIN', /域名解析暂时失败/],
+    ['ECONNRESET', /被对方重置/], ['EPIPE', /数据未能送出/], ['socket hang up', /完整响应前被关闭/],
+    ['Network Error', /没有得到响应/], ['ERR_INTERNET_DISCONNECTED', /本机网络已断开/],
+    ['ENETUNREACH', /无法到达目标/], ['EHOSTUNREACH', /主机不可达/],
+    ['CERT_HAS_EXPIRED', /证书已过期/], ['DEPTH_ZERO_SELF_SIGNED_CERT', /自签名证书/],
+    ['ENOSPC', /磁盘空间不足/],
+    ['EACCES E:\\private\\file', /没有访问权限/], ['EPERM', /系统拒绝了该操作/],
+    ['EBUSY', /正被其他程序占用/], ['EROFS', /只读/],
+    ['ENOENT E:\\private\\file', /所需路径不存在/], ['Cannot find module hidden', /模块缺失/],
+    ['注入工具不存在: E:\\private\\it.exe', /注入工具文件不存在/],
+    ['spawn it.exe ENOENT', /要启动的程序不存在/],
+    ['宿主文件校验失败: E:\\private\\WXWork.exe', /客户端文件校验未通过/],
+    ['设置目标环境失败', /设置目标环境失败/], ['加载日志 DLL 失败', /加载日志 DLL 失败/],
+    ['unsupported client version', /版本不受支持/], ['Hook type=1002 failed', /企微接口调用失败/],
     ['exitCode=34', /进程异常退出/],
-    ['Error invoking remote method run-inject: TypeError: broken', /类型异常/],
-    ['ReferenceError: secret is not defined', /内部引用异常/],
-    ['SyntaxError: Unexpected token secret', /数据格式无效/],
-    ['No handler registered for hidden', /界面与后台通信失败/],
+    ['Error invoking remote method run-inject: TypeError: broken', /类型错误/],
+    ['ReferenceError: secret is not defined', /引用了不存在的内容/],
+    ['SyntaxError: Unexpected token secret', /不是合法的数据格式/],
+    ['No handler registered for hidden', /没有对应的后台处理/],
     [Object.assign(new Error('request failed'), { code: 'ECONNREFUSED' }), /连接被拒绝/],
     [{ message: 'request failed', response: { status: 403 } }, /HTTP 403.*拒绝访问/]
   ]
@@ -57,7 +63,7 @@ test('两端区分网络、HTTP、进程、权限及内部错误，同时隐藏�
     assert.equal(browser.userMessage(raw), result)
     assert.doesNotMatch(result, /E:\\private|secret|hidden|TypeError|Hook|exitCode/)
   }
-  for (const [status, expected] of [[400, /参数无效/], [401, /认证未通过/], [404, /接口不存在/], [408, /超时/], [409, /状态冲突/], [413, /数据过大/], [422, /校验/], [429, /过于频繁/], [500, /内部处理异常/], [502, /上游/], [503, /暂时不可用/], [504, /上游.*超时/], [418, /拒绝了请求/], [507, /处理请求失败/]]) {
+  for (const [status, expected] of [[400, /参数无效/], [401, /认证未通过/], [404, /接口不存在/], [408, /超时/], [409, /状态冲突/], [413, /数据过大/], [422, /校验/], [429, /过于频繁/], [500, /内部处理出错/], [502, /上游/], [503, /暂时不可用/], [504, /上游.*超时/], [418, /请求被拒绝/], [507, /处理失败/]]) {
     const raw = 'Request failed with status code ' + status
     assert.match(userMessage(raw), new RegExp('HTTP ' + status))
     assert.match(userMessage(raw), expected)
@@ -65,11 +71,11 @@ test('两端区分网络、HTTP、进程、权限及内部错误，同时隐藏�
   }
   assert.doesNotMatch(userMessage('Request failed with status code 401'), /卡密过期|账号被封/)
   assert.match(userMessage('unrecognized native error'), /未能识别具体原因/)
-  const exportError = '故障报告导出失败：报告不是完整的 JSON，可能被截断、损坏或并非原始报告文件'
+  const exportError = '故障报告导出失败：报告内容不是合法的 JSON'
   assert.equal(userMessage(exportError), exportError)
   assert.equal(userMessage("Error invoking remote method 'save-settings': Error: 客户端路径不存在"), '客户端路径不存在')
   assert.match(userMessage("Error invoking remote method 'run-inject': unexpected native failure"), /未能识别具体原因/)
-  assert.match(userMessage("Error invoking remote method 'run-inject': 宿主文件校验失败 E:\\private\\WXWork.exe"), /客户端文件校验失败/)
+  assert.match(userMessage("Error invoking remote method 'run-inject': 宿主文件校验失败 E:\\private\\WXWork.exe"), /客户端文件校验未通过/)
 })
 
 test('用户提示保留操作建议，隐藏文件路径、调用栈及内部编号', () => {
@@ -77,10 +83,13 @@ test('用户提示保留操作建议，隐藏文件路径、调用栈及内部�
     assert.equal(userMessage(raw, '请稍后重试'), '请稍后重试')
   }
   assert.equal(userMessage('请输入卡密'), '请输入卡密')
-  assert.match(userMessage('ECONNREFUSED 127.0.0.1:6272'), /确认对应企微或回调服务已启动/)
-  assert.match(userMessage('TypeError: cannot read property'), /类型异常/)
-  assert.match(userMessage('Hook type=1002 failed'), /企微接入失败/)
-  assert.match(userMessage('Request failed with status code 500'), /HTTP 500.*服务内部/)
+  assert.match(userMessage('ECONNREFUSED 127.0.0.1:6272'), /连接被拒绝/)
+  assert.doesNotMatch(userMessage('ECONNREFUSED 127.0.0.1:6272'), /企微或回调|并检查/)
+  assert.notEqual(userMessage('ECONNRESET'), userMessage('EPIPE'))
+  assert.notEqual(userMessage('EACCES'), userMessage('EPERM'))
+  assert.match(userMessage('TypeError: cannot read property'), /类型错误/)
+  assert.match(userMessage('Hook type=1002 failed'), /企微接口调用失败/)
+  assert.match(userMessage('Request failed with status code 500'), /HTTP 500.*内部处理/)
 })
 
 test('提示组件对用户只显示处理建议，诊断保留来源及原始错误', async () => {
@@ -90,8 +99,8 @@ test('提示组件对用户只显示处理建议，诊断保留来源及原始�
   const shown = [], details = []
   const context = {
     userMessage, Error,
-    createDiagnostics: source => ({ error: (...args) => details.push({ source, args }) }),
-    ElMessage: { error: options => shown.push(options) }
+    createDiagnostics: source => ({ error: (...args) => details.push({ source, args }), warn: (...args) => details.push({ source, args }) }),
+    ElMessage: { error: options => shown.push(options), warning: options => shown.push(options) }
   }
   vm.createContext(context)
   vm.runInContext(source + '\nthis.feedback = createFeedback("SettingsPage.vue")', context)
@@ -109,6 +118,55 @@ test('提示组件对用户只显示处理建议，诊断保留来源及原始�
   assert.match(shown.at(-1).message, /添加企微失败.*连接被拒绝/)
   context.manager.error('U036', '已检测到企微，请完全退出后再从框架添加')
   assert.equal(shown.at(-1).message, '已检测到企微，请完全退出后再从框架添加')
+  const authReason = '企微授权接口认证未通过（状态码 401，服务端代码 SIGNATURE_EXPIRED）：服务端说明：签名已过期，请校准系统时间'
+  context.manager.error('U033', authReason)
+  assert.match(shown.at(-1).message, /^读取授权信息失败：.*SIGNATURE_EXPIRED.*校准系统时间/)
+  context.manager.warning('U021', { message: authReason, action: '授权绑定', actionFailure: true })
+  assert.match(shown.at(-1).message, /^授权绑定失败：.*SIGNATURE_EXPIRED/)
+  assert.equal(shown.at(-1).action, undefined)
+  assert.equal(shown.at(-1).actionFailure, undefined)
+  context.manager.warning('U021', { message: authReason, action: '授权取消', actionFailure: true })
+  assert.match(shown.at(-1).message, /^授权取消失败：/)
+  context.manager.error('U022', { message: 'request failed', code: 'EACCES', name: 'Error', action: '授权绑定', actionFailure: true })
+  assert.match(shown.at(-1).message, /^授权绑定失败：没有访问权限$/)
+  context.manager.error('U026', authReason)
+  assert.match(shown.at(-1).message, /^授权迁移失败：/)
+  const combined = '所有更新源均不可用：Gitee 检查失败：HTTP 403 Forbidden；GitHub 检查失败：HTTP 500 Internal Server Error'
+  context.settings.error('U017', combined)
+  assert.match(shown.at(-1).message, /Gitee.*403.*GitHub.*500/)
+})
+
+test('实际 Axios 超时在两端均识别为超时，不误判为取消', async t => {
+  const http = require('node:http'), axios = require('axios')
+  const server = http.createServer(() => {})
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections() }))
+  const browser = await import('../../src/utils/diagnostics.mjs')
+  await assert.rejects(axios.get(`http://127.0.0.1:${server.address().port}`, { timeout: 40, proxy: false }), error => {
+    assert.equal(error.code, 'ECONNABORTED')
+    assert.match(userMessage(error), /超时/)
+    assert.doesNotMatch(userMessage(error), /中止|取消/)
+    assert.equal(browser.userMessage(error), userMessage(error))
+    return true
+  })
+})
+
+test('手册中的连接、代理和文件错误可区分，具体中文业务原因保留', async () => {
+  const browser = await import('../../src/utils/diagnostics.mjs')
+  for (const [raw, expected] of [
+    ['net::ERR_CONNECTION_CLOSED', /完成前被关闭/], ['net::ERR_NETWORK_CHANGED', /网络发生了变化/],
+    ['net::ERR_PROXY_CONNECTION_FAILED', /无法连接代理服务器/], ['net::ERR_TUNNEL_CONNECTION_FAILED', /代理隧道/],
+    ['net::ERR_PROXY_CERTIFICATE_INVALID', /代理服务器证书无效/], ['EISDIR', /指定的是文件夹/],
+    ['ENOTDIR', /某一级不是文件夹/], ['EEXIST', /目标已存在/], ['Hook failed', /企微组件执行失败/],
+    ['injection failed', /企微注入失败/]
+  ]) {
+    assert.match(userMessage(raw), expected)
+    assert.equal(browser.userMessage(raw), userMessage(raw))
+  }
+  for (const message of ['宿主文件校验失败：宿主 PE 时间戳不匹配', '加载日志 DLL 失败：系统错误 126']) {
+    assert.equal(userMessage(message), message)
+    assert.equal(browser.userMessage(message), message)
+  }
 })
 
 test('诊断文件异步写入并轮转，不写入完整私钥', async t => {

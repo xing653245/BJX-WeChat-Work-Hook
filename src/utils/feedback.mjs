@@ -26,11 +26,16 @@ export function createFeedback(source) {
   const show = (level, code, input) => {
     const options = input instanceof Error ? { message: input.message } : input && typeof input === 'object' ? { ...input } : { message: input }
     const action = actions[source]?.[code]
+    const actionLabel = options.action || action
+    delete options.action
     const fallback = '未能识别具体原因，请在运行日志中导出故障报告并联系技术支持'
     const reason = userMessage(input instanceof Error ? input : options, fallback)
     const original = typeof options.message === 'string' ? options.message.trim().replace(/^Error:\s*/, '') : ''
     // 原本清晰的业务说明直接保留，避免把“检测成功但尚未接入”等提醒说成检测失败。
-    const message = action && reason !== original && !reason.startsWith(action) ? `${action}失败：${reason}` : reason
+    const statusNotice = code === 'U036' && reason === original && /检测到.*企微/.test(reason)
+    const message = actionLabel && !statusNotice && (level === 'error' || reason !== original || options.actionFailure === true) && !reason.startsWith(actionLabel)
+      ? `${actionLabel}失败：${reason}` : reason
+    delete options.actionFailure
     diagnostics[level === 'warning' ? 'warn' : 'error'](code, message, input)
     return ElMessage[level]({ ...options, message, dangerouslyUseHTMLString: false, grouping: true })
   }

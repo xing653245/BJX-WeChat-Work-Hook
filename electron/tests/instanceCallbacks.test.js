@@ -143,6 +143,32 @@ test('配置文件损坏时不覆盖原内容；更新成功但写盘失败时�
   assert.equal(fs.readFileSync(file, 'utf8'), '{invalid-json')
 })
 
+test('保存失败即使返回成功也写入诊断，保留端口、阶段、错误码和路径', async t => {
+  const { setDiagnosticSink, setConsoleDiagnosticsEnabled } = require('../commons/diagnostics.cjs')
+  const records = []
+  setDiagnosticSink(record => records.push(record))
+  setConsoleDiagnosticsEnabled(false)
+  t.after(() => { setDiagnosticSink(null); setConsoleDiagnosticsEnabled(true) })
+  const file = 'C:/read-only/callbackSetting.json'
+  for (const code of ['EROFS', 'EIO', 'UNEXPECTED_STORAGE_ERROR']) {
+    const service = createInstanceCallbacks({
+      getSettingsFile: () => { throw Object.assign(new Error('storage failure token=private-value'), { code, path: file, syscall: 'open' }) },
+      post: async () => ({ errno: 0 })
+    })
+    t.after(() => service.close())
+    await service.update(2709, settings, 'account-a')
+    assert.equal(service.get(2709).confirmed, true)
+    assert.equal(service.get(2709).settings.url, settings.url)
+    assert.match(service.get(2709).storageWarning, /保存失败.*本次设置仍已生效/)
+    const record = records.at(-1)
+    assert.equal(record.source, 'services/instanceCallbacks.js')
+    assert.equal(record.code, 'C006')
+    assert.deepEqual(record.details[0], { port: 2709, stage: 'persist-callback-settings', systemCode: code, file, operation: 'open' })
+    assert.equal(record.details[1].code, code)
+  }
+  assert.doesNotMatch(JSON.stringify(records), /private-value/)
+})
+
 test('真实 HTTP 更新使用实例端口和 /updatesettings，接收 errno 成功响应', async t => {
   const http = require('node:http')
   const { findAvailablePort } = require('../services/wecomInject')

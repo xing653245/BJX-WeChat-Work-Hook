@@ -12,7 +12,7 @@ function openEnvelope(envelope, privateKey) {
     key = crypto.privateDecrypt({ key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, decodeBase64(envelope.wrappedKey, 'wrappedKey', privateKey.asymmetricKeyDetails.modulusLength / 8))
   } catch (error) {
     if (error instanceof ReportError) throw error
-    throw new ReportError('KEY_UNWRAP_FAILED', '报告的数据密钥无法解开，wrappedKey 可能损坏或被修改')
+    throw new ReportError('KEY_UNWRAP_FAILED', '报告的数据密钥无法解开')
   }
   try {
     if (key.length !== 32) throw new ReportError('KEY_LENGTH_INVALID', '解出的数据密钥长度无效，报告内容异常')
@@ -23,7 +23,7 @@ function openEnvelope(envelope, privateKey) {
     try { plaintext = Buffer.concat([decipher.update(decodeBase64(envelope.ciphertext, 'ciphertext')), decipher.final()]) }
     catch (error) {
       if (error instanceof ReportError) throw error
-      throw new ReportError('REPORT_AUTH_FAILED', '报告完整性认证失败：密文、随机数或认证标签被修改或损坏，请重新获取原始报告')
+      throw new ReportError('REPORT_AUTH_FAILED', '报告完整性认证失败，密文与认证标签不一致')
     }
     try { return JSON.parse(plaintext.toString('utf8')) }
     catch { throw new ReportError('REPORT_PAYLOAD_INVALID', '解密后的内容不是有效 JSON，报告生成内容异常') }
@@ -50,17 +50,17 @@ function decryptReport(envelope, privateKey) {
 function describeFailure(error, stage) {
   if (error instanceof ReportError) return `[${error.code}] ${error.message}`
   const reasons = {
-    ENOENT: '文件或父目录不存在，请检查路径',
-    EACCES: '无读写权限，请检查文件权限或更换输出目录',
-    EPERM: '访问被拒绝，请检查文件权限、只读属性或文件占用情况',
+    ENOENT: '路径不存在',
+    EACCES: '没有读取或写入权限',
+    EPERM: '系统拒绝了该操作',
     EISDIR: '指定的是文件夹，请填写完整文件路径',
     ENOTDIR: '路径中的某一级不是文件夹，请检查路径',
     EEXIST: '输出文件已存在，为避免覆盖已停止；请换一个输出文件名',
     ENOSPC: '输出磁盘空间不足',
     EBUSY: '文件被占用，请关闭占用程序后重试',
-    EIO: '文件读写失败，请检查磁盘或更换保存位置'
+    EIO: '读写时发生磁盘错误'
   }
-  return `[${error?.code || 'UNEXPECTED_ERROR'}] ${stage}失败：${reasons[error?.code] || '出现未预期异常，请确认文件可读、工具与报告版本匹配'}`
+  return `[${error?.code || 'UNEXPECTED_ERROR'}] ${stage}失败：${reasons[error?.code] || error?.message || '没有更具体的系统错误码'}`
 }
 
 function decryptFile(input, keyFile, output) {
