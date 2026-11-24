@@ -53,13 +53,13 @@
               </div>
               <p class="instance-status" role="status">{{ instanceStatus }}</p>
               <div class="field-grid">
-                <label class="field-label" for="settings-push-url">原生回调地址</label>
+                <label class="field-label" for="settings-push-url">外部回调地址</label>
                 <div class="field-control">
                   <el-input :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-url" v-model="instanceForm.push_url" class="field-input field-input-wide" placeholder="如 http://127.0.0.1:8002/msg" />
-                  <p class="field-hint">企微向此地址推送后续回调；更新只影响当前选择的实例</p>
+                  <p class="field-hint">框架记录消息后按配置推送到此地址；请保持框架运行。更新只影响当前选择的实例</p>
                 </div>
 
-                <label class="field-label" for="settings-push-enabled">开启原生回调</label>
+                <label class="field-label" for="settings-push-enabled">开启外部回调</label>
                 <div class="field-control control-inline">
                   <el-switch :disabled="!selectedCallbackRow || updatingInstance" id="settings-push-enabled" v-model="instanceForm.push_enabled" />
                   <span class="field-hint inline-hint">{{ instanceForm.push_enabled ? '更新后开启推送' : '更新后关闭推送' }}</span>
@@ -813,7 +813,7 @@ async function refreshCallbackInstances() {
     }
     callbackInstances.value = rows
     if (!rows.some(row => String(row.port) === selectedCallbackPort.value)) selectedCallbackPort.value = rows.length ? String(rows[0].port) : ''
-  } catch (error) { feedback.error('C002', '读取企微实例失败：' + error.message) }
+  } catch (error) { feedback.error('C002', error) }
   finally {
     loadingInstances.value = false
     if (callbackRefreshPending) void refreshCallbackInstances()
@@ -838,7 +838,7 @@ async function updateCallbackInstance() {
     draft.storageWarning = result.warning || ''
     if (result.warning) { ElMessage.warning(result.warning); return }
     ElMessage.success('当前企微已更新，配置已按账号 ID 保存')
-  } catch (error) { feedback.error('C003', error.message || '更新失败') }
+  } catch (error) { feedback.error('C003', error) }
   finally {
     updatingInstance.value = false
     if (callbackRefreshPending) void refreshCallbackInstances()
@@ -919,7 +919,7 @@ const autoFindWecom = async () => {
   installationCandidates.value = []
   try {
     const result = await window.electronAPI?.findWecomInstallations?.()
-    if (!result?.success) throw new Error(result?.msg || '自动查找不可用，请重启框架后重试')
+    if (!result?.success) throw new Error(result?.msg || '自动查找没有返回具体原因')
     const compatible = result.candidates.filter(item => item.supported)
     installationCandidates.value = compatible
     if (compatible.length === 1) await useInstallation(compatible[0])
@@ -928,7 +928,7 @@ const autoFindWecom = async () => {
       : '未找到企微安装位置，未修改路径。可先打开企微再查找，或手动填写 WXWork.exe 的完整路径。'
   } catch (error) {
     installationHintType.value = 'error'
-    installationHint.value = error.message || '自动查找失败，请重试或手动填写客户端路径。'
+    installationHint.value = error.message || '自动查找失败，没有返回具体原因'
     feedback.error('U024', installationHint.value)
   }
   finally { findingInstallations.value = false }
@@ -1046,7 +1046,7 @@ async function handleTestMessageText() {
       message: e?.message || String(e)
     }
     textTestResponseRaw.value = JSON.stringify(wrap, null, 2)
-    feedback.error('U009', e?.message || String(e))
+    feedback.error('U009', e)
   } finally {
     testingTextMsg.value = false
   }
@@ -1114,7 +1114,7 @@ const handleCheckUpdate = async () => {
       '检查更新失败',
       error.message
     )
-    feedback.error('U012', '检查更新失败: ' + error.message)
+    feedback.error('U012', error)
   } finally {
     checkingUpdate.value = false
   }
@@ -1134,7 +1134,7 @@ const handleDownloadUpdate = async () => {
       resetUpdateState()
     }
   } catch (error) {
-    feedback.error('U014', '下载更新失败: ' + error.message)
+    feedback.error('U014', error)
     resetUpdateState()
   }
 }
@@ -1152,7 +1152,7 @@ const handleInstallUpdate = async () => {
       installingUpdate.value = false
     }
   } catch (error) {
-    feedback.error('U016', '安装更新失败: ' + error.message)
+    feedback.error('U016', error)
     installingUpdate.value = false
   }
 }
@@ -1262,7 +1262,7 @@ async function savePreference(key, value) {
     ElMessage.success('偏好已保存')
   } catch (error) {
     formData[key] = key === 'auto_check_update' ? previous == null || previous === true || previous === 'true' : previous || 'ask'
-    feedback.error('P001', error.message || '保存偏好失败，请重试')
+    feedback.error('P001', error)
   } finally { savingPreference.value = false }
 }
 
@@ -1298,7 +1298,7 @@ const handleSave = async ({ detectedVersion } = {}) => {
     return true
   } catch (error) {
     pathSaveError.value = error.message || '请检查路径和文件权限后重试。'
-    feedback.error('U023', '客户端路径保存失败：' + pathSaveError.value)
+    feedback.error('U023', error)
     return false
   }
   finally { saving.value = false }

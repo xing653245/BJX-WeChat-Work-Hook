@@ -2,12 +2,50 @@
  * 北极熊授权 HTTP 客户端（主进程，经对应企微实例转发）
  */
 const axios = require('axios')
-const { formatAuthFetchError } = require('./authFetchError')
+const { formatAuthFetchError, pickAuthServiceMessage } = require('./authFetchError')
+const { createDiagnostics } = require('./diagnostics.cjs')
 const { getPolarBearBaseUrl } = require('../configs/polarBearBackend')
 const { enqueuePortTask } = require('../services/wecomApiClient')
+const diagnostics = createDiagnostics('commons/polarBearClient.cjs')
 
 // 本地企微请求不经系统代理，也不跟随重定向到外部后端。
 const requestOptions = { timeout: 10000, proxy: false, maxRedirects: 0 }
+
+function requestPolarBear(port, method, endpoint, send) {
+  return enqueuePortTask(Number(port), async () => {
+    const response = await send()
+    // HTTP 成功不代表业务成功；失败响应不能继续作为授权数据使用。
+    let body = response.data
+    for (let i = 0; i < 4 && body && typeof body === 'object' && !Array.isArray(body); i++) {
+      const hasCode = body.code !== undefined && body.code !== null && body.code !== ''
+      if (body.success === false || (hasCode && !isPolarSuccessCode(body.code))) {
+        throw Object.assign(new Error('企微授权业务请求失败'), {
+          code: 'AUTH_BUSINESS_FAILED', response: { status: response.status, data: body }
+        })
+      }
+      if (body.success !== true && !isPolarSuccessCode(body.code)) break
+      body = body.data
+    }
+    if (method === 'GET' && endpoint === '/polarBear/getAuthInfo' &&
+        (!response.data?.data || typeof response.data.data !== 'object' || Array.isArray(response.data.data))) {
+      throw Object.assign(new Error('授权接口响应缺少有效授权数据'), {
+        code: 'AUTH_RESPONSE_INVALID', response: { status: response.status, data: response.data }
+      })
+    }
+    return response.data
+  }).catch(error => {
+    const serviceCode = error?.response?.data?.code
+    // 不记录查询参数、请求体、响应业务数据或认证头；不受运行日志开关影响。
+    diagnostics.error('L001', '企微授权接口请求失败', {
+      port: Number(port), method, endpoint,
+      status: error?.response?.status,
+      failureKind: error?.code === 'AUTH_BUSINESS_FAILED' ? 'business' : error?.code === 'AUTH_RESPONSE_INVALID' ? 'response' : 'transport',
+      serviceCode: typeof serviceCode === 'string' || typeof serviceCode === 'number' ? serviceCode : undefined,
+      serviceMessage: pickAuthServiceMessage(error?.response?.data)
+    }, error)
+    throw error
+  })
+}
 
 function pickBackendMessage(data) {
   if (!data) return ''
@@ -84,17 +122,17 @@ async function getAuthInfo(wxid, port) {
   const userId = String(wxid || '').trim()
   if (!userId) throw new Error('缺少 wxid，无法查询授权')
   const url = `${getPolarBearBaseUrl(port)}/polarBear/getAuthInfo?wxid=${encodeURIComponent(userId)}`
-  return enqueuePortTask(Number(port), () => axios.get(url, requestOptions).then(response => response.data))
+  return requestPolarBear(port, 'GET', '/polarBear/getAuthInfo', () => axios.get(url, requestOptions))
 }
 
 async function postPolarBear(port, path, body) {
   const url = `${getPolarBearBaseUrl(port)}${path}`
-  return enqueuePortTask(Number(port), () => axios.post(url, body, {
+  return requestPolarBear(port, 'POST', path, () => axios.post(url, body, {
     ...requestOptions,
     headers: {
       'Content-Type': 'application/json'
     }
-  }).then(response => response.data))
+  }))
 }
 
 /**

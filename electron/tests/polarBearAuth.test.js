@@ -7,6 +7,8 @@ const vm = require('node:vm')
 const { once } = require('node:events')
 const { getPolarBearBaseUrl } = require('../configs/polarBearBackend')
 const { getAuthInfo, bindCard, unbindCard, convertCardByWxid } = require('../commons/polarBearClient.cjs')
+const { formatAuthFetchError } = require('../commons/authFetchError')
+const { setDiagnosticSink, setConsoleDiagnosticsEnabled, userMessage } = require('../commons/diagnostics.cjs')
 
 async function hookServer(t, reply) {
   const calls = []
@@ -65,7 +67,7 @@ test('无端口或参数错误时失败；企微业务失败不会变成绑定�
   const denied = await hookServer(t, (_req, res) => res.end(JSON.stringify({ success: false, msg: '卡密无效' })))
   const result = await bindCard({ port: denied.port, wxid: 'wxid', card_key: 'bad' })
   assert.equal(result.success, false)
-  assert.equal(result.msg, '卡密无效')
+  assert.match(result.msg, /服务端说明：卡密无效/)
   const missingKey = await hookServer(t, (_req, res) => res.end(JSON.stringify({ success: true, data: {} })))
   assert.equal((await convertCardByWxid({ port: missingKey.port, wxid: 'wxid' })).success, false)
 })
@@ -79,6 +81,50 @@ test('不跟随企微接口重定向，不访问其他后端', async t => {
   await assert.rejects(getAuthInfo('wxid', redirect.port))
   assert.equal((await bindCard({ port: redirect.port, wxid: 'wxid', card_key: 'card' })).success, false)
   assert.equal(destination.calls.length, 0)
+})
+
+test('授权认证失败保留请求上下文和服务端说明，界面提示不被通用 HTTP 翻译覆盖', async t => {
+  const records = []
+  setDiagnosticSink(record => records.push(record))
+  setConsoleDiagnosticsEnabled(false)
+  t.after(() => { setDiagnosticSink(null); setConsoleDiagnosticsEnabled(true) })
+  const browser = await import('../../src/utils/diagnostics.mjs')
+  for (const status of [401, 403]) {
+    const hook = await hookServer(t, (_req, res) => {
+      res.statusCode = status
+      res.end(JSON.stringify({
+        code: 'AUTH_DENIED', message: 'signature rejected; token=secret-token',
+        card_key: 'secret-response-card', data: { card_key: 'secret-nested-card' }
+      }))
+    })
+    let original
+    await assert.rejects(getAuthInfo('private-wxid', hook.port), error => {
+      original = error
+      return error.response.status === status
+    })
+    const message = formatAuthFetchError(original)
+    assert.match(message, new RegExp(`企微授权接口.*状态码 ${status}`))
+    assert.match(message, /AUTH_DENIED.*服务端说明：signature rejected/)
+    assert.equal(userMessage(message), message)
+    assert.equal(browser.userMessage(message), message)
+    assert.doesNotMatch(message, /认证配置|secret-token|授权到期|账号被封/)
+    for (const call of [bindCard, unbindCard, convertCardByWxid]) {
+      const result = await call({ port: hook.port, wxid: 'private-wxid', card_key: 'secret-request-card' })
+      assert.equal(result.success, false)
+      assert.equal(result.msg, message)
+    }
+    const failures = records.filter(record => record.details[0].port === hook.port)
+    assert.equal(failures.length, 4)
+    assert.deepEqual(failures.map(record => record.details[0].endpoint), [
+      '/polarBear/getAuthInfo', '/polarBear/card/bind', '/polarBear/card/unbind', '/polarBear/card/convertBywxid'
+    ])
+    for (const record of failures) {
+      assert.equal(record.details[0].status, status)
+      assert.equal(record.details[0].serviceCode, 'AUTH_DENIED')
+      assert.match(record.details[0].serviceMessage, /signature rejected/)
+    }
+  }
+  assert.doesNotMatch(JSON.stringify(records), /private-wxid|secret-token|secret-response-card|secret-nested-card|secret-request-card/)
 })
 
 test('渲染层卡密服务传递行端口，预加载桥接传递查询端口', async () => {
@@ -106,4 +152,58 @@ test('渲染层卡密服务传递行端口，预加载桥接传递查询端口',
   })
   exposed.getAuthInfo('wxid', 6272)
   assert.deepEqual(invocations, [['get-auth-info', 'wxid', 6272]])
+})
+
+test('HTTP 200 的业务拒绝经过 IPC 仍是失败，保留授权且不误报停用', async t => {
+  const records = []
+  setDiagnosticSink(record => records.push(record))
+  setConsoleDiagnosticsEnabled(false)
+  t.after(() => { setDiagnosticSink(null); setConsoleDiagnosticsEnabled(true) })
+  const authFields = await import('data:text/javascript;base64,' + Buffer.from(
+    fs.readFileSync(path.resolve(__dirname, '../../src/utils/authExpire.js'), 'utf8')
+  ).toString('base64'))
+  const main = fs.readFileSync(path.resolve(__dirname, '../main.js'), 'utf8')
+  const handlerSource = main.slice(main.indexOf("ipcMain.handle('get-auth-info'"), main.indexOf("ipcMain.handle('card-bind'"))
+  let handler
+  vm.runInNewContext(handlerSource, {
+    ipcMain: { handle: (_channel, fn) => { handler = fn } }, getAuthInfo, formatAuthFetchError,
+    readConfig: () => ({ sys: {} })
+  })
+  const previous = { expire: '2099-01-01 00:00:00', auth_active: true, card_key: 'private-saved-card' }
+  for (const body of [
+    { success: false, code: 'SIGNATURE_EXPIRED', msg: '请求签名已过期，请校准系统时间', data: null },
+    { success: false, code: 503, msg: '授权服务维护中', data: {} },
+    { success: true, code: 401, message: '认证未通过', data: { active: false } },
+    { code: 0, data: { success: false, code: 403, detail: '拒绝访问', data: {} } }
+  ]) {
+    const hook = await hookServer(t, (_req, res) => res.end(JSON.stringify(body)))
+    const result = await handler({}, 'private-wxid', hook.port)
+    assert.equal(result.success, false)
+    assert.equal(result.errorCode, 'AUTH_FETCH_FAILED')
+    assert.match(result.msg, /被服务端拒绝.*HTTP 状态 200/)
+    assert.deepEqual(authFields.resolveAuthFieldsAfterAuthFetch(result, previous), previous)
+    assert.equal(authFields.resolveAuthFieldsAfterAuthFetch(result, {}).expire, '查询失败')
+    const record = records.find(record => record.details[0].port === hook.port)
+    assert.equal(record.details[0].status, 200)
+    assert.equal(record.details[0].failureKind, 'business')
+    assert.match(record.details[0].serviceMessage, /过期|维护|认证|拒绝/)
+  }
+  assert.doesNotMatch(JSON.stringify(records), /private-wxid|private-saved-card/)
+})
+
+test('授权响应格式错误与无授权业务数据区分，401 的已知原因能定位', async t => {
+  for (const body of [null, {}, { code: 0, data: null }, { code: 0, data: [] }]) {
+    const hook = await hookServer(t, (_req, res) => res.end(JSON.stringify(body)))
+    await assert.rejects(getAuthInfo('wxid', hook.port), { code: 'AUTH_RESPONSE_INVALID' })
+  }
+  const emptyAuth = await hookServer(t, (_req, res) => res.end(JSON.stringify({ code: 0, data: {} })))
+  assert.deepEqual(await getAuthInfo('wxid', emptyAuth.port), { code: 0, data: {} })
+  const reason = formatAuthFetchError({ response: { status: 401, data: {
+    code: 'SIGNATURE_EXPIRED', message: '签名已过期，请校准系统时间'
+  } } })
+  assert.match(reason, /状态码 401.*SIGNATURE_EXPIRED.*校准系统时间/)
+  assert.equal(userMessage(reason), reason)
+  assert.doesNotMatch(reason, /企微已登录|卡密过期/)
+  assert.match(formatAuthFetchError(Object.assign(new Error('getaddrinfo EAI_AGAIN example'), { code: 'EAI_AGAIN' })), /解析暂时失败/)
+  assert.doesNotMatch(formatAuthFetchError({ response: { status: 404 } }), /当前注入没有提供/)
 })

@@ -1,4 +1,4 @@
-const { createDiagnostics } = require('../commons/diagnostics.cjs')
+const { createDiagnostics, userMessage } = require('../commons/diagnostics.cjs')
 const diagnostics = createDiagnostics('services/updateService.js')
 /**
  * 自动更新：优先 Gitee，仅当 Gitee 检查失败时回退到 GitHub
@@ -45,53 +45,49 @@ function normalizeErrorMessage(err) {
   return String(err?.message || err || '').trim()
 }
 
-function isNetworkUnreachableError(message) {
-  const lower = normalizeErrorMessage(message).toLowerCase()
-  if (!lower) return false
-  return (
-    lower.includes('enotfound') ||
-    lower.includes('getaddrinfo') ||
-    lower.includes('timeout') ||
-    lower.includes('etimedout') ||
-    lower.includes('econnrefused') ||
-    lower.includes('econnreset') ||
-    lower.includes('enetunreach') ||
-    lower.includes('ehostunreach') ||
-    lower.includes('network error') ||
-    lower.includes('socket hang up') ||
-    lower.includes('net::err_connection_timed_out') ||
-    lower.includes('net::err_connection_closed') ||
-    lower.includes('net::err_connection_reset') ||
-    lower.includes('net::err_name_not_resolved') ||
-    lower.includes('net::err_internet_disconnected') ||
-    lower.includes('net::err_network_changed') ||
-    lower.includes('net::err_proxy')
-  )
+function describeNetworkFailure(message) {
+  const lower = [message?.code, normalizeErrorMessage(message)].filter(Boolean).join(' ').toLowerCase()
+  if (!lower) return ''
+  if (lower.includes('eai_again')) return '更新服务器地址解析暂时失败'
+  if (lower.includes('enotfound') || lower.includes('getaddrinfo') || lower.includes('err_name_not_resolved')) return '无法解析更新服务器地址'
+  if (lower.includes('etimedout') || lower.includes('err_connection_timed_out') || lower.includes('timeout')) return '连接更新服务器超时'
+  if (lower.includes('econnrefused')) return '更新服务器拒绝连接'
+  if (lower.includes('econnreset') || lower.includes('err_connection_reset')) return '更新服务器重置了连接'
+  if (lower.includes('err_connection_closed') || lower.includes('socket hang up')) return '连接在完成前被关闭'
+  if (lower.includes('err_internet_disconnected')) return '本机网络已断开'
+  if (lower.includes('enetunreach')) return '当前网络无法到达更新服务器'
+  if (lower.includes('ehostunreach')) return '更新服务器主机不可达'
+  if (lower.includes('err_proxy_connection_failed')) return '无法连接代理服务器'
+  if (lower.includes('err_tunnel_connection_failed')) return '代理隧道建立失败'
+  if (lower.includes('err_proxy_certificate_invalid')) return '代理服务器证书无效'
+  if (lower.includes('err_proxy_auth_unsupported')) return '代理服务器要求的认证方式不受支持'
+  if (lower.includes('err_no_supported_proxies')) return '没有可用的受支持代理'
+  if (lower.includes('err_proxy')) return '代理请求失败，请按故障报告中的具体代理错误码排查'
+  if (lower.includes('err_network_changed')) return '检查更新时网络发生了变化'
+  if (lower.includes('network error')) return '更新请求没有得到响应'
+  return ''
 }
 
 function isGithubFeed(feed) {
   return feed?.id === 'github' || feed?.provider === 'github'
 }
 
-function formatFeedNetworkError(feed, action = '检查') {
-  if (isGithubFeed(feed)) {
-    return `无法${action} GitHub 更新（连接失败），国内网络通常需开启 VPN/代理后重试`
-  }
-  if (feed?.id === 'gitee') {
-    return `无法${action} Gitee 更新，请检查网络连接后重试`
-  }
-  return `无法${action}更新服务器，请检查网络连接后重试`
+function formatFeedNetworkError(feed, failure, action = '检查') {
+  const where = feed?.label || (isGithubFeed(feed) ? 'GitHub' : feed?.id === 'gitee' ? 'Gitee' : '更新服务器')
+  const proxy = isGithubFeed(feed) ? '。访问 GitHub 失败时，国内网络通常需要可用的代理' : ''
+  return `无法${action} ${where} 更新（${failure}）${proxy}`
 }
 
 function formatFeedFailure(feed, err, action = '检查') {
   const msg = normalizeErrorMessage(err)
-  if (isNetworkUnreachableError(msg)) {
-    return formatFeedNetworkError(feed, action)
+  const network = describeNetworkFailure(err)
+  if (network) {
+    return formatFeedNetworkError(feed, network, action)
   }
   if (msg.includes('404') || msg.includes('Not Found')) {
-    return `${feed.label} 未找到对应版本安装包，请联系管理员重新发布`
+    return `${feed.label} 未找到对应版本安装包`
   }
-  const brief = msg.length > 120 ? `${msg.slice(0, 120)}…` : msg
+  const brief = userMessage(err, '未能识别具体原因，请导出故障报告')
   return `${feed.label} ${action}失败：${brief}`
 }
 
@@ -102,34 +98,21 @@ function formatUpdateError(err, { action = '检查', feed = null } = {}) {
     return action === '下载' ? '下载更新失败，请稍后重试' : '检查更新失败，请稍后重试'
   }
 
-  if (msg.includes('所有更新源均不可用')) {
+  if (msg.includes('所有更新源均不可用') || msg.includes('所有更新源均连接失败')) {
     return msg
   }
 
-  if (feed && isNetworkUnreachableError(msg)) {
-    return formatFeedNetworkError(feed, action)
-  }
+  if (feed) return formatFeedFailure(feed, err, action)
 
-  if (isNetworkUnreachableError(msg)) {
-    if (msg.toLowerCase().includes('github.com') || msg.toLowerCase().includes('github')) {
-      return `无法${action} GitHub 更新（连接超时），请开启 VPN/代理 后重试`
-    }
-    if (msg.toLowerCase().includes('gitee.com') || msg.toLowerCase().includes('gitee')) {
-      return `无法${action} Gitee 更新，请检查网络连接后重试`
-    }
-    return `网络不可达或连接超时，请检查网络；若使用 GitHub 更新源，请开启 VPN/代理 后重试`
-  }
-
-  if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
-    return '无法解析更新服务器地址，请检查网络或 DNS 设置'
-  }
-
-  if (msg.includes('ECONNREFUSED')) {
-    return '更新服务器拒绝连接，请稍后重试'
+  const network = describeNetworkFailure(err)
+  if (network) {
+    if (msg.toLowerCase().includes('github')) return `无法${action} GitHub 更新（${network}）。访问 GitHub 失败时，国内网络通常需要可用的代理`
+    if (msg.toLowerCase().includes('gitee')) return `无法${action} Gitee 更新（${network}）`
+    return network
   }
 
   if (msg.includes('404') || msg.includes('Not Found')) {
-    return '未找到更新安装包，可能尚未发布，请稍后再试'
+    return '未找到对应的更新安装包'
   }
 
   return action === '下载' ? `下载更新失败：${msg}` : `更新检查失败：${msg}`
@@ -142,19 +125,6 @@ function buildCombinedError(failures, action = '检查') {
 
   if (failures.length === 1) {
     return new Error(formatFeedFailure(failures[0].feed, failures[0].err, action))
-  }
-
-  const giteeFailed = failures.find((item) => item.feed.id === 'gitee')
-  const githubFailed = failures.find((item) => item.feed.id === 'github')
-
-  if (giteeFailed && githubFailed) {
-    const giteeNet = isNetworkUnreachableError(giteeFailed.err)
-    const githubNet = isNetworkUnreachableError(githubFailed.err)
-    if (giteeNet && githubNet) {
-      return new Error(
-        '所有更新源均连接失败：Gitee 不可达，GitHub 连接超时（国内通常需开启 VPN/代理）。请检查网络或开启代理后重试'
-      )
-    }
   }
 
   const detail = failures

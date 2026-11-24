@@ -9,7 +9,8 @@ test('注入后按账号自动应用历史设置一次，并发刷新不重复�
   fs.writeFileSync(file, contents)
   let calls = 0
   const service = createInstanceCallbacks({ getSettingsFile: () => file, post: async (port, body) => {
-    calls++; assert.equal(port, 7217); assert.deepEqual(body, settings); return { errno: 0 }
+    calls++; assert.equal(port, 7217); assert.match(body.url, /^http:\/\/127\.0\.0\.1:\d+\/msg$/)
+    assert.equal(body.Message_Encryption, false); assert.equal(body.enabled, true); return { errno: 0 }
   } })
   t.after(() => service.close())
   await service.prepare(7217)
@@ -27,20 +28,23 @@ test('注入后按账号自动应用历史设置一次，并发刷新不重复�
 
 test('无账号配置时保留随机回调，失败不标记成功，手动更新可重试', async t => {
   const { file, fs } = cacheFixture(t)
-  let calls = 0, fail = true
+  let calls = 0, fail = false
   const service = createInstanceCallbacks({ getSettingsFile: () => file, post: async () => {
     calls++; return { errno: fail ? -1 : 0 }
   } })
   t.after(() => service.close())
   const url = await service.prepare(7217)
   await service.applySaved(7217, 'unknown')
-  assert.equal(calls, 0)
-  assert.equal(service.get(7217).settings.url, url)
+  assert.equal(calls, 1)
+  assert.equal(service.get(7217).callbackUrl, url)
+  assert.equal(service.get(7217).settings.url, '')
   fs.writeFileSync(file, JSON.stringify({ version: 1, accounts: { demo: { settings } } }))
+  await service.prepare(7217)
+  fail = true
   assert.match((await service.applySaved(7217, 'demo')).warning, /失败/)
   await service.applySaved(7217, 'demo')
-  assert.equal(calls, 1)
-  assert.equal(service.get(7217).settings.url, url)
+  assert.equal(calls, 2)
+  assert.equal(service.get(7217).settings.url, '')
   assert.equal(service.get(7217, 'demo').confirmed, false)
   fail = false
   await service.update(7217, settings, 'demo')
@@ -139,6 +143,32 @@ test('配置文件损坏时不覆盖原内容；更新成功但写盘失败时�
   assert.equal(fs.readFileSync(file, 'utf8'), '{invalid-json')
 })
 
+test('保存失败即使返回成功也写入诊断，保留端口、阶段、错误码和路径', async t => {
+  const { setDiagnosticSink, setConsoleDiagnosticsEnabled } = require('../commons/diagnostics.cjs')
+  const records = []
+  setDiagnosticSink(record => records.push(record))
+  setConsoleDiagnosticsEnabled(false)
+  t.after(() => { setDiagnosticSink(null); setConsoleDiagnosticsEnabled(true) })
+  const file = 'C:/read-only/callbackSetting.json'
+  for (const code of ['EROFS', 'EIO', 'UNEXPECTED_STORAGE_ERROR']) {
+    const service = createInstanceCallbacks({
+      getSettingsFile: () => { throw Object.assign(new Error('storage failure token=private-value'), { code, path: file, syscall: 'open' }) },
+      post: async () => ({ errno: 0 })
+    })
+    t.after(() => service.close())
+    await service.update(2709, settings, 'account-a')
+    assert.equal(service.get(2709).confirmed, true)
+    assert.equal(service.get(2709).settings.url, settings.url)
+    assert.match(service.get(2709).storageWarning, /保存失败.*本次设置仍已生效/)
+    const record = records.at(-1)
+    assert.equal(record.source, 'services/instanceCallbacks.js')
+    assert.equal(record.code, 'C006')
+    assert.deepEqual(record.details[0], { port: 2709, stage: 'persist-callback-settings', systemCode: code, file, operation: 'open' })
+    assert.equal(record.details[1].code, code)
+  }
+  assert.doesNotMatch(JSON.stringify(records), /private-value/)
+})
+
 test('真实 HTTP 更新使用实例端口和 /updatesettings，接收 errno 成功响应', async t => {
   const http = require('node:http')
   const { findAvailablePort } = require('../services/wecomInject')
@@ -158,7 +188,10 @@ test('真实 HTTP 更新使用实例端口和 /updatesettings，接收 errno 成
   const service = createInstanceCallbacks()
   t.after(() => service.close())
   await service.update(port, settings, 'account-a')
-  assert.deepEqual(received, { method: 'POST', url: '/updatesettings', body: settings })
+  assert.deepEqual(received, { method: 'POST', url: '/updatesettings', body: {
+    ...settings, url: service.get(port).callbackUrl
+  } })
+  assert.equal(service.get(port).settings.url, settings.url)
 })
 
 test('不同企微分配不同随机接收端口，原生回调按实例进入框架', async t => {
@@ -183,7 +216,7 @@ test('实例更新严格发送六字段且互不影响；errno -1 或无 errno �
   await service.prepare(2709); await service.prepare(3740)
   const previous = service.get(3740)
   await service.update(2709, { ...settings, host: 'ignored', port: 9999, Update: true }, 'account-a')
-  assert.deepEqual(calls[0], { port: 2709, body: settings })
+  assert.deepEqual(calls[0], { port: 2709, body: { ...settings, url: service.get(2709).callbackUrl } })
   assert.deepEqual(service.get(3740), previous)
   result = { errno: -1, msg: '失败' }
   await assert.rejects(service.update(2709, { ...settings, retries: 9 }, 'account-a'), /失败/)

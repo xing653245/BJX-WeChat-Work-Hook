@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 
-test('企微消息仅更新框架本地日志，不再转发到外部回调地址', async () => {
+test('兼容 HTTP 入口只记录日志，避免与实例接收器重复转发', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../express_server.js'), 'utf8')
   const start = source.indexOf('async function processIncomingWecomMessage(data)')
   const end = source.indexOf("app.post('/msg'", start)

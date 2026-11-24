@@ -140,9 +140,8 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   }
   const actualSize = fs.statSync(exePath).size
   const actualSha512 = crypto.createHash('sha512').update(fs.readFileSync(exePath)).digest('base64')
-  if (parsed.sha512 !== actualSha512 || (parsed.size && Number(parsed.size) !== actualSize)) {
-    throw new Error('latest.yml 的校验值或大小与安装包不一致，请重新打包')
-  }
+  if (parsed.sha512 !== actualSha512) throw new Error('latest.yml 的校验值与安装包不一致，请重新打包')
+  if (parsed.size && Number(parsed.size) !== actualSize) throw new Error('latest.yml 记录的大小与安装包不一致，请重新打包')
   // 关闭差分包后 electron-builder 可能省略 size，发布时从实际文件补全。
   parsed.size = actualSize
 
@@ -164,7 +163,6 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   diagnostics.info('L003', `[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
 
   const uploadPlan = [
-    { localPath: normalizedYmlPath, uploadName: 'latest.yml' },
     { localPath: normalizedExePath, uploadName: installerName }
   ]
 
@@ -191,6 +189,8 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
     )
   }
 
+  // 安装包和说明就绪后再发布更新清单，避免客户端提前下载尚未上传的文件。
+  uploadPlan.push({ localPath: normalizedYmlPath, uploadName: 'latest.yml' })
   return { uploadPlan, tempDir, installerName }
 }
 
@@ -229,7 +229,7 @@ function readWindowsUserEnv(name) {
   if (process.platform !== 'win32') return ''
   try {
     return execSync(
-      `powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable('${name}', 'User')]"`,
+      `powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable('${name}', 'User')"`,
       { encoding: 'utf-8' }
     ).trim()
   } catch {

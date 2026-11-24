@@ -109,7 +109,7 @@ async function processIncomingWecomMessage(data) {
     }
   }
 
-  // 外部回调由企微原生推送，此处只处理框架内部日志。
+  // 外部回调由独立实例接收器转发；兼容入口只处理日志，避免重复推送。
   if (!valid_auth) {
     const error_data = {
       content: authResult.message || '当前授权已到期，请重新购买授权',

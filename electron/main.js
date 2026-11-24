@@ -31,7 +31,7 @@ const {
   findAvailablePort: findAvailablePortForInject,
   runInjectTool: runInjectToolService
 } = require('./services/wecomInject')
-const { getInjectBinDir } = require('./commons/resourcePaths')
+const { getInjectBinDir, getCallbackSettingsPath } = require('./commons/resourcePaths')
 const { discoverWecom } = require('./services/wecomDiscovery')
 const { postToVWorkApi } = require('./services/wecomApiClient')
 const { callFrameworkWecomApi } = require('./services/frameworkWecomApi')
@@ -55,9 +55,13 @@ let tray = null
 let allowMainWindowClose = false
 let messageServer = null // 消息接收服务器
 const instanceCallbacks = require('./services/instanceCallbacks').createInstanceCallbacks({
-  getSettingsFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
+  getSettingsFile: getCallbackSettingsPath,
+  getLegacyFile: () => path.join(getInjectBinDir(), 'callbackSetting.json'),
+  getInitialSettings: () => readInjectSettings(getInjectBinDir()),
   onMessage: (port, data) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastapi-message', { ...data, port })
+    const config = readIni()
+    if (config.open_log && config.save_log) void saveLogToFile(data).catch(error => diagnostics.warn('C008', '保存企微消息日志失败', error))
   }
 })
 let loginStatusCheckInterval = null // 定时检查登录状态
@@ -81,9 +85,7 @@ function focusMainWindow() {
 
 function notifyPortError({ port, service, detail }) {
   const title = `${service} 端口 ${port} 不可用`
-  const message =
-    detail ||
-    `端口 ${port} 已被占用或无法绑定。\n\n请检查：\n1. 是否重复打开了本应用（应只保留一个实例）\n2. 是否有其他程序占用该端口\n3. 可在设置中更换 HTTP 监听端口后重启框架`
+  const message = detail || `端口 ${port} 无法绑定`
 
   diagnostics.error('L001', `[端口错误] ${title}: ${message}`)
   const userDetail = require('./commons/diagnostics.cjs').userMessage(message, '服务暂时无法启动，请关闭重复打开的应用后重试；如仍然失败，请联系技术支持')
@@ -527,6 +529,10 @@ const runInjectForPort = async (robotPort, reason) => {
     const result = await runInjectToolService({ port: robotPort, callbackUrl })
     if (!result.success) await instanceCallbacks.remove(robotPort)
     const ok = result.success === true
+    if (ok) {
+      try { await instanceCallbacks.connect(robotPort) }
+      catch (error) { diagnostics.warn('C009', '初始化本地消息接收失败，登录后将再次尝试；可在设置中更新当前企微重试', error) }
+    }
     recordInjectAttempt(robotPort, ok)
     const summary = require('./commons/injectConsole.cjs').formatInjectSummary({
       port: robotPort, reason, success: ok, callbackUrl
@@ -935,7 +941,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return
   const { setDiagnosticSink } = require('./commons/diagnostics.cjs')
-  const { loadReportPublicKey, sealReport } = require('./commons/reportEncryption.cjs')
+  const { loadReportPublicKey } = require('./commons/reportEncryption.cjs')
   const reportKey = loadReportPublicKey()
   const writer = require('./services/diagnosticFile').createDiagnosticWriter(path.join(app.getPath('userData'), 'diagnostics'), { publicKey: reportKey })
   setDiagnosticSink(writer.write)
@@ -956,13 +962,11 @@ app.whenReady().then(async () => {
       })
       if (choice.canceled || !choice.filePath) return { canceled: true }
       const payload = { kind: 'report', version: 1, createdAt: new Date().toISOString(), appVersion: app.getVersion(), platform: process.platform, arch: process.arch, logs: await writer.snapshot() }
-      const encrypted = sealReport(payload, reportKey)
-      // 临时文件中也只有密文；成功后原子替换用户选择的导出文件。
-      require('./commons/atomicFile').writeTextAtomic(choice.filePath, JSON.stringify(encrypted))
-      return { success: true }
+      const integrity = require('./services/diagnosticExport').exportDiagnosticReport(choice.filePath, payload, reportKey)
+      return { success: true, ...integrity }
     } catch (error) {
       diagnostics.error('D002', '故障报告导出失败', error)
-      return { success: false, message: '导出失败，请选择可写入的文件夹后重试' }
+      return { success: false, code: error.code, message: require('./services/diagnosticExport').exportFailureMessage(error) }
     } finally { exportingReport = false }
   })
   ipcMain.on('write-diagnostic', (event, record) => {
@@ -1097,7 +1101,7 @@ ipcMain.handle('find-wecom-installations', async event => {
     return { success: true, candidates }
   } catch (error) {
     diagnostics.warn('C007', '自动查找企微安装位置失败', error)
-    return { success: false, msg: '自动查找失败，请重试或手动填写企微客户端路径' }
+    return { success: false, msg: require('./commons/diagnostics.cjs').userMessage(error, '自动查找企微安装位置失败') }
   }
 })
 
@@ -1106,7 +1110,7 @@ ipcMain.handle('discover-running-wecom', async event => {
   try { return { success: true, ...await discoverWecom() } }
   catch (error) {
     diagnostics.warn('C006', '检测已运行企微失败', error)
-    return { success: false, message: '无法检测正在运行的企微，请稍后点击重新检测；请勿重复启动同一账号。' }
+    return { success: false, message: require('./commons/diagnostics.cjs').userMessage(error, '检测正在运行的企微失败') }
   }
 })
 
@@ -1122,7 +1126,10 @@ async function listCallbackInstances() {
     if (userId) await instanceCallbacks.applySaved(port, userId)
     let restored
     try { restored = instanceCallbacks.get(port, userId) }
-    catch (error) { diagnostics.error('C005', '读取账号回调配置失败', error); restored = { storageWarning: '读取 callbackSetting.json 失败，请检查文件格式或读取权限' } }
+    catch (error) {
+      diagnostics.error('C005', '读取账号回调配置失败', error)
+      restored = { storageWarning: '读取 callbackSetting.json 失败：' + require('./commons/diagnostics.cjs').userMessage(error, '没有得到具体原因') }
+    }
     result.push({ port, pid, user_id: userId, nick_name: row.nick_name || '', ...restored })
   }
   return result
@@ -1210,7 +1217,7 @@ ipcMain.handle('call-framework-wecom', async (event, input) => {
     if (frameworkPorts.has(logPort)) throw new Error('请选择企微实例端口，不能使用框架监听端口')
     const responseData = await callFrameworkWecomApi(logPort, request)
 
-    // 如果成功获取响应，仅记录本地日志；业务回调由企微原生推送
+    // 如果成功获取响应，仅记录本地日志；业务回调由实例接收器单独处理
     if (logPort && responseData) {
       try {
         // 读取配置
