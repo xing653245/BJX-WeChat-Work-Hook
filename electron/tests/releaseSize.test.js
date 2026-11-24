@@ -39,3 +39,25 @@ test('发布附件必须小于体积上限，检查每个文件并拒绝缺失�
   }
   assert.throws(() => assertGiteeAssetSizes([path.join(root, 'missing.exe')]), /ENOENT/)
 })
+
+test('Gitee latest 清单复用版本归档安装包，更新器解析到正确版本且不重复上传大附件', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-release-latest-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const exe = path.join(root, 'setup.exe'), yml = path.join(root, 'latest.yml')
+  fs.writeFileSync(exe, 'installer fixture')
+  const hash = crypto.createHash('sha512').update(fs.readFileSync(exe)).digest('base64')
+  fs.writeFileSync(yml, `version: 2.2.12\npath: setup.exe\nsha512: ${hash}\n`)
+  const installerUrl = 'https://gitee.com/curator-ovo/vwork-electron/releases/download/v2.2.12/vwork-electron-setup-2.2.12.exe'
+  const result = normalizeReleaseFilesForPublish([yml, exe], '2.2.12', { installerUrl, manifestOnly: true })
+  t.after(() => fs.rmSync(result.tempDir, { recursive: true, force: true }))
+  assert.equal(result.uploadPlan.some(file => /\.(?:exe|blockmap)$/.test(file.uploadName)), false)
+  const manifestFile = result.uploadPlan.find(file => file.uploadName === 'latest.yml')
+  assert.equal(result.uploadPlan.at(-1), manifestFile)
+  const manifest = require('js-yaml').load(fs.readFileSync(manifestFile.localPath, 'utf8'))
+  assert.equal(manifest.path, installerUrl)
+  const resolved = require('electron-updater/out/providers/Provider').resolveFiles(manifest,
+    new URL('https://gitee.com/curator-ovo/vwork-electron/releases/download/latest/'))
+  assert.equal(resolved[0].url.href, installerUrl)
+  assert.equal(resolved[0].info.sha512, hash)
+  assert.equal(resolved[0].info.size, 17)
+})

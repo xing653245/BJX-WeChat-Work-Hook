@@ -19,6 +19,7 @@ const {
   collectReleaseFiles,
   assertGiteeAssetSizes,
   getEnvToken,
+  getStandardInstallerName,
   normalizeReleaseFilesForPublish,
   buildReleaseBody
 } = require('./publish-utils')
@@ -176,11 +177,11 @@ async function replaceReleaseAssets(owner, repo, releaseId, uploadPlan, token) {
   }
 }
 
-async function publishToTag(owner, repo, tag, token, rawFiles, { title, version } = {}) {
+async function publishToTag(owner, repo, tag, token, rawFiles, { title, version, installerUrl, manifestOnly = false } = {}) {
   const ver = version || pkg.version
   diagnostics.info('L004', `\n[publish-gitee] ---- 标签: ${tag} ----`)
 
-  const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles, ver)
+  const { uploadPlan, tempDir } = normalizeReleaseFilesForPublish(rawFiles, ver, { installerUrl, manifestOnly })
 
   try {
     assertGiteeAssetSizes(uploadPlan.map(item => item.localPath))
@@ -231,7 +232,10 @@ async function main() {
 
   // 2. latest Release：供 electron-updater generic 源使用，仅覆盖 latest 附件
   await publishToTag(owner, repo, latestTag, token, files, {
-    title: `Latest (${pkg.version})`
+    title: `Latest (${pkg.version})`,
+    // latest 清单复用版本归档中的完整安装包，避免每个版本重复占用附件配额。
+    manifestOnly: true,
+    installerUrl: `https://gitee.com/${owner}/${repo}/releases/download/${versionTag}/${getStandardInstallerName(pkg.version)}`
   })
 
   const baseUrl = pkg.build.publish[0].url.replace(/\/?$/, '/')

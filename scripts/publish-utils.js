@@ -124,7 +124,7 @@ function buildLatestYml({ version, installerName, sha512, size, releaseDate, rel
 /**
  * 统一 latest.yml 与安装包文件名为 ASCII，避免 GitHub 上传中文名被截断导致 404
  */
-function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
+function normalizeReleaseFilesForPublish(filePaths, version = pkg.version, { installerUrl, manifestOnly = false } = {}) {
   const installerName = getStandardInstallerName(version)
   const ymlPath = filePaths.find((f) => path.basename(f) === 'latest.yml')
   if (!ymlPath) {
@@ -149,7 +149,7 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vwork-publish-'))
   const fixedYml = buildLatestYml({
     version: parsed.version || version,
-    installerName,
+    installerName: installerUrl || installerName,
     sha512: parsed.sha512,
     size: parsed.size,
     releaseDate: parsed.releaseDate,
@@ -162,12 +162,12 @@ function normalizeReleaseFilesForPublish(filePaths, version = pkg.version) {
   fs.copyFileSync(exePath, normalizedExePath)
   diagnostics.info('L003', `[publish] 已写入 releaseNotes（来自 CHANGELOG.md / 默认说明）`)
 
-  const uploadPlan = [
+  const uploadPlan = manifestOnly ? [] : [
     { localPath: normalizedExePath, uploadName: installerName }
   ]
 
   const blockmapSrc = filePaths.find((f) => f.endsWith('.blockmap'))
-  if (blockmapSrc) {
+  if (blockmapSrc && !manifestOnly) {
     const blockmapName = `${installerName}.blockmap`
     const normalizedBlockmapPath = path.join(tempDir, blockmapName)
     fs.copyFileSync(blockmapSrc, normalizedBlockmapPath)
