@@ -76,7 +76,11 @@ async function giteeRequest(method, apiPath, token, { params, data, headers } = 
 
 async function getReleaseByTag(owner, repo, tag, token) {
   try {
-    return await giteeRequest('GET', `/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`, token)
+    const release = await giteeRequest('GET', `/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`, token)
+    // Gitee 在标签尚无 Release 时也可能返回 HTTP 200 + []。
+    if (Array.isArray(release) && release.length === 0) return null
+    if (!release?.id || Array.isArray(release)) throw new Error('Gitee 未返回有效的 Release 信息')
+    return release
   } catch (err) {
     if (String(err.message).includes('(404)')) {
       return null
